@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import CryptoHoldingsCard from '../components/wallets/CryptoHoldingsCard';
 import type { CryptoBalance } from '../components/wallets/CryptoHoldingsCard';
@@ -393,7 +393,11 @@ export const WalletsPage = () => {
       }
       closeAll();
     }
-    catch (e:any) { addNotification('Error', e.message||'Error', 'error'); }
+    catch (e:any) { 
+      console.error('[Action Error]', e);
+      addNotification('Error', e.message||'An error occurred', 'error'); 
+      // Don't close the modal on error so user can see what went wrong and retry
+    }
     finally { setBusy(false); }
   };
   const inp = (name:string, ph:string, type='text', req=false) =>
@@ -589,16 +593,42 @@ export const WalletsPage = () => {
     const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
     const amount = Number(snapF.amount || 0);
     const address = snapF.address?.trim() || '';
+    
+    // Validate required fields
     if (!merchantId) throw new Error('Merchant ID not configured');
     if (!isOnline) throw new Error('Hot-wallet delivery requires an online connection');
     if (!amount || amount <= 0) throw new Error('Enter a valid USD amount');
     if (!address) throw new Error('Enter the destination wallet address');
+    
+    // Validate authorized person information
+    if (!snapF.authorizedPersonName?.trim()) throw new Error('Authorized person name is required');
+    if (!snapF.authorizationRole?.trim()) throw new Error('Authorization role/title is required');
+    if (!snapF.authorizedEmail?.trim()) throw new Error('Authorized person email is required');
+    
+    // Validate business information
+    if (!snapF.businessName?.trim()) throw new Error('Business legal name is required');
+    if (!snapF.businessAddress?.trim()) throw new Error('Business address is required');
+    
     const result = await merchantCryptoPayout(merchantId, {
       amount_usd: amount,
       asset: snapF.asset || 'USDT',
       address,
       network: snapF.network || 'tron',
       sender_mode: 'hot',
+      authorizedPerson: {
+        name: snapF.authorizedPersonName.trim(),
+        role: snapF.authorizationRole.trim(),
+        email: snapF.authorizedEmail.trim(),
+        phone: snapF.authorizedPhone?.trim(),
+      },
+      businessInfo: {
+        businessName: snapF.businessName.trim(),
+        businessRegNumber: snapF.businessRegNumber?.trim(),
+        businessAddress: snapF.businessAddress.trim(),
+        businessPhone: snapF.businessPhone?.trim(),
+        taxId: snapF.taxId?.trim(),
+      },
+      payoutReason: snapF.payoutReason?.trim(),
     });
     if (result.status === 'simulation' || result.is_mock === true || result.mock === true) {
       throw new Error('Simulation responses are disabled. Configure a live hot-wallet rail.');
@@ -606,31 +636,44 @@ export const WalletsPage = () => {
     return result;
   }, 'Hot-wallet delivery recorded');
 
+
   const handleCreateVirtualAccount = () => act(async () => {
-    const snapF = { ...f };
-    const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
-    if (!merchantId) throw new Error('Merchant ID not configured');
-    if (!isOnline) throw new Error('Virtual-account creation requires an online connection');
-    if (!snapF.transakAccessToken && !snapF.transakAuthRelianceEmail) throw new Error('Verify the merchant email with OTP or Auth Reliance first');
-    if (!snapF.fiatCurrency || !snapF.paymentMethod) throw new Error('Select the merchant fiat currency and payment method');
-    if (!snapF.asset || !snapF.network || !snapF.address?.trim()) throw new Error('Enter the merchant crypto destination');
-    if (snapF.transakWalletVerified !== 'true') throw new Error('Verify the merchant wallet address first');
-    const result = await createVirtualAccount(merchantId, {
-      source: {
-        fiatCurrency: snapF.fiatCurrency,
-        paymentMethod: snapF.paymentMethod,
-      },
-      destination: {
-        cryptoCurrency: snapF.asset,
-        walletAddress: snapF.address.trim(),
-        network: snapF.network,
-      },
-      transakAccessToken: snapF.transakAccessToken,
-      transakAuthRelianceEmail: snapF.transakAuthRelianceEmail,
-    });
-    setVirtualAccounts(previous => [result.transaction, ...previous.filter(item => item.id !== result.transaction.id)]);
-    addNotification('Merchant Virtual Account Created', 'Transak returned a live merchant receiving-account record.', 'success');
-    return result;
+    try {
+      const snapF = { ...f };
+      const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
+      if (!merchantId) throw new Error('Merchant ID not configured');
+      if (!isOnline) throw new Error('Virtual-account creation requires an online connection');
+      if (!snapF.transakAccessToken && !snapF.transakAuthRelianceEmail) throw new Error('Verify the merchant email with OTP or Auth Reliance first');
+      if (!snapF.fiatCurrency || !snapF.paymentMethod) throw new Error('Select the merchant fiat currency and payment method');
+      if (!snapF.asset || !snapF.network || !snapF.address?.trim()) throw new Error('Enter the merchant crypto destination (Trust Wallet address)');
+      if (snapF.transakWalletVerified !== 'true') throw new Error('Verify the wallet address first - this ensures Trust Wallet can receive payments');
+      
+      console.log('[Virtual Account] Creating with:', { merchantId, fiatCurrency: snapF.fiatCurrency, asset: snapF.asset, network: snapF.network });
+      
+      const result = await createVirtualAccount(merchantId, {
+        source: {
+          fiatCurrency: snapF.fiatCurrency,
+          paymentMethod: snapF.paymentMethod,
+        },
+        destination: {
+          cryptoCurrency: snapF.asset,
+          walletAddress: snapF.address.trim(),
+          network: snapF.network,
+        },
+        transakAccessToken: snapF.transakAccessToken,
+        transakAuthRelianceEmail: snapF.transakAuthRelianceEmail,
+      });
+      
+      console.log('[Virtual Account] Created successfully:', result);
+      
+      setVirtualAccounts(previous => [result.transaction, ...previous.filter(item => item.id !== result.transaction.id)]);
+      addNotification('Merchant Virtual Account Created', `Transak account created successfully.\nCrypto will be sent to your Trust Wallet address:\n${snapF.address.trim().substring(0, 10)}...${snapF.address.trim().substring(snapF.address.trim().length - 6)}`, 'success');
+      return result;
+    } catch (error: any) {
+      console.error('[Virtual Account] Creation failed:', error);
+      // Re-throw to be caught by act() function
+      throw error;
+    }
   }, 'Virtual account created');
 
   const handleSendMerchantOtp = async () => {
@@ -902,11 +945,31 @@ export const WalletsPage = () => {
             </button>
             <button onClick={() => {
                 const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
-                setF({ merchantId, asset: 'USDT', network: 'tron' });
+                
+                // Load saved business information from localStorage
+                const savedBusinessInfo = localStorage.getItem('businessInfo');
+                const businessInfo = savedBusinessInfo ? JSON.parse(savedBusinessInfo) : {
+                  authorizedPersonName: 'Jukruti Jacob Dumba',
+                  authorizationRole: 'Account Signatory',
+                  authorizedEmail: 'Jukrutidumba@gmail.com',
+                  authorizedPhone: '0607289532',
+                  businessName: 'Jukruti Logistics (Pty) Ltd',
+                  businessRegNumber: '2014/215965/07',
+                  businessAddress: '9 Houtkapper Str, Olifantshoek, Northern Cape, 8450, South Africa',
+                  businessPhone: '0607289532',
+                  taxId: '9205076330089'
+                };
+                
+                setF({ 
+                  merchantId, 
+                  asset: 'USDT', 
+                  network: 'tron',
+                  ...businessInfo
+                });
                 setModal('hot-wallet-payout');
               }}
               className="rounded-xl border border-orange-400/30 bg-orange-500/15 px-4 py-2 text-sm font-semibold text-orange-200 transition hover:bg-orange-500/25">
-              Hot Wallet Delivery
+              🔥 Hot Wallet Payout
             </button>
             <button onClick={() => {
                 const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
@@ -1728,15 +1791,171 @@ export const WalletsPage = () => {
             This sends a real on-chain payout through the merchant hot-wallet rail. No simulation or demo fallback is allowed.
           </div>
           <p className="text-sm text-gray-500">Merchant: <strong>{f.merchantId || '(not set)'}</strong></p>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Asset</label>
-          <select value={f.asset || 'USDT'} onChange={e => setF(p => ({ ...p, asset: e.target.value }))} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm">
-            {['USDT', 'BTC', 'ETH', 'BNB', 'SOL'].map(asset => <option key={asset} value={asset}>{asset}</option>)}
-          </select>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Network</label>
-          <input type="text" value={f.network || ''} onChange={e => setF(p => ({ ...p, network: e.target.value }))} placeholder="tron, bsc, ethereum..." className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm" required />
-          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Destination address</label>
-          <input type="text" value={f.address || ''} onChange={e => setF(p => ({ ...p, address: e.target.value }))} placeholder="Recipient on-chain address" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm font-mono" required />
-          {inp('amount', 'USD amount', 'number', true)}
+          
+          {/* Authorized Merchant Information */}
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mt-3">
+            <h3 className="text-sm font-bold text-blue-900 mb-3">📋 Authorized Merchant Information</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Authorized Person Name</label>
+                <input 
+                  type="text" 
+                  value={f.authorizedPersonName || ''} 
+                  onChange={e => setF(p => ({ ...p, authorizedPersonName: e.target.value }))} 
+                  placeholder="Full name of person authorizing payout"
+                  className="w-full px-3 py-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500/20" 
+                  required 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Authorization Role/Title</label>
+                <input 
+                  type="text" 
+                  value={f.authorizationRole || ''} 
+                  onChange={e => setF(p => ({ ...p, authorizationRole: e.target.value }))} 
+                  placeholder="e.g., CFO, Finance Manager, Owner"
+                  className="w-full px-3 py-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500/20" 
+                  required 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Contact Email</label>
+                <input 
+                  type="email" 
+                  value={f.authorizedEmail || ''} 
+                  onChange={e => setF(p => ({ ...p, authorizedEmail: e.target.value }))} 
+                  placeholder="authorized.person@business.com"
+                  className="w-full px-3 py-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500/20" 
+                  required 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Contact Phone</label>
+                <input 
+                  type="tel" 
+                  value={f.authorizedPhone || ''} 
+                  onChange={e => setF(p => ({ ...p, authorizedPhone: e.target.value }))} 
+                  placeholder="+1234567890"
+                  className="w-full px-3 py-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500/20" 
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Business Information */}
+          <div className="rounded-xl border border-purple-200 bg-purple-50 p-4 mt-3">
+            <h3 className="text-sm font-bold text-purple-900 mb-3">🏢 Business Information</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-purple-700 mb-1">Business Legal Name</label>
+                <input 
+                  type="text" 
+                  value={f.businessName || ''} 
+                  onChange={e => setF(p => ({ ...p, businessName: e.target.value }))} 
+                  placeholder="Legal registered business name"
+                  className="w-full px-3 py-2.5 rounded-lg border border-purple-200 text-sm focus:ring-2 focus:ring-purple-500/20" 
+                  required 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-purple-700 mb-1">Business Registration Number</label>
+                <input 
+                  type="text" 
+                  value={f.businessRegNumber || ''} 
+                  onChange={e => setF(p => ({ ...p, businessRegNumber: e.target.value }))} 
+                  placeholder="Company registration number"
+                  className="w-full px-3 py-2.5 rounded-lg border border-purple-200 text-sm focus:ring-2 focus:ring-purple-500/20" 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-purple-700 mb-1">Business Address</label>
+                <textarea 
+                  value={f.businessAddress || ''} 
+                  onChange={e => setF(p => ({ ...p, businessAddress: e.target.value }))} 
+                  placeholder="Full registered business address"
+                  rows={2}
+                  className="w-full px-3 py-2.5 rounded-lg border border-purple-200 text-sm focus:ring-2 focus:ring-purple-500/20" 
+                  required 
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-purple-700 mb-1">Business Phone</label>
+                  <input 
+                    type="tel" 
+                    value={f.businessPhone || ''} 
+                    onChange={e => setF(p => ({ ...p, businessPhone: e.target.value }))} 
+                    placeholder="+1234567890"
+                    className="w-full px-3 py-2.5 rounded-lg border border-purple-200 text-sm focus:ring-2 focus:ring-purple-500/20" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-purple-700 mb-1">Tax ID / VAT Number</label>
+                  <input 
+                    type="text" 
+                    value={f.taxId || ''} 
+                    onChange={e => setF(p => ({ ...p, taxId: e.target.value }))} 
+                    placeholder="Tax identification number"
+                    className="w-full px-3 py-2.5 rounded-lg border border-purple-200 text-sm focus:ring-2 focus:ring-purple-500/20" 
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Payout Details */}
+          <div className="space-y-3 mt-3">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Asset</label>
+            <select value={f.asset || 'USDT'} onChange={e => setF(p => ({ ...p, asset: e.target.value }))} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm">
+              {['USDT', 'BTC', 'ETH', 'BNB', 'SOL'].map(asset => <option key={asset} value={asset}>{asset}</option>)}
+            </select>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Network</label>
+            <input type="text" value={f.network || ''} onChange={e => setF(p => ({ ...p, network: e.target.value }))} placeholder="tron, bsc, ethereum..." className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm" required />
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Destination address</label>
+            <input type="text" value={f.address || ''} onChange={e => setF(p => ({ ...p, address: e.target.value }))} placeholder="Recipient on-chain address" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm font-mono" required />
+            {inp('amount', 'USD amount', 'number', true)}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Payout Reason / Notes</label>
+              <textarea 
+                value={f.payoutReason || ''} 
+                onChange={e => setF(p => ({ ...p, payoutReason: e.target.value }))} 
+                placeholder="Purpose of this payout (e.g., Monthly settlement, Supplier payment, Refund)"
+                rows={2}
+                className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm" 
+              />
+            </div>
+            
+            {/* Save Business Info Checkbox */}
+            <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <input 
+                type="checkbox" 
+                id="saveBusinessInfo"
+                checked={f.saveBusinessInfo === 'true'}
+                onChange={e => {
+                  setF(p => ({ ...p, saveBusinessInfo: e.target.checked ? 'true' : 'false' }));
+                  if (e.target.checked) {
+                    // Save to localStorage
+                    const businessData = {
+                      authorizedPersonName: f.authorizedPersonName || '',
+                      authorizationRole: f.authorizationRole || '',
+                      authorizedEmail: f.authorizedEmail || '',
+                      authorizedPhone: f.authorizedPhone || '',
+                      businessName: f.businessName || '',
+                      businessRegNumber: f.businessRegNumber || '',
+                      businessAddress: f.businessAddress || '',
+                      businessPhone: f.businessPhone || '',
+                      taxId: f.taxId || ''
+                    };
+                    localStorage.setItem('businessInfo', JSON.stringify(businessData));
+                  }
+                }}
+                className="w-4 h-4 text-blue-600 bg-white border-blue-300 rounded focus:ring-blue-500"
+              />
+              <label htmlFor="saveBusinessInfo" className="text-sm font-semibold text-blue-900 cursor-pointer">
+                💾 Save business information for future payouts
+              </label>
+            </div>
+          </div>
         </ModalShell>
       )}
       {modal==='virtual-account' && (
@@ -1783,13 +2002,13 @@ export const WalletsPage = () => {
             </div>
           </div>
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Merchant destination wallet address</label>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Trust Wallet / Destination Address (where crypto will be sent)</label>
             <div className="mt-2 flex gap-2">
-              <input value={f.address || ''} onChange={e => setF(p => ({ ...p, address: e.target.value, transakWalletVerified: '' }))} placeholder="Merchant destination wallet address" className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono" required />
+              <input value={f.address || ''} onChange={e => setF(p => ({ ...p, address: e.target.value, transakWalletVerified: '' }))} placeholder="Your Trust Wallet address (e.g., TXyz...123)" className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono" required />
               <button type="button" onClick={handleVerifyMerchantWalletAddress} disabled={busy} className="rounded-xl border border-emerald-600 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50">Verify</button>
             </div>
-            {f.transakWalletVerified === 'true' && <div className="mt-2 text-xs font-semibold text-emerald-700">Transak wallet address verified.</div>}
-            {f.transakWalletVerified === 'false' && <div className="mt-2 text-xs font-semibold text-rose-700">Wallet address was not accepted by Transak.</div>}
+            {f.transakWalletVerified === 'true' && <div className="mt-2 text-xs font-semibold text-emerald-700">✓ Trust Wallet address verified by Transak.</div>}
+            {f.transakWalletVerified === 'false' && <div className="mt-2 text-xs font-semibold text-rose-700">✗ Wallet address was not accepted by Transak. Please check the address and network.</div>}
           </div>
           {virtualAccounts.length > 0 && <p className="text-xs text-gray-500">Existing live records: {virtualAccounts.length}</p>}
         </ModalShell>
@@ -1960,6 +2179,14 @@ export const WalletsPage = () => {
 
             return (
               <div className="space-y-4">
+                {/* Trust Wallet withdrawal info banner */}
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
+                  <strong>💰 Withdraw to Trust Wallet:</strong> Send your crypto directly to your Trust Wallet or any external wallet. Make sure the network matches your wallet address.
+                  <div className="mt-2 text-xs text-orange-800">
+                    <strong>⚠️ Important:</strong> Double-check your address and network. Crypto transactions are irreversible!
+                  </div>
+                </div>
+
                 {/* Available balance banner */}
                 <div className="rounded-xl bg-slate-900 text-white p-4">
                   <div className="flex items-center justify-between">
@@ -2020,19 +2247,45 @@ export const WalletsPage = () => {
 
                 {/* Destination address */}
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Destination Address (TronLink / Trust Wallet)</label>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                    Destination Address (Trust Wallet / External Wallet)
+                  </label>
+                  <div className="mb-2 rounded-lg border border-blue-200 bg-blue-50 p-2.5 text-xs text-blue-900">
+                    <strong>📱 Trust Wallet Users:</strong> Open Trust Wallet → Select {selCoin} → Tap "Receive" → Copy your address
+                  </div>
                   <input type="text"
                     placeholder={
                       selCoin === 'USDT' && selectedNetwork === 'tron'
-                        ? 'TronLink TRC-20 address (starts with T...)'
+                        ? 'Trust Wallet TRC-20 address (starts with T...)'
                         : selCoin === 'USDT' && (selectedNetwork === 'bsc' || selectedNetwork === 'polygon')
                         ? 'Trust Wallet 0x address (BEP-20 / Polygon ERC-20)'
-                        : 'Wallet address'
+                        : 'Your wallet address where you want to receive crypto'
                     }
                     value={f.address || ''}
                     onChange={e => setF(p => ({ ...p, address: e.target.value }))}
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/20" />
                   {autoSwitchHint}
+                  {addr && addr.length > 10 && (
+                    <div className="mt-2 text-xs">
+                      {(() => {
+                        const isTronAddr = addr.startsWith('T') && addr.length >= 34;
+                        const isEvmAddr = /^0x[a-fA-F0-9]{40}$/.test(addr);
+                        if (selCoin === 'USDT' && selectedNetwork === 'tron' && isTronAddr) {
+                          return <span className="text-emerald-600 font-semibold">✓ Valid Tron address detected</span>;
+                        }
+                        if (selCoin === 'USDT' && (selectedNetwork === 'bsc' || selectedNetwork === 'polygon') && isEvmAddr) {
+                          return <span className="text-emerald-600 font-semibold">✓ Valid {selectedNetwork.toUpperCase()} address detected</span>;
+                        }
+                        if (selCoin === 'USDT' && selectedNetwork === 'tron' && !isTronAddr) {
+                          return <span className="text-rose-600 font-semibold">⚠️ Tron addresses start with "T"</span>;
+                        }
+                        if (selCoin === 'USDT' && (selectedNetwork === 'bsc' || selectedNetwork === 'polygon') && !isEvmAddr) {
+                          return <span className="text-rose-600 font-semibold">⚠️ {selectedNetwork.toUpperCase()} addresses start with "0x"</span>;
+                        }
+                        return <span className="text-slate-500">Address entered</span>;
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 {/* Amount */}
@@ -2091,7 +2344,7 @@ export const WalletsPage = () => {
                         <span className="font-bold text-emerald-700">Exact amount</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-500">Recipient receives (Trx/Trust Wallet)</span>
+                        <span className="text-slate-500">Recipient receives (Trust Wallet)</span>
                         <span className="font-extrabold text-emerald-700 tabular-nums">
                           {receives.toFixed(8)} <span className="text-emerald-500 font-bold">{selCoin}</span>
                         </span>

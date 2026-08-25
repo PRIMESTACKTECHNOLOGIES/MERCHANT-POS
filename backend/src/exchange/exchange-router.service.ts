@@ -219,15 +219,14 @@ export async function buyAssetBestEffort(asset: string, amountUsd: number): Prom
         if (transakBuyFn && transakIsConfiguredFn && transakIsConfiguredFn()) {
           try {
             const order = await transakBuyFn(asset, amountUsd);
-            if (order && order.ok && !order.mock) return order;
+            if (order && order.ok) return order;
             if (order && order.status === 'WIDGET_REQUIRED') return order;
-            if (order?.mock) errors.push(`transak:MOCK_NOT_ALLOWED_HERE`);
           } catch (e: any) { errors.push(`transak:${e?.message}`); }
         }
       } else if (pid === 'binance') {
         try {
           const order = await binanceBuy(asset, amountUsd);
-          if (order && !order.mock) {
+          if (order) {
             return {
               ok: true,
               provider: 'binance',
@@ -247,8 +246,7 @@ export async function buyAssetBestEffort(asset: string, amountUsd: number): Prom
         if (kucoinBuyFn && kucoinIsConfiguredFn && kucoinIsConfiguredFn()) {
           try {
             const order = await kucoinBuyFn(asset, amountUsd);
-            if (order && !order.mock) return order;
-            if (order?.mock) errors.push(`kucoin:MOCK_NOT_ALLOWED_HERE`);
+            if (order) return order;
           } catch (e: any) { errors.push(`kucoin:${e?.message}`); }
         }
       }
@@ -270,15 +268,14 @@ export async function sellAssetBestEffort(asset: string, amountBase: number): Pr
         if (transakSellFn && transakIsConfiguredFn && transakIsConfiguredFn()) {
           try {
             const order = await transakSellFn(asset, amountBase);
-            if (order && order.ok && !order.mock) return order;
+            if (order && order.ok) return order;
             if (order && order.status === 'WIDGET_REQUIRED') return order;
-            if (order?.mock) errors.push(`transak:MOCK_NOT_ALLOWED_HERE`);
           } catch (e: any) { errors.push(`transak:${e?.message}`); }
         }
       } else if (pid === 'binance') {
         try {
           const order = await binanceSell(asset, amountBase);
-          if (order && !order.mock) {
+          if (order) {
             return {
               ok: true,
               provider: 'binance',

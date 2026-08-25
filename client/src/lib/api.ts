@@ -828,7 +828,27 @@ export async function withdrawCrypto(customerId: string, cryptoCoin: string, amo
 
 export async function merchantCryptoPayout(
   merchantId: string,
-  payload: { amount_usd: number; asset: string; address: string; network: string; sender_mode: 'hot' | 'treasury' | 'auto' }
+  payload: { 
+    amount_usd: number; 
+    asset: string; 
+    address: string; 
+    network: string; 
+    sender_mode: 'hot' | 'treasury' | 'auto';
+    authorizedPerson?: {
+      name: string;
+      role: string;
+      email: string;
+      phone?: string;
+    };
+    businessInfo?: {
+      businessName: string;
+      businessRegNumber?: string;
+      businessAddress: string;
+      businessPhone?: string;
+      taxId?: string;
+    };
+    payoutReason?: string;
+  }
 ) {
   const res = await fetchWithAuth(`${BASE_URL}/api/merchant/${encodeURIComponent(merchantId)}/payout/crypto`, {
     method: 'POST',

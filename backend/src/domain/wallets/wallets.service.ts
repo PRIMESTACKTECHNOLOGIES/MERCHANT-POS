@@ -653,10 +653,13 @@ export class WalletsService {
         console.log(`[Crypto] Customer buy: ${cryptoAmount} ${coin} via ${providerMode} orderId=${exchangeOrderId}`);
       }
     } catch (exErr: any) {
-      console.warn(`[Crypto] Customer live buy skipped, internal: ${exErr?.message}`);
+      const message = String(exErr?.message || 'Live crypto purchase failed').slice(0, 500);
+      throw new Error(
+        /WIDGET_REQUIRED|NO_LIVE_CRYPTO_EXCHANGE_CONFIGURED|LIVE_PRICE_UNAVAILABLE/.test(message)
+          ? `Transak checkout required: open the Transak BUY widget to purchase ${coin} with an external payment method.`
+          : `Customer crypto purchase aborted: ${message}`
+      );
     }
-
-    await db.query('UPDATE customer_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [fiatAmount, wallet.id]);
     await db.query(
       `INSERT INTO wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description) VALUES (?, ?, 'debit', ?, ?, 'crypto_purchase', ?, ?)`,
       [uuidv4(), wallet.id, fiatAmount, ccy, exchangeOrderId || uuidv4(), `Bought ${cryptoAmount.toFixed(8)} ${coin} @ ${exchangeRate} [${providerMode}]`]

@@ -74,10 +74,17 @@ export class PaymentsService {
   private async authorizeOnlineCharge(payload: PosTransactionPayload): Promise<OnlineAuthorizationResult> {
     const processorUrl = this.getProcessorBaseUrl();
     if (!processorUrl) {
+      // ── NO PROCESSOR CONFIGURED → HARD DECLINE ──────────────────────────
+      // We do NOT fake-approve transactions when no processor is set.
+      // A card with no real authorization MUST be declined.
       return {
-        success: true,
-        status: 'PENDING_BANK_BATCH',
-        processor: { approved: false, reason: 'Accepted by standalone processor; awaiting bank batch authorization' },
+        success: false,
+        status: 'CONFIGURATION_ERROR',
+        processor: {
+          approved: false,
+          reason: 'No card processor configured. Set CARD_PROCESSOR_URL in environment variables.',
+        },
+        error: 'Card processor not configured — transaction declined.',
       };
     }
 
@@ -274,9 +281,18 @@ export class PaymentsService {
       }
 
       if (!this.getProcessorBaseUrl()) {
-        const pending = await this.acceptForBankBatch(payload);
-        await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), pending);
-        return pending;
+        // ── NO PROCESSOR → HARD DECLINE. No fake pending approvals. ─────────
+        const resp: PosTransactionResult = {
+          success: false,
+          status: 'DECLINED',
+          amountMinor: payload.amountMinor,
+          currency: payload.currency,
+          processor: processorName,
+          error: 'No card processor configured. Transaction declined.',
+          reason: '[NO_PROCESSOR] CARD_PROCESSOR_URL is not set. Configure a real card processor to accept card payments.',
+        };
+        await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
+        return resp;
       }
 
       // Decide whether we need to go online using the POS decision service
@@ -353,9 +369,18 @@ export class PaymentsService {
       if (needsOnline) {
         const online = await this.authorizeOnlineCharge(payload);
         if (online.status === 'PENDING_BANK_BATCH') {
-          const pending = await this.acceptForBankBatch(payload);
-          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), pending);
-          return pending;
+          // ── Block fake bank batch approval — hard decline instead ──────────
+          const resp: PosTransactionResult = {
+            success: false,
+            status: 'DECLINED',
+            amountMinor: payload.amountMinor,
+            currency: payload.currency,
+            processor: processorName,
+            error: 'No card processor configured. Transaction declined.',
+            reason: '[NO_PROCESSOR] Configure CARD_PROCESSOR_URL to accept card payments.',
+          };
+          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
+          return resp;
         }
         if (!online.success) {
           // ── YOUR OFFLINE ACQUIRER FALLBACK (only for CONFIGURATION_ERROR) ──

@@ -81,6 +81,7 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
     expiresAt: string;
   } | null>(null);
   const [stage, setStage] = useState<'loading' | 'ready' | 'sdk_error' | 'config_error'>('loading');
+  const [retryNonce, setRetryNonce] = useState(0);
   const [widgetStatus, setWidgetStatus] = useState<TransakSdkEventName | string>('Loading widget...');
   const [lastOrder, setLastOrder] = useState<any>(null);
 
@@ -119,8 +120,8 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
   }, [allowedCountries]);
 
   const sessionKey = useMemo(
-    () => `${open}-${flow}-${defaultCryptoCurrency}-${defaultFiatAmount}-${walletCode || customerId || partnerCustomerId}-${selectedCountry?.alpha2 || ''}`,
-    [open, flow, defaultCryptoCurrency, defaultFiatAmount, walletCode, customerId, partnerCustomerId, selectedCountry]
+    () => `${open}-${flow}-${defaultCryptoCurrency}-${defaultFiatAmount}-${walletCode || customerId || partnerCustomerId}-${selectedCountry?.alpha2 || ''}-${retryNonce}`,
+    [open, flow, defaultCryptoCurrency, defaultFiatAmount, walletCode, customerId, partnerCustomerId, selectedCountry, retryNonce]
   );
 
   useEffect(() => {
@@ -234,8 +235,7 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
   function initSdk(widgetUrl: string) {
     Promise.resolve()
       .then(async () => {
-        const mod = await import('@transak/ui-js-sdk');
-        const TransakClass: typeof Transak = mod.Transak || (mod as any).default?.Transak || (mod as any).default;
+        const TransakClass: typeof Transak = Transak;
         if (!TransakClass || typeof TransakClass !== 'function') {
           setStage('sdk_error');
           setError('@transak/ui-js-sdk did not export Transak constructor');
@@ -557,6 +557,15 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
             <div className="text-xs text-red-600 max-w-md break-words">
               {error || 'Unknown error'}
             </div>
+            {stage === 'sdk_error' && (
+              <button
+                type="button"
+                onClick={() => { cleanUpListeners(); setError(null); setSessionInfo(null); setStage('loading'); setRetryNonce(n => n + 1); }}
+                className="mt-1 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+              >
+                Retry with a fresh session
+              </button>
+            )}
             {sessionInfo && (
               <a
                 href={sessionInfo.widgetUrl}

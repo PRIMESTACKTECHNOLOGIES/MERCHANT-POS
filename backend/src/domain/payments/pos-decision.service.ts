@@ -86,15 +86,31 @@ async function goOnline(
   merchantId?: string,
   terminalId?: string
 ): Promise<PosDecisionResult> {
+  // No processor configured → hard decline. No mock, no stand-in.
+  const processorUrl = (process.env.CARD_PROCESSOR_URL || process.env.CARD_PROCESSOR_AUTH_URL || '').trim();
+  if (!processorUrl) {
+    return {
+      decision: PosDecision.DECLINE,
+      mode: PosMode.ONLINE,
+      reason: 'Card processor not configured — transaction declined. Set CARD_PROCESSOR_URL.',
+      oda,
+      cvm,
+      processor: {
+        approved: false,
+        reason: 'No card processor configured.',
+      },
+    };
+  }
+  // Processor IS configured but this path was called — decline as online unavailable
   return {
     decision: PosDecision.DECLINE,
     mode: PosMode.ONLINE,
-    reason: "Online authorization unavailable",
+    reason: 'Online authorization required but could not complete.',
     oda,
     cvm,
     processor: {
       approved: false,
-      reason: "Online authorization unavailable",
+      reason: 'Online authorization could not complete.',
     },
   };
 }
@@ -186,9 +202,9 @@ export async function decidePosOutcome(
 
     if (oda.success && cvm.ok && amount <= terminal.offlineFloorLimit) {
       return {
-        decision: PosDecision.OFFLINE_APPROVE,
-        mode: PosMode.OFFLINE,
-        reason: "EMV offline approved",
+        decision: PosDecision.DECLINE,
+        mode: PosMode.ONLINE,
+        reason: 'Offline auto-approve disabled — online authorization required for all transactions.',
         oda,
         cvm,
       };
@@ -220,8 +236,9 @@ export class PosDecisionService {
     const merchantSettings = await settingsService.getSettings(merchantId);
 
     const terminalOfflineEnabled = Boolean(terminal?.offline_enabled === 1 || terminal?.offline_enabled === true);
-    const merchantOfflineMode = merchantSettings?.terminal?.offlineMode !== false;
-    const offlineAllowedByConfig = terminalOfflineEnabled && merchantOfflineMode;
+    // offlineAllowed is always false — online auth required for all transactions
+    const merchantOfflineMode = false;
+    const offlineAllowedByConfig = false;
 
     const pan = this.getPan(payload);
     const expiry = this.getExpiry(payload);
@@ -271,34 +288,30 @@ export class PosDecisionService {
     }
 
     const effectiveFloorLimit = this.getOfflineFloorLimit(merchantSettings);
+    // aboveFloor check kept for logging only — offline auto-approve is disabled regardless
     const aboveFloor = amountMinor > effectiveFloorLimit;
     if (aboveFloor) {
-      reasons.push(`Amount above offline floor limit (${effectiveFloorLimit})`);
+      reasons.push(`Amount above offline floor limit (${effectiveFloorLimit}) — online auth required`);
     }
 
-    const offlineAllowed = offlineAllowedByConfig && !expired && !blacklisted && !odaFailed && !requireDeclineByCvm && !aboveFloor;
+    const offlineAllowed = false; // Offline auto-approve DISABLED — online auth required always
 
     if (expired || blacklisted || odaFailed || requireDeclineByCvm) {
       return this.createDeclineResult(payload, reasons.join(' / '), terminalOfflineEnabled, offlineAllowed, expired, blacklisted, oda, cvm);
     }
 
-    if (!offlineAllowed) {
-      const onlineDecision = await this.performOnlineAuthorization(payload, pan, expiry, currency, amountMinor);
-      if (onlineDecision.success) {
-        return this.createOnlineApproveResult(payload, onlineDecision.processor, terminalOfflineEnabled, false, expired, blacklisted, oda, cvm);
-      }
-      return this.createDeclineResult(payload, `Online authorization failed: ${onlineDecision.error || onlineDecision.status}`, terminalOfflineEnabled, false, expired, blacklisted, oda, cvm, onlineDecision.processor);
+    // Always go online — no floor-limit auto-approve
+    const onlineDecision = await this.performOnlineAuthorization(payload, pan, expiry, currency, amountMinor);
+    if (onlineDecision.success) {
+      return this.createOnlineApproveResult(payload, onlineDecision.processor, terminalOfflineEnabled, false, expired, blacklisted, oda, cvm);
     }
-
-    if (requireOnlineByCvm) {
-      const onlineDecision = await this.performOnlineAuthorization(payload, pan, expiry, currency, amountMinor);
-      if (onlineDecision.success) {
-        return this.createOnlineApproveResult(payload, onlineDecision.processor, terminalOfflineEnabled, false, expired, blacklisted, oda, cvm);
-      }
-      return this.createDeclineResult(payload, `Online authorization failed: ${onlineDecision.error || onlineDecision.status}`, terminalOfflineEnabled, false, expired, blacklisted, oda, cvm, onlineDecision.processor);
-    }
-
-    return this.createOfflineApproveResult(payload, `Offline approve (${amountMinor} minor, floor limit ${effectiveFloorLimit})`, terminalOfflineEnabled, offlineAllowed, expired, blacklisted, oda, cvm);
+    return this.createDeclineResult(
+      payload,
+      onlineDecision.status === 'UNAVAILABLE'
+        ? 'Card processor not configured — transaction declined. Set CARD_PROCESSOR_URL to accept card payments.'
+        : `Online authorization failed: ${onlineDecision.error || onlineDecision.status}`,
+      terminalOfflineEnabled, false, expired, blacklisted, oda, cvm, onlineDecision.processor
+    );
   }
 
   private getPan(payload: PosDecisionPayload): string | undefined {

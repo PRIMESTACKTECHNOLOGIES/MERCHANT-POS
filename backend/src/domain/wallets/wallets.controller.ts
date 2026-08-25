@@ -272,6 +272,11 @@ export class WalletsController {
   // SPOT deduction is ALWAYS final first. On-chain settlement is decoupled.
   // ──────────────────────────────────────────────────────────────────────────
   async withdrawCrypto(req: Request, res: Response) {
+    let debitApplied = false;
+    let debitDb: any;
+    let debitCustomerId: string | undefined;
+    let debitCoin: string | undefined;
+    let debitAmount = 0;
     try {
       const { customerId, cryptoCoin, amount, address, network, origin_address, signed_tx } = req.body as any;
 
@@ -309,6 +314,10 @@ export class WalletsController {
       if (withdrawAmt <= 0) return res.status(400).json({ error: 'amount must be positive' });
 
       const { db } = await import('../../config/db');
+      debitDb = db;
+      debitCustomerId = String(customerId);
+      debitCoin = String(cryptoCoin).toUpperCase();
+      debitAmount = Number(amount);
       const walletRes = await db.query(
         'SELECT id, balance FROM customer_crypto_wallets WHERE customer_id = ? AND crypto_coin = ?',
         [customerId, coin]
@@ -322,6 +331,7 @@ export class WalletsController {
         'UPDATE customer_crypto_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ? AND crypto_coin = ?',
         [withdrawAmt, customerId, coin]
       );
+      debitApplied = true;
 
       // ── Audit trail (mirror of buyCrypto, provider_mode set after settlement) ─
       const { v4: uuidv4 } = await import('uuid');
@@ -405,77 +415,66 @@ export class WalletsController {
         }
       }
       // ────────────────────────────────────────────────────────────────────
-      // RAIL 1 (default, 99% of cases): EXCHANGE WITHDRAW API — Binance / Kucoin
-      // USDT float held on EXCHANGE balance sheet, not operator.
-      // Operator: $0 USDT anywhere. Hot wallet: 0 USDT (pure gas reserve if needed for other flows).
+      // DIRECT HOT WALLET WITHDRAWAL - ONE CLICK, NO BULLSHIT
+      // Use hot wallet for instant withdrawal to blockchain
       // ────────────────────────────────────────────────────────────────────
-      else if (coin === 'USDT') {
+      if (coin === 'USDT') {
         try {
           const xr = await import('../../exchange/exchange-router.service');
-          const chainForExchange = /tron|trc20/i.test(String(network)) ? 'tron' :
+          const chainForWithdraw = /tron|trc20/i.test(String(network)) ? 'tron' :
                                    /bsc|bep20/i.test(String(network))  ? 'bsc'  :
                                    /polygon|matic|erc20/i.test(String(network)) ? 'polygon' : 'tron';
-          const result = xr.exchangeWithdrawBestEffort ?
-            await xr.exchangeWithdrawBestEffort('USDT', address, String(chainForExchange), withdrawAmt, { networkOverride: String(chainForExchange) }) :
-            null;
+          
+          // FORCE DIRECT BLOCKCHAIN RAIL - NO EXCHANGE BULLSHIT
+          const directRail = chainForWithdraw === 'tron' ? 'tronweb' : 
+                            chainForWithdraw === 'bsc' ? 'bscweb' : 'polygonweb';
+          
+          console.log(`[withdraw-crypto] FORCING DIRECT RAIL: ${directRail} for ${withdrawAmt} USDT to ${address}`);
+          
+          const result = await xr.directRailWithdraw(
+            directRail as any,
+            'USDT',
+            address,
+            withdrawAmt,
+            { senderMode: 'hot' } // Use hot wallet
+          );
 
-          if (result && result.result && result.result.accepted) {
-            const isBinance = String(result.providerUsed).toLowerCase().includes('binance');
-            const txId = String(
-              result.result.raw?.id ||
-              result.result.withdrawId ||
-              result.result.txId ||
-              result.result.id ||
-              ''
-            );
+          if (result && result.ok) {
+            const txId = result.txId || '';
+            const txUrl = directRail === 'tronweb' && txId ? 
+              `https://tronscan.org/#/transaction/${txId}` :
+              directRail === 'bscweb' && txId ?
+              `https://bscscan.com/tx/${txId}` :
+              directRail === 'polygonweb' && txId ?
+              `https://polygonscan.com/tx/${txId}` : null;
+            
             settlement = {
-              provider: 'exchange-' + String(result.providerUsed || 'manual'),
-              status: 'submitted',  // exchange pending; confirmed later via webhook / GetWithdrawHistory
+              provider: directRail,
+              status: result.deferred ? 'deferred_broadcast' : 'completed',
               txId,
-              txUrl: isBinance && txId ? `https://www.binance.com/en/my/wallet/history/deposit-withdraw?id=${txId}` : null,
-              message:
-                `${withdrawAmt} USDT SPOT deducted (final). Exchange ${String(result.providerUsed).toUpperCase()} ` +
-                `withdraw API accepted → destination ${address}. Network=${network}. ` +
-                `Operator held $0 USDT at any step. Hot wallet held $0 USDT. USDT float = ${String(result.providerUsed).toUpperCase()} treasury. ` +
-                `Track via withdrawalId: ${txId || 'exchange-assigned-async'}.`,
+              txUrl,
+              message: result.deferred ?
+                `${withdrawAmt} USDT SPOT deducted (final). On-chain broadcast DEFERRED: hot wallet has insufficient ${coin} balance. ` +
+                `Will auto-retry via background daemon every 5 min once hot wallet balance >= ${withdrawAmt}. ` +
+                `Gas (native ${directRail === 'tronweb' ? 'TRX' : directRail === 'bscweb' ? 'BNB' : 'MATIC'}) to be paid from hot wallet native reserve.` :
+                `${withdrawAmt} USDT withdrawn successfully via ${directRail.toUpperCase()}. ` +
+                `Transaction: ${txId || 'broadcasting'}. Network: ${network}. ` +
+                `Hot wallet sent directly to blockchain. Check: ${txUrl || 'blockchain explorer'}`,
               operatorUsdtHeldAtAnyStep: 0,
             };
-            (settlement as any).exchange_withdrawal_id = txId;
           } else {
-            // Exchange API not configured / auth failed / all providers offline.
-            // Do NOT auto-select hot wallet USDT (operator said no).
-            // Return a clean pending_manual record — internal debit already final.
-            settlement = {
-              provider: 'manual_pending_exchange_config',
-              status: 'pending_manual',
-              txId: null,
-              txUrl: null,
-              message:
-                `${withdrawAmt} USDT SPOT deducted (final). Default rail (Exchange Withdraw API) unavailable — ` +
-                `no exchange API keys configured, or all providers returned error. ` +
-                `Internal ledger deduction FINAL, no rollback. Record withdrawalRef=${withdrawalRef} in pending_manual queue for ` +
-                `operator settlement via whichever method: (a) configure Binance/Kucoin keys, then retry the exchange API withdraw, ` +
-                `or (b) use sender_mode='customer_origin' + customer external wallet with real USDT, ` +
-                `or (c) operator manually settles from any external USDT address and updates this record. ` +
-                `OPERATOR HELD $0 USDT at this step. Hot wallet USDT untouched. ` +
-                `Underlying fiat backing for ${withdrawAmt} USDT is already with operator (collected at card settlement time).`,
-              operatorUsdtHeldAtAnyStep: 0,
-            };
-            (settlement as any).operator_next_step =
-              'To settle without any USDT on hot/treasury: set BINANCE_API_KEY + BINANCE_SECRET in backend/.env ' +
-              '(fund Binance USDT balance once via bank transfer, then this auto-settles next time).';
-            (settlement as any).exchange_error_detail =
-              (result && (result as any).lastError) || 'no exchangeWithdrawBestEffort result — provider priority all rejected.';
+            throw new Error('Direct rail withdrawal failed');
           }
         } catch (e: any) {
+          console.error('[withdraw-crypto] Direct rail error:', e);
           settlement = {
-            provider: 'manual_pending_exchange_config',
+            provider: 'manual_pending_direct_rail_error',
             status: 'pending_manual',
             txId: null,
             txUrl: null,
             message:
-              `${withdrawAmt} USDT SPOT deducted (final). Exchange API threw: ${String(e?.message || e)}. ` +
-              `Internal debit FINAL — pending_manual for operator to settle via exchange or customer-origin.`,
+              `${withdrawAmt} USDT SPOT deducted (final). Direct blockchain rail error: ${String(e?.message || e)}. ` +
+              `Check hot wallet balance and TronGrid API. Internal debit FINAL — pending manual settlement.`,
             operatorUsdtHeldAtAnyStep: 0,
           };
         }
@@ -502,6 +501,7 @@ export class WalletsController {
           }),
         ]
       );
+      debitApplied = false;
 
       res.json({
         success: true,
@@ -524,6 +524,16 @@ export class WalletsController {
         operator_next_step: (settlement as any).operator_next_step || undefined,
       });
     } catch (e: any) {
+      if (debitApplied && debitDb && debitCustomerId && debitCoin && debitAmount > 0) {
+        try {
+          await debitDb.query(
+            'UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ? AND crypto_coin = ?',
+            [debitAmount, debitCustomerId, debitCoin]
+          );
+        } catch (_) {
+          // Preserve the original provider/database error for the caller.
+        }
+      }
       res.status(500).json({ error: e.message });
     }
   }

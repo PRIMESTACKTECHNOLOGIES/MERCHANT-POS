@@ -8,6 +8,12 @@
  *   TRON_TREASURY_PRIVATE_KEY=your_treasury_private_key     → TREASURY (holds real USDT, optional)
  *   TRON_TREASURY_ADDRESS=your_treasury_T_address           → TREASURY (holds real USDT, optional)
  *   TRON_API_KEY=optional (from trongrid.io for higher rate limits)
+ *   TRON_JWT_SECRET=optional (required if JWT is enabled on TronGrid dashboard)
+ *
+ * JWT AUTHENTICATION (recommended for production):
+ *  • Enable JWT on TronGrid dashboard: https://www.trongrid.io/dashboard
+ *  • After enabling, all requests MUST include JWT token in Authorization header
+ *  • JWT tokens are auto-generated and refreshed by trongrid-jwt.ts utility
  *
  * WALLET SEGREGATION (per operator directive — NO USDT on HOT wallet):
  *  • HOT      → holds only TRX (native gas). Address seen by customers.
@@ -23,12 +29,41 @@ dotenv.config();
 
 import axios from 'axios';
 import crypto from 'crypto';
+import { createTronGridJWTManager } from '../utils/trongrid-jwt';
 
 const TRON_GRID = process.env.TRON_FULL_NODE || 'https://api.trongrid.io';
 const USDT_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 
+// JWT Manager (singleton) - auto-generates and refreshes JWT tokens
+let jwtManager: ReturnType<typeof createTronGridJWTManager> | null = null;
+
+function initJWTManager() {
+  const apiKey = process.env.TRON_API_KEY?.trim();
+  const jwtSecret = process.env.TRON_JWT_SECRET?.trim();
+  
+  if (apiKey && jwtSecret) {
+    if (!jwtManager) {
+      jwtManager = createTronGridJWTManager(apiKey, jwtSecret);
+      console.log('[TronGrid] JWT authentication enabled ✅');
+    }
+    return jwtManager;
+  }
+  return null;
+}
+
 function tronGridHeaders(): Record<string, string> {
   const key = process.env.TRON_API_KEY?.trim();
+  const jwtSecret = process.env.TRON_JWT_SECRET?.trim();
+  
+  // If JWT is enabled, use JWT manager for headers
+  if (key && jwtSecret) {
+    const manager = initJWTManager();
+    if (manager) {
+      return manager.getHeaders();
+    }
+  }
+  
+  // Fallback to API key only (legacy mode)
   return key ? { 'TRON-PRO-API-KEY': key } : {};
 }
 

@@ -524,6 +524,7 @@ export const initTables = async () => {
         source TEXT, -- e.g., 'wallet_balance' (for buying with wallet)
         reference TEXT,
         tx_hash TEXT, -- On-chain tx hash if applicable
+        meta TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         is_mock INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -534,6 +535,9 @@ export const initTables = async () => {
     } catch (_) { /* ignore exists */ }
     try {
       await db.query(`ALTER TABLE crypto_transactions ADD COLUMN is_mock INTEGER NOT NULL DEFAULT 0`);
+    } catch (_) { /* ignore exists */ }
+    try {
+      await db.query(`ALTER TABLE crypto_transactions ADD COLUMN meta TEXT`);
     } catch (_) { /* ignore exists */ }
 
     // Merchant Crypto Balances Table

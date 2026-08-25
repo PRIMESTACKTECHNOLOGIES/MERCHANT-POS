@@ -15,6 +15,8 @@ import { OfflineTransactionsPage } from "./pages/OfflineTransactionsPage";
 import { PaymentMethodsPage } from "./pages/PaymentMethodsPage";
 import { ReceiptsPage } from "./pages/ReceiptsPage";
 import { WalletsPage } from "./pages/WalletsPage";
+import { HotWalletPage } from "./pages/HotWalletPage";
+import CustomerWalletPage from "./pages/CustomerWalletPage";
 import { CustomerEntryPage } from "./pages/CustomerEntryPage";
 import { POSPageSecure } from "./pages/POSPageSecure";
 import { POSPage } from "./pages/POSPage";
@@ -79,6 +81,8 @@ function App() {
           <Route path="/payment-methods" element={<PaymentMethodsPage />} />
           <Route path="/receipts" element={<ReceiptsPage />} />
           <Route path="/wallets" element={<WalletsPage />} />
+          <Route path="/customer-wallet/:customerId" element={<CustomerWalletPage />} />
+          <Route path="/hot-wallet" element={<HotWalletPage />} />
           <Route path="/wallet" element={<Navigate to="/wallets" replace />} />
           <Route path="/customer-wallet" element={<Navigate to="/wallets" replace />} />
           <Route path="/customer-wallets" element={<Navigate to="/wallets" replace />} />

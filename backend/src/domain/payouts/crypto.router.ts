@@ -38,14 +38,31 @@ export type PayoutSenderMode = 'customer_origin' | 'netting' | 'treasury' | 'hot
 //    would leave the operator without an auditable withdrawal record.
 router.post('/merchant/:merchantId/payout/crypto', async (req, res) => {
   const { merchantId } = req.params as any;
-  const { amount_usd, asset, address, network, travelRule, sender_mode } = req.body as any;
+  const { amount_usd, asset, address, network, travelRule, sender_mode, authorizedPerson, businessInfo, payoutReason } = req.body as any;
 
   if (!amount_usd || amount_usd <= 0 || !asset || !address || !network) return res.status(400).json({ error: 'Invalid payload' });
+
+  // Validate authorized person information
+  if (!authorizedPerson?.name || !authorizedPerson?.role || !authorizedPerson?.email) {
+    return res.status(400).json({ error: 'Authorized person information required (name, role, email)' });
+  }
+
+  // Validate business information
+  if (!businessInfo?.businessName || !businessInfo?.businessAddress) {
+    return res.status(400).json({ error: 'Business information required (businessName, businessAddress)' });
+  }
 
   const assetUpper = String(asset).toUpperCase();
   const amount = Number(amount_usd);
   const isUsdt = assetUpper === 'USDT';
   const ref = `DEL-${Date.now()}`;
+
+  // Log payout authorization
+  console.log(
+    `[Payout Authorization] Merchant: ${merchantId}, Amount: ${amount_usd} ${assetUpper}, ` +
+    `Authorized by: ${authorizedPerson.name} (${authorizedPerson.role}) <${authorizedPerson.email}>, ` +
+    `Business: ${businessInfo.businessName}`
+  );
 
   // sender_mode (who signs the on-chain tx / pays the USDT):
   //   'customer_origin' → BEST OPTION. $0 operator USDT ever. Customer signs from THEIR own external wallet.
@@ -472,6 +489,13 @@ router.post('/merchant/:merchantId/payout/crypto', async (req, res) => {
     savedMeta.ref = ref;
     savedMeta.debit_final = true;
     if (travelRuleTrId) savedMeta.trId = travelRuleTrId;
+    
+    // Add authorized person and business information to meta
+    savedMeta.authorizedPerson = authorizedPerson;
+    savedMeta.businessInfo = businessInfo;
+    if (payoutReason) savedMeta.payoutReason = payoutReason;
+    savedMeta.authorizedAt = new Date().toISOString();
+    
     await db.query(
       `INSERT INTO merchant_crypto_withdrawals (id, merchant_id, amount_usd, asset, address, network, status, meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [withdrawalId, merchantId, amount, assetUpper, address, network, finalStatus, JSON.stringify(savedMeta)]
