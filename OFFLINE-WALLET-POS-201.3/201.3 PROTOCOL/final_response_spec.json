@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "201.3",
+  "merchantId": "MRC-1001",
+  "terminalId": "T2013-0001",
+  "batchId": "BATCH-20260224-01",
+  "results": [
+    {
+      "localTxnId": "TXN-0001",
+      "serverTxnId": "c3b9c5c0-8f3a-4f0b-9f1a-9f0a1f2b3c4d",
+      "status": "ACCEPTED",
+      "message": "Stored successfully"
+    }
+  ]
+}

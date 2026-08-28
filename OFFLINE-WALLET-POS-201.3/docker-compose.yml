@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  pos-app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - DATABASE_URL=./data/pos_offline.sqlite
+    restart: unless-stopped

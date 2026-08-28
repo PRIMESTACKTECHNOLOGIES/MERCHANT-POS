@@ -1,0 +1,325 @@
+================================================================================
+              COMPLETE SYSTEM ARCHITECTURE - POS MERCHANT SYSTEM
+                           Protocol 201.3 Implementation
+================================================================================
+
+                              OVERVIEW DIAGRAM
+================================================================================
+
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                        YOUR MERCHANT SETUP                          │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    
+    📱 ANDROID PHONE                💻 LAPTOP/SERVER            🌐 WEB BROWSER
+    (POS Terminal App)              (Backend System)            (Dashboard)
+    
+    ┌──────────────────┐           ┌──────────────────┐       ┌──────────────┐
+    │                  │           │                  │       │              │
+    │  MainActivity    │           │  Express.js      │       │  React App   │
+    │  • UI Display    │           │  • REST API      │       │  • Dashboard │
+    │  • Code Input    │◄─────────►│  • Validation    │◄─────►│  • Charts    │
+    │  • Amount Entry  │  WiFi/    │  • Database      │       │  • Tables    │
+    │  • Process Btn   │  Network  │  • HMAC Verify   │       │  • Real-time │
+    │                  │           │                  │       │              │
+    └────────┬─────────┘           └────────┬─────────┘       └──────────────┘
+             │                              │
+             │                              │
+    ┌────────▼─────────┐           ┌────────▼─────────┐
+    │                  │           │                  │
+    │  ApiClient       │           │  SQLite          │
+    │  • Retrofit      │           │  Database        │
+    │  • HTTP Calls    │           │                  │
+    │  • Base URL      │           │  • payment_codes │
+    │  • IP Config     │           │  • transactions  │
+    │                  │           │  • batches       │
+    │                  │           │  • merchants     │
+    │                  │           │  • terminals     │
+    └────────┬─────────┘           └──────────────────┘
+             │
+             │
+    ┌────────▼─────────┐
+    │                  │
+    │  Room Database   │
+    │  (Local Storage) │
+    │                  │
+    │  • transactions  │
+    │  • status        │
+    │  • STAN codes    │
+    └──────────────────┘
+
+
+================================================================================
+                         TRANSACTION FLOW - ONLINE MODE
+================================================================================
+
+1. MERCHANT ACTION (Phone)
+   ├─ Enter 6-digit code: 123456
+   ├─ Enter amount: $100.00
+   └─ Tap "Process Payment"
+   
+   ↓
+   
+2. APP VALIDATION (Phone)
+   ├─ Check code length = 6 digits
+   ├─ Validate amount > 0
+   └─ Show "Processing..."
+   
+   ↓
+   
+3. API CALL (Phone → Server)
+   ├─ POST /api/payment2013/redeem
+   ├─ Body: { code, amount, merchantId }
+   └─ Headers: Content-Type: application/json
+   
+   ↓
+   
+4. SERVER PROCESSING (Server)
+   ├─ Find payment code in database
+   ├─ Check if already redeemed
+   ├─ Validate amount matches
+   ├─ Mark as REDEEMED
+   ├─ Generate reference number
+   └─ Return success response
+   
+   ↓
+   
+5. RESPONSE (Server → Phone)
+   ├─ Status: 200 OK
+   ├─ Body: { success, reference, time }
+   └─ Display receipt to merchant
+   
+   ↓
+   
+6. SUCCESS! (Phone)
+   ├─ Show: "Payment Successful!"
+   ├─ Reference: REF-001
+   └─ Time: 14:30:45 03/04/2026
+
+
+================================================================================
+                        TRANSACTION FLOW - OFFLINE MODE
+================================================================================
+
+1. MERCHANT ACTION (Phone - No Internet)
+   ├─ Enter 6-digit code: 888888
+   ├─ Enter amount: $10.00
+   └─ Tap "Process Payment"
+   
+   ↓
+   
+2. NETWORK ERROR DETECTED
+   ├─ Exception caught
+   ├─ Offer offline save
+   └─ Generate 6-digit STAN
+   
+   ↓
+   
+3. LOCAL STORAGE (Phone)
+   ├─ Create transaction record
+   ├─ STAN: 000123 (auto-increment)
+   ├─ Status: PENDING_SYNC
+   └─ Store in Room database
+   
+   ↓
+   
+4. MERCHANT FEEDBACK
+   ├─ Show: "Saved Offline"
+   └─ Will sync when online
+   
+   ↓
+   
+5. LATER - WHEN ONLINE
+   ├─ Merchant taps "Sync Offline Transactions"
+   ├─ App batches all PENDING transactions
+   ├─ Generates HMAC-SHA256 signature
+   └─ POST /merchant/v1/cashout/braintree
+   
+   ↓
+   
+6. SERVER PROCESSES BATCH
+   ├─ Verify HMAC signature
+   ├─ Process each transaction
+   ├─ Update statuses to SYNCED
+   └─ Return success
+   
+   ↓
+   
+7. SYNC COMPLETE
+   ├─ Show: "All transactions uploaded"
+   └─ Dashboard shows new transactions
+
+
+================================================================================
+                      PROTOCOL 201.3 SECURITY FEATURES
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    SECURITY LAYERS                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+
+1. AUTHENTICATION
+   • API Key verification (sk_test_mock_key_12345)
+   • Merchant ID validation
+   • Terminal registration
+
+2. SIGNATURE VERIFICATION (Batch Uploads)
+   • HMAC-SHA256 algorithm
+   • Payload: protocolVersion|merchantId|terminalId|batchId|timestamp|nonce
+   • Signature in header: X-Signature
+   
+3. TRANSACTION UNIQUENESS
+   • 6-digit STAN (000001 - 999999)
+   • Auto-incrementing counter
+   • Persists across app restarts
+   
+4. IDEMPOTENCY
+   • Prevents duplicate redemptions
+   • Unique batch IDs (UUID)
+   • Transaction reference tracking
+
+5. DATA ENCRYPTION
+   • Android Keystore for secrets
+   • Encrypted SharedPreferences
+   • Secure local database storage
+
+
+================================================================================
+                         DATABASE SCHEMA OVERVIEW
+================================================================================
+
+SQLite Database: pos_offline.sqlite
+
+TABLES:
+┌─────────────────────────────────────────────────────────────┐
+│ pos2013_merchants                                           │
+├─────────────────────────────────────────────────────────────┤
+│ id, name, api_key, secret_key, created_at                   │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │ (1-to-many)
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│ pos2013_terminals                                           │
+├─────────────────────────────────────────────────────────────┤
+│ id, merchant_id, terminal_id, device_id, status             │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │ (1-to-many)
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│ pos2013_payment_codes                                       │
+├─────────────────────────────────────────────────────────────┤
+│ id, code, amount_minor, currency, is_redeemed, redeemed_at  │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │ (redeemed by)
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│ pos2013_transactions                                        │
+├─────────────────────────────────────────────────────────────┤
+│ id, stan, amount_minor, currency, reference, timestamp      │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │ (grouped into)
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│ pos2013_batches                                             │
+├─────────────────────────────────────────────────────────────┤
+│ id, batch_id, merchant_id, terminal_id, settlement_code,    │
+│ signature, uploaded_at, status                              │
+└─────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+                            FILE STRUCTURE
+================================================================================
+
+POS OFFLINE SFTWR/
+│
+├── 📱 ANDROID APP (android_pos_app/)
+│   ├── app/src/main/java/com/pos2013/offline/
+│   │   ├── data/
+│   │   │   ├── api/PosApi.kt              ← API endpoints & Retrofit config
+│   │   │   ├── model/Batch.kt             ← Data models
+│   │   │   └── AppDatabase.kt             ← Room database
+│   │   ├── ui/
+│   │   │   └── MainActivity.kt            ← Main POS interface
+│   │   └── utils/
+│   │       └── HmacHelper.kt              ← HMAC generation
+│   │
+├── 💻 BACKEND (backend/)
+│   ├── src/
+│   │   ├── domain/
+│   │   │   ├── payments/
+│   │   │   │   ├── payments.controller.ts ← Redemption endpoint
+│   │   │   │   └── payments.service.ts    ← Business logic
+│   │   │   ├── batches/
+│   │   │   │   └── batches.controller.ts  ← Batch upload endpoint
+│   │   │   └── transactions/
+│   │   │       └── transactions.service.ts
+│   │   ├── app.ts                         ← Express app setup
+│   │   └── server.ts                      ← Server entry point
+│   │
+│   ├── init_2013_db.ts                    ← Database initialization
+│   └── schema_2013_complete.sql           ← Database schema
+│
+├── 🌐 DASHBOARD (client/)
+│   ├── src/
+│   │   ├── components/                    ← React UI components
+│   │   ├── lib/api.ts                     ← Frontend API calls
+│   │   └── pages/                         ← Dashboard pages
+│   │
+└── 📚 DOCUMENTATION
+    ├── README_REAL_TRANSACTIONS.md        ← Start here!
+    ├── REAL_TRANSACTION_SETUP.md          ← Complete guide
+    ├── START_HERE_REAL_POS.md             ← Manual setup
+    ├── PHYSICAL_ANDROID_SETUP.md          ← Android details
+    ├── EASIEST_WAY_TO_BUILD_APK.md        ← APK building
+    └── QUICK_START_GUIDE.txt              ← Quick reference
+
+
+================================================================================
+                           DEPLOYMENT CHECKLIST
+================================================================================
+
+PHASE 1: SERVER SETUP
+[ ] Node.js installed
+[ ] Backend dependencies installed (npm install)
+[ ] Database initialized (npx ts-node init_2013_db.ts)
+[ ] Backend server running (npm run dev)
+[ ] Port 3000 accessible
+[ ] PC's IP address noted
+
+PHASE 2: ANDROID APP
+[ ] Android Studio opened android_pos_app project
+[ ] PosApi.kt line 40 updated with PC's IP
+[ ] Gradle sync successful
+[ ] APK built without errors
+[ ] APK transferred to phone
+[ ] "Unknown Sources" enabled on phone
+[ ] APK installed successfully
+
+PHASE 3: TESTING
+[ ] App opens on phone
+[ ] Code 123456 works (online)
+[ ] Code 999999 works (online)
+[ ] Code 888888 saves offline (WiFi off)
+[ ] Sync button uploads offline transactions
+[ ] Dashboard shows all transactions
+[ ] 6-digit STAN codes visible in dashboard
+
+PHASE 4: PRODUCTION READY
+[ ] All tests passing
+[ ] Backend running continuously
+[ ] Phone and laptop on same WiFi
+[ ] Payment codes tested
+[ ] Ready for real merchant use!
+
+
+================================================================================
+                        END OF ARCHITECTURE OVERVIEW
+================================================================================
+
+For detailed setup instructions, see: README_REAL_TRANSACTIONS.md

@@ -1,0 +1,576 @@
+
+This file contains the complete source code for the Android POS App implementing Protocol 201.3.
+Copy and paste this entire content into your AI App Builder prompt.
+
+==============================================================================
+FILE: src/main/AndroidManifest.xml
+==============================================================================
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.pos2013.offline">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="POS 201.3"
+        android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+
+==============================================================================
+FILE: src/main/res/layout/activity_main.xml
+==============================================================================
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <EditText
+        android:id="@+id/edtAmount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Amount (e.g. 201.30)"
+        android:inputType="numberDecimal" />
+
+    <EditText
+        android:id="@+id/edtPan"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Masked PAN (e.g. 411111******1111)"
+        android:layout_marginTop="8dp" />
+
+    <EditText
+        android:id="@+id/edtExpiry"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Expiry (MMYY)"
+        android:layout_marginTop="8dp" />
+
+    <Button
+        android:id="@+id/btnOfflinePay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Offline Pay"
+        android:layout_marginTop="16dp" />
+
+    <TextView
+        android:id="@+id/txtStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:textSize="14sp" />
+</LinearLayout>
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/data/model/Transaction.kt
+==============================================================================
+package com.pos2013.offline.data.model 
+ 
+import androidx.room.Entity 
+import androidx.room.PrimaryKey 
+import java.util.UUID 
+ 
+@Entity(tableName = "transactions") 
+data class TransactionEntity( 
+    @PrimaryKey val id: String = UUID.randomUUID().toString(), 
+    val amountMinor: Long,          // e.g. 20130 for 201.30 
+    val currency: String, 
+    val panMasked: String, 
+    val stan: String,               // 6-digit STAN 
+    val timestamp: Long, 
+    val expiry: String, 
+    val status: String              // PENDING, SYNCED, FAILED 
+)
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/data/model/Batch.kt
+==============================================================================
+package com.pos2013.offline.data.model
+
+data class Batch(
+    val protocolVersion: String = "201.3",
+    val merchantId: String,
+    val terminalId: String,
+    val batchId: String,
+    val timestamp: Long,
+    val nonce: String,
+    val transactions: List<TransactionEntity>
+)
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/data/dao/TransactionDao.kt
+==============================================================================
+package com.pos2013.offline.data.dao
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import com.pos2013.offline.data.model.TransactionEntity
+
+@Dao
+interface TransactionDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(tx: TransactionEntity)
+
+    @Query("SELECT * FROM transactions WHERE status = :status ORDER BY timestamp ASC")
+    suspend fun getByStatus(status: String): List<TransactionEntity>
+
+    @Query("UPDATE transactions SET status = :newStatus WHERE id IN (:ids)")
+    suspend fun updateStatus(ids: List<String>, newStatus: String)
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/data/AppDatabase.kt
+==============================================================================
+package com.pos2013.offline.data
+
+import androidx.room.Database
+import androidx.room.RoomDatabase
+import com.pos2013.offline.data.dao.TransactionDao
+import com.pos2013.offline.data.model.TransactionEntity
+
+@Database(
+    entities = [TransactionEntity::class],
+    version = 1,
+    exportSchema = false
+)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun transactionDao(): TransactionDao
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/data/AppDatabaseProvider.kt
+==============================================================================
+package com.pos2013.offline.data
+
+import android.content.Context
+import androidx.room.Room
+
+object AppDatabaseProvider {
+    @Volatile
+    private var INSTANCE: AppDatabase? = null
+
+    fun get(context: Context): AppDatabase {
+        return INSTANCE ?: synchronized(this) {
+            INSTANCE ?: Room.databaseBuilder(
+                context.applicationContext,
+                AppDatabase::class.java,
+                "pos2013.db"
+            ).build().also { INSTANCE = it }
+        }
+    }
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/config/GatewayConfig.kt
+==============================================================================
+package com.pos2013.offline.config
+
+object GatewayConfig {
+    const val LIVE_MODE: Boolean = true
+
+    // Live gateway settings
+    private const val LIVE_GATEWAY_SECRET_KEY = "MY_SUPER_SECRET_KEY_12345"
+    private const val LIVE_GATEWAY_MERCHANT_ID = "MERCHANT123"
+    private const val LIVE_GATEWAY_API_URL = "http://192.168.1.160:5000/"
+
+    // (Optional) sandbox settings
+    private const val SANDBOX_GATEWAY_SECRET_KEY = "YOUR_SANDBOX_SECRET_KEY"
+    private const val SANDBOX_GATEWAY_MERCHANT_ID = "YOUR_SANDBOX_MERCHANT_ID"
+    private const val SANDBOX_GATEWAY_API_URL = "http://192.168.1.160:5000/"
+
+    val GATEWAY_SECRET_KEY: String
+        get() = if (LIVE_MODE) LIVE_GATEWAY_SECRET_KEY else SANDBOX_GATEWAY_SECRET_KEY
+
+    val GATEWAY_MERCHANT_ID: String
+        get() = if (LIVE_MODE) LIVE_GATEWAY_MERCHANT_ID else SANDBOX_GATEWAY_MERCHANT_ID
+
+    val GATEWAY_API_URL: String
+        get() = if (LIVE_MODE) LIVE_GATEWAY_API_URL else SANDBOX_GATEWAY_API_URL
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/data/api/PosApi.kt
+==============================================================================
+package com.pos2013.offline.data.api
+
+import retrofit2.Response
+import retrofit2.http.Body
+import retrofit2.http.Header
+import retrofit2.http.POST
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import com.pos2013.offline.data.model.Batch
+
+import com.pos2013.offline.config.GatewayConfig
+
+data class RedeemRequest(
+    val code: String,
+    val amount: Double,
+    val merchantId: String
+)
+
+data class RedeemResponse(
+    val success: Boolean,
+    val message: String,
+    val reference: String?,
+    val time: String?
+)
+
+interface PosApi {
+
+    @POST("api/payment2013/batch")
+    suspend fun uploadBatch(
+        @Header("X-Signature") signature: String,
+        @Body batch: List<Batch>
+    ): Response<Unit>
+
+    // New Live Redemption Endpoint (Kept for compatibility)
+    @POST("api/payment2013/redeem")
+    suspend fun redeem(@Body body: RedeemRequest): Response<RedeemResponse>
+}
+
+object ApiClient {
+    fun create(): PosApi {
+        return Retrofit.Builder()
+            .baseUrl(GatewayConfig.GATEWAY_API_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(PosApi::class.java)
+    }
+}
+
+==============================================================================
+
+FILE: src/main/java/com/pos2013/offline/utils/KeyStoreHelper.kt
+==============================================================================
+package com.pos2013.offline.utils
+
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import java.security.KeyStore
+import javax.crypto.KeyGenerator
+import javax.crypto.Mac
+import javax.crypto.SecretKey
+import android.util.Base64
+
+object KeyStoreHelper {
+    private const val KEY_ALIAS = "POS2013_HMAC_KEY"
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+
+    fun generateHmacKeyIfNeeded() {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+        keyStore.load(null)
+
+        // If key already exists, do nothing
+        if (keyStore.containsAlias(KEY_ALIAS)) return
+
+        val keyGenerator = KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_HMAC_SHA256,
+            ANDROID_KEYSTORE
+        )
+
+        val spec = KeyGenParameterSpec.Builder(
+            KEY_ALIAS,
+            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+        )
+            .setKeySize(256)
+            .setDigests(KeyProperties.DIGEST_SHA256)
+            .setUserAuthenticationRequired(false)
+            .setIsStrongBoxBacked(true)   // Use StrongBox if available
+            .build()
+
+        keyGenerator.init(spec)
+        keyGenerator.generateKey()
+    }
+
+    fun signData(data: String): String {
+        // Ensure key exists before signing
+        generateHmacKeyIfNeeded()
+
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+        keyStore.load(null)
+
+        val secretKey = keyStore.getKey(KEY_ALIAS, null) as SecretKey
+
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(secretKey)
+
+        val signatureBytes = mac.doFinal(data.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
+    }
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/utils/Protocol2013Helper.kt
+==============================================================================
+package com.pos2013.offline.utils 
+ 
+object Protocol2013Helper { 
+ 
+    // In real app, persist last STAN in SharedPreferences or DB 
+    fun generateStan(lastStan: Int): String { 
+        val nextStan = (lastStan + 1) % 1_000_000 
+        return String.format("%06d", nextStan) 
+    }
+
+    fun generateSignature(
+        protocolVersion: String,
+        merchantId: String,
+        terminalId: String,
+        batchId: String,
+        timestamp: Long,
+        nonce: String,
+        transactionCount: Int,
+        secretKey: String
+    ): String {
+        val data = "$protocolVersion|$merchantId|$terminalId|$batchId|$timestamp|$nonce|$transactionCount"
+        val hmacSha256 = "HmacSHA256"
+        val secretKeySpec = javax.crypto.spec.SecretKeySpec(secretKey.toByteArray(), hmacSha256)
+        val mac = javax.crypto.Mac.getInstance(hmacSha256)
+        mac.init(secretKeySpec)
+        val signatureBytes = mac.doFinal(data.toByteArray())
+        return android.util.Base64.encodeToString(signatureBytes, android.util.Base64.NO_WRAP)
+    }
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/data/TransactionRepository.kt
+==============================================================================
+package com.pos2013.offline.data
+
+import com.pos2013.offline.data.api.PosApi
+import com.pos2013.offline.data.dao.TransactionDao
+import com.pos2013.offline.data.model.Batch
+import com.pos2013.offline.data.model.TransactionEntity
+import com.pos2013.offline.utils.Protocol2013Helper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.UUID
+
+class TransactionRepository(
+    private val dao: TransactionDao,
+    private val api: PosApi,
+    private val merchantId: String,
+    private val terminalId: String,
+    private val secretKey: String
+) {
+
+    suspend fun createOfflineTransaction(
+        amountMinor: Long,
+        currency: String,
+        panMasked: String,
+        expiry: String,
+        stan: String,
+        timestamp: Long = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        val tx = TransactionEntity(
+            amountMinor = amountMinor,
+            currency = currency,
+            panMasked = panMasked,
+            stan = stan,
+            timestamp = timestamp,
+            expiry = expiry,
+            status = "PENDING"
+        )
+        dao.insert(tx)
+    }
+
+    suspend fun syncPendingTransactions(): Boolean = withContext(Dispatchers.IO) {
+        val pending = dao.getByStatus("PENDING")
+        if (pending.isEmpty()) return@withContext true
+
+        val batchId = UUID.randomUUID().toString()
+        val timestamp = System.currentTimeMillis()
+        val nonce = UUID.randomUUID().toString()
+
+        val batch = Batch(
+            merchantId = merchantId,
+            terminalId = terminalId,
+            batchId = batchId,
+            timestamp = timestamp,
+            nonce = nonce,
+            transactions = pending
+        )
+
+        val signature = Protocol2013Helper.generateSignature(
+            protocolVersion = batch.protocolVersion,
+            merchantId = merchantId,
+            terminalId = terminalId,
+            batchId = batchId,
+            timestamp = timestamp,
+            nonce = nonce,
+            transactionCount = pending.size,
+            secretKey = secretKey
+        )
+
+        return try {
+            val response = api.uploadBatch(signature, listOf(batch))
+            if (response.isSuccessful) {
+                dao.updateStatus(pending.map { it.id }, "SYNCED")
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/workers/SyncWorker.kt
+==============================================================================
+package com.pos2013.offline.workers
+
+import android.content.Context
+import androidx.room.Room
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+import com.pos2013.offline.data.AppDatabase
+import com.pos2013.offline.data.TransactionRepository
+import com.pos2013.offline.data.api.ApiClient
+
+class SyncWorker(
+    appContext: Context,
+    params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
+
+    override suspend fun doWork(): Result {
+        val db = AppDatabaseProvider.get(applicationContext)
+
+        val dao = db.transactionDao()
+        val api = ApiClient.create()
+
+        val repo = TransactionRepository(
+            dao = dao,
+            api = api,
+            merchantId = GatewayConfig.GATEWAY_MERCHANT_ID,
+            terminalId = "TERM001",
+            secretKey = GatewayConfig.GATEWAY_SECRET_KEY
+        )
+
+        val ok = repo.syncPendingTransactions()
+        return if (ok) Result.success() else Result.retry()
+    }
+}
+
+==============================================================================
+FILE: src/main/java/com/pos2013/offline/ui/MainActivity.kt
+==============================================================================
+package com.pos2013.offline.ui
+
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
+import androidx.lifecycle.lifecycleScope
+import androidx.room.Room
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.pos2013.offline.data.AppDatabase
+import com.pos2013.offline.data.TransactionRepository
+import com.pos2013.offline.data.api.ApiClient
+import com.pos2013.offline.utils.Protocol2013Helper
+import com.pos2013.offline.workers.SyncWorker
+import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
+import com.pos2013.offline.R // Placeholder for R class
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var repo: TransactionRepository
+    private var lastStan: Int = 0
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        // Load STAN
+        val prefs = getSharedPreferences("pos_prefs", MODE_PRIVATE)
+        lastStan = prefs.getInt("last_stan", 0)
+
+        val db = AppDatabaseProvider.get(applicationContext)
+
+        val api = ApiClient.create()
+
+        repo = TransactionRepository(
+            dao = db.transactionDao(),
+            api = api,
+            merchantId = "MERCHANT123",
+            terminalId = "TERM001",
+            secretKey = "MY_SUPER_SECRET_KEY_12345"
+        )
+
+        scheduleSyncWorker()
+
+        val edtAmount = findViewById<EditText>(R.id.edtAmount)
+        val edtPan = findViewById<EditText>(R.id.edtPan)
+        val edtExpiry = findViewById<EditText>(R.id.edtExpiry)
+        val btnOfflinePay = findViewById<Button>(R.id.btnOfflinePay)
+        val txtStatus = findViewById<TextView>(R.id.txtStatus)
+
+        btnOfflinePay.setOnClickListener {
+            val amountText = edtAmount.text.toString().trim()
+            val panMasked = edtPan.text.toString().trim()
+            val expiry = edtExpiry.text.toString().trim()
+
+            val amount = amountText.toDoubleOrNull()
+            if (amount == null || amount <= 0) {
+                txtStatus.text = "Enter valid amount"
+                return@setOnClickListener
+            }
+
+            if (panMasked.isEmpty() || expiry.length != 4) {
+                txtStatus.text = "Enter PAN + expiry"
+                return@setOnClickListener
+            }
+
+            val amountMinor = (amount * 100).toLong()
+
+            val stan = Protocol2013Helper.generateStan(lastStan)
+            lastStan = (lastStan + 1) % 1_000_000
+            
+            // Save STAN
+            getSharedPreferences("pos_prefs", MODE_PRIVATE)
+                .edit()
+                .putInt("last_stan", lastStan)
+                .apply()
+
+            txtStatus.text = "Stored offline. STAN: $stan"
+
+            lifecycleScope.launch {
+                repo.createOfflineTransaction(
+                    amountMinor = amountMinor,
+                    currency = "USD",
+                    panMasked = panMasked,
+                    expiry = expiry,
+                    stan = stan
+                )
+            }
+        }
+    }
+
+    private fun scheduleSyncWorker() {
+        val request = PeriodicWorkRequestBuilder<SyncWorker>(
+            15, TimeUnit.MINUTES
+        ).build()
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "sync2013",
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
+    }
+}

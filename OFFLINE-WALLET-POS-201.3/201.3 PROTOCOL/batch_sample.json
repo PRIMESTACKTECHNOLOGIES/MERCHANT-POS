@@ -1,0 +1,28 @@
+{ 
+   "protocolVersion": "201.3", 
+   "merchantId": "MRC-1001", 
+   "terminalId": "T2013-0001", 
+   "batchId": "BATCH-20260224-01", 
+   "batchCreatedAt": "2026-02-24T18:00:00Z", 
+   "transactions": [ 
+     { 
+       "localTxnId": "TXN-0001", 
+       "stan": "123456", 
+       "amountMinor": 15000, 
+       "currency": "AED", 
+       "panMasked": "411111******1111", 
+       "txnType": "SALE", 
+       "txnTimestamp": "2026-02-24T17:50:00Z", 
+       "authMode": "OFFLINE_APPROVED", 
+       "entryMode": "CHIP", 
+       "rrn": null, 
+       "authCode": null, 
+       "emvData": { 
+         "tag_9F26": "1122334455667788", 
+         "tag_9F27": "80", 
+         "tag_9F10": "0610A00003220000", 
+         "tag_5F2A": "0784" 
+       } 
+     } 
+   ] 
+ }

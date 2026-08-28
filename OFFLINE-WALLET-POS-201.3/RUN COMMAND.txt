@@ -1,0 +1,2 @@
+cd "C:\Users\user\Desktop\POS OFFLINE SFTWR\backend"
+npm run dev

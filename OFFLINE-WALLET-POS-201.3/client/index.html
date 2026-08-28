@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>client</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="fallback" style="padding: 20px; font-family: sans-serif; color: #666; text-align: center;">
+      <p>If you only see this, React has not started yet.</p>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Hide fallback if React root has children
+      setTimeout(() => {
+        const root = document.getElementById('root');
+        if (root && root.children.length > 0) {
+          document.getElementById('fallback').style.display = 'none';
+        }
+      }, 2000);
+    </script>
+  </body>
+</html>

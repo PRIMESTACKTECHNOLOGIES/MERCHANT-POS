@@ -1,0 +1,197 @@
+/* Wallet card theme — wp-card classes */
+.wp-card-wrap {
+  perspective: 1200px;
+}
+.wp-card-balance-hero {
+  margin-bottom: 1.5rem;
+}
+.wp-card {
+  position: relative;
+  border-radius: 1.25rem;
+  padding: 1.5rem;
+  color: #fff;
+  min-height: 210px;
+  background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #06b6d4 100%);
+  box-shadow: 0 20px 45px rgba(59, 130, 246, 0.25),
+              0 4px 10px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+.wp-card-balance {
+  background: linear-gradient(135deg, #0f172a 0%, #1e40af 45%, #0ea5e9 100%);
+}
+.wp-card-dark {
+  background: linear-gradient(135deg, #0f172a 0%, #1f2937 50%, #111827 100%);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.35), 0 4px 8px rgba(0,0,0,0.15);
+}
+.wp-card-selected {
+  outline: 3px solid #38bdf8;
+  outline-offset: 3px;
+}
+.wp-card-frozen {
+  filter: grayscale(0.65) opacity(0.75);
+}
+.wp-card-flipped .wp-card-face { transform: rotateY(180deg); }
+.wp-card-face {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.5s ease;
+}
+.wp-card-face-back {
+  display: none;
+  transform: rotateY(180deg);
+}
+.wp-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.wp-card-chip {
+  width: 42px;
+  height: 32px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25),
+              inset 0 0 0 3px #b45309;
+  position: relative;
+}
+.wp-card-chip::after {
+  content: "";
+  position: absolute;
+  inset: 6px 5px;
+  border: 1px solid rgba(0,0,0,0.35);
+  border-radius: 3px;
+  background-image:
+    linear-gradient(90deg, rgba(0,0,0,0.28) 1px, transparent 1px),
+    linear-gradient(0deg,  rgba(0,0,0,0.28) 1px, transparent 1px);
+  background-size: 7px 7px;
+}
+.wp-card-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.wp-card-sub {
+  font-size: 0.8rem;
+  opacity: 0.85;
+  margin-top: 0.25rem;
+}
+.wp-card-wifi {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+}
+.wp-card-wifi span {
+  display: inline-block;
+  width: 4px;
+  background: rgba(255,255,255,0.85);
+  border-radius: 2px;
+}
+.wp-card-wifi span:nth-child(1) { height: 6px; opacity: 0.5; }
+.wp-card-wifi span:nth-child(2) { height: 10px; opacity: 0.65; }
+.wp-card-wifi span:nth-child(3) { height: 14px; opacity: 0.8; }
+.wp-card-wifi span:nth-child(4) { height: 18px; opacity: 1; }
+.wp-card-amount {
+  margin: 1rem 0 0.5rem;
+  font-size: 2.1rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.25);
+}
+.wp-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.wp-card-number {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.18em;
+  font-weight: 600;
+  font-size: 0.9rem;
+  opacity: 0.95;
+  font-variant-numeric: tabular-nums;
+}
+.wp-card-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.14);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(255,255,255,0.22);
+  backdrop-filter: blur(6px);
+}
+.wp-card-id1 {
+  max-width: 340px;
+}
+.wp-card-magstripe {
+  margin: 1rem -1.5rem 1rem;
+  height: 48px;
+  background: #000;
+}
+.wp-card-sig-cvv {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.wp-card-signature {
+  flex: 1;
+  height: 38px;
+  background: repeating-linear-gradient(
+    -30deg,
+    rgba(255,255,255,0.92) 0,
+    rgba(255,255,255,0.92) 4px,
+    rgba(230,230,230,0.95) 4px,
+    rgba(230,230,230,0.95) 8px
+  );
+  border-radius: 4px;
+}
+.wp-card-cvv {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #fff;
+  color: #111827;
+  font-weight: 700;
+  padding: 0.5rem 0.85rem;
+  border-radius: 4px;
+  letter-spacing: 0.25em;
+}
+.wp-card-block-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: 0.2rem;
+}
+.wp-card-block-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.wp-card-brand {
+  font-weight: 900;
+  font-style: italic;
+  font-size: 1.2rem;
+  letter-spacing: -0.01em;
+  opacity: 0.95;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.wp-brand-visa {
+  color: #fff;
+  font-family: Georgia, serif;
+}

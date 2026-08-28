@@ -1,0 +1,231 @@
+
+This file contains the complete source code for the **Customer App** (Code Generator).
+Copy and paste this entire content into your AI App Builder prompt to create the Customer App.
+
+==============================================================================
+FILE: src/main/AndroidManifest.xml
+==============================================================================
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.customer2013">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Customer 201.3"
+        android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+
+==============================================================================
+FILE: src/main/res/layout/activity_main.xml
+==============================================================================
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Request Payment Code"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="32dp"/>
+
+    <EditText
+        android:id="@+id/edtAmount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Enter Amount (e.g. 50.00)"
+        android:inputType="numberDecimal"
+        android:textSize="18sp"
+        android:padding="12dp"
+        android:background="@android:drawable/edit_text" />
+
+    <Button
+        android:id="@+id/btnGenerate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Generate Secure Code"
+        android:textSize="16sp"
+        android:padding="12dp"
+        android:layout_marginTop="24dp"
+        android:backgroundTint="#0066CC"
+        android:textColor="#FFFFFF"/>
+
+    <LinearLayout
+        android:id="@+id/layoutResult"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="32dp"
+        android:padding="16dp"
+        android:background="#F0F0F0"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Your Payment Code"
+            android:textSize="14sp"
+            android:textColor="#666666"/>
+
+        <TextView
+            android:id="@+id/txtCode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="123 456"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:gravity="center"
+            android:letterSpacing="0.1"/>
+
+        <TextView
+            android:id="@+id/txtDetails"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Amount: $50.00\nExpires in 30 mins"
+            android:gravity="center"
+            android:layout_marginTop="8dp"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/txtError"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#CC0000"
+        android:gravity="center"
+        android:layout_marginTop="16dp"
+        android:visibility="gone"/>
+
+</LinearLayout>
+
+==============================================================================
+FILE: src/main/java/com/customer2013/data/api/PaymentApi.kt
+==============================================================================
+package com.customer2013.data.api
+
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.POST
+import retrofit2.http.Query
+
+data class GenerateResponse(
+    val code: String,
+    val amount: Double,
+    val reference: String,
+    val expiresAt: String? // "createdAt" from backend, essentially
+)
+
+interface PaymentApi {
+    @POST("api/payment2013/generate")
+    suspend fun generate(@Query("amount") amount: Double): Response<GenerateResponse>
+}
+
+object ApiClient {
+    // IMPORTANT: Update this IP to your PC's IP address
+    fun create(baseUrl: String = "http://192.168.1.160:5000/"): PaymentApi {
+        return Retrofit.Builder()
+            .baseUrl(baseUrl)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(PaymentApi::class.java)
+    }
+}
+
+==============================================================================
+FILE: src/main/java/com/customer2013/ui/MainActivity.kt
+==============================================================================
+package com.customer2013.ui
+
+import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.customer2013.data.api.ApiClient
+import com.customer2013.data.api.PaymentApi
+import kotlinx.coroutines.launch
+import com.customer2013.R // Placeholder
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var api: PaymentApi
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        api = ApiClient.create()
+
+        val edtAmount = findViewById<EditText>(R.id.edtAmount)
+        val btnGenerate = findViewById<Button>(R.id.btnGenerate)
+        val layoutResult = findViewById<LinearLayout>(R.id.layoutResult)
+        val txtCode = findViewById<TextView>(R.id.txtCode)
+        val txtDetails = findViewById<TextView>(R.id.txtDetails)
+        val txtError = findViewById<TextView>(R.id.txtError)
+
+        btnGenerate.setOnClickListener {
+            val amountText = edtAmount.text.toString().trim()
+            val amount = amountText.toDoubleOrNull()
+
+            if (amount == null || amount <= 0) {
+                txtError.text = "Please enter a valid amount"
+                txtError.visibility = View.VISIBLE
+                layoutResult.visibility = View.GONE
+                return@setOnClickListener
+            }
+
+            // UI Loading state
+            btnGenerate.isEnabled = false
+            btnGenerate.text = "Generating..."
+            txtError.visibility = View.GONE
+            layoutResult.visibility = View.GONE
+
+            lifecycleScope.launch {
+                try {
+                    val resp = api.generate(amount)
+
+                    if (resp.isSuccessful && resp.body() != null) {
+                        val body = resp.body()!!
+                        
+                        // Format code with space for readability (e.g. 123 456)
+                        val formattedCode = if (body.code.length == 6) {
+                            "${body.code.substring(0, 3)} ${body.code.substring(3)}"
+                        } else {
+                            body.code
+                        }
+
+                        txtCode.text = formattedCode
+                        txtDetails.text = "Amount: $${body.amount}\nRef: ${body.reference.take(8)}..."
+                        
+                        layoutResult.visibility = View.VISIBLE
+                    } else {
+                        txtError.text = "Server Error: HTTP ${resp.code()}"
+                        txtError.visibility = View.VISIBLE
+                    }
+                } catch (e: Exception) {
+                    txtError.text = "Connection Failed: ${e.message}"
+                    txtError.visibility = View.VISIBLE
+                } finally {
+                    btnGenerate.isEnabled = true
+                    btnGenerate.text = "Generate Secure Code"
+                }
+            }
+        }
+    }
+}

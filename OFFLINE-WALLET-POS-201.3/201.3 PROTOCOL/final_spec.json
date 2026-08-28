@@ -1,0 +1,25 @@
+{
+  "protocolVersion": "201.3",
+  "merchantId": "MRC-1001",
+  "terminalId": "T2013-0001",
+  "batchId": "BATCH-20260224-01",
+  "batchCreatedAt": "2026-02-24T18:00:00Z",
+  "nonce": "f9c2a7b1e3",
+  "timestamp": "2026-02-24T18:05:00Z",
+  "signature": "BASE64_HMAC_HERE",
+  "transactions": [
+    {
+      "localTxnId": "TXN-0001",
+      "stan": "123456",
+      "amountMinor": 15000,
+      "currency": "AED",
+      "panMasked": "411111******1111",
+      "txnType": "SALE",
+      "txnTimestamp": "2026-02-24T17:50:00Z",
+      "authMode": "OFFLINE_APPROVED",
+      "entryMode": "CHIP",
+      "rrn": null,
+      "authCode": null
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Server Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 40px; background: #f4f6f8; }
+        .box { background: white; padding: 30px; border-radius: 16px; max-width: 600px; margin: 0 auto; }
+        h1 { color: #2563eb; }
+        .success { color: #10b981; font-weight: bold; }
+        button { padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>✅ Static Server is Working!</h1>
+        <p class="success">If you see this, the Vite server is running correctly.</p>
+        <p>This is a static HTML file served from the <code>public</code> folder.</p>
+        <p>Now let's test if React is working:</p>
+        <button onclick="window.location.href='/test'">Go to React Test Page</button>
+        <button onclick="window.location.href='/overview'" style="margin-left: 10px; background: #10b981;">Go to Dashboard</button>
+    </div>
+</body>
+</html>

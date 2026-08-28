@@ -1,0 +1,330 @@
+import { TLVParser } from './tlv-parser';
+import type { EMVTag } from './tlv-parser';
+
+export interface CVMResult {
+  success: boolean;
+  method: 'PIN' | 'SIGNATURE' | 'NO_CVM' | 'UNKNOWN';
+  pinVerified?: boolean;
+  signatureRequired?: boolean;
+  failed?: boolean;
+  reason?: string;
+}
+
+export interface CVMCondition {
+  type: 'ALWAYS' | 'IF_UNATTENDED_CASH' | 'IF_NOT_UNATTENDED_CASH' | 'IF_TERMINAL_SUPPORT' | 'IF_MANUAL_CASH' | 'IF_PURCHASE_WITH_CASHBACK' | 'IF_CVM_NOT_SUCCESSFUL' | 'IF_PREVIOUS_CVM_FAILED';
+  value: number;
+}
+
+export interface CVMRule {
+  method: 'FAIL' | 'PLAIN_PIN' | 'ENCIPHERED_PIN' | 'PLAIN_PIN_AND_SIGNATURE' | 'ENCIPHERED_PIN_AND_SIGNATURE' | 'SIGNATURE' | 'NO_CVM';
+  condition: CVMCondition;
+}
+
+export class CVMProcessor {
+  private supportedMethods: string[] = ['PLAIN_PIN', 'SIGNATURE', 'NO_CVM'];
+  private pinAttempts = 0;
+  private maxPinAttempts = 3;
+
+  constructor(supportedMethods: string[] = ['PLAIN_PIN', 'SIGNATURE', 'NO_CVM']) {
+    this.supportedMethods = supportedMethods;
+  }
+
+  process(cardData: string, pinEntered?: string): CVMResult {
+    try {
+      const cardTags = TLVParser.parseTLV(cardData);
+      
+      // Get CVM list from card
+      const cvmList = TLVParser.getTagValue(cardTags, '8E');
+      if (!cvmList) {
+        return {
+          success: true,
+          method: 'NO_CVM',
+          reason: 'No CVM list found'
+        };
+      }
+
+      // Parse CVM list
+      const rules = this.parseCVMList(cvmList);
+      
+      // Evaluate each rule
+      for (const rule of rules) {
+        const result = this.evaluateRule(rule, pinEntered);
+        if (result.success) {
+          return result;
+        }
+      }
+
+      // All rules failed
+      return {
+        success: false,
+        method: 'UNKNOWN',
+        failed: true,
+        reason: 'All CVM rules failed'
+      };
+    } catch (error) {
+      return {
+        success: false,
+        method: 'UNKNOWN',
+        failed: true,
+        reason: `CVM processing error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
+
+  private parseCVMList(cvmList: string): CVMRule[] {
+    const rules: CVMRule[] = [];
+    const buffer = Buffer.from(cvmList, 'hex');
+    
+    // Skip amount field (4 bytes) if present
+    let offset = 0;
+    if (buffer.length >= 4) {
+      offset = 4; // Skip amount field
+    }
+
+    // Parse CVM rules
+    while (offset + 2 <= buffer.length) {
+      const cvmByte = buffer[offset];
+      const conditionByte = buffer[offset + 1];
+      
+      const method = this.decodeCVMMethod(cvmByte);
+      const condition = this.decodeCVMCondition(conditionByte);
+      
+      if (method && condition) {
+        rules.push({ method, condition });
+      }
+      
+      offset += 2;
+    }
+
+    return rules;
+  }
+
+  private decodeCVMMethod(cvmByte: number): CVMRule['method'] {
+    const methodBits = (cvmByte >> 5) & 0x07;
+    
+    switch (methodBits) {
+      case 0: return 'FAIL';
+      case 1: return 'PLAIN_PIN';
+      case 2: return 'ENCIPHERED_PIN';
+      case 3: return 'PLAIN_PIN_AND_SIGNATURE';
+      case 4: return 'ENCIPHERED_PIN_AND_SIGNATURE';
+      case 5: return 'SIGNATURE';
+      case 6: return 'NO_CVM';
+      default: return 'FAIL';
+    }
+  }
+
+  private decodeCVMCondition(conditionByte: number): CVMCondition {
+    const conditionBits = conditionByte & 0x1F;
+    
+    switch (conditionBits) {
+      case 0x00: return { type: 'ALWAYS', value: 0 };
+      case 0x01: return { type: 'IF_UNATTENDED_CASH', value: 1 };
+      case 0x02: return { type: 'IF_NOT_UNATTENDED_CASH', value: 2 };
+      case 0x03: return { type: 'IF_TERMINAL_SUPPORT', value: 3 };
+      case 0x04: return { type: 'IF_MANUAL_CASH', value: 4 };
+      case 0x05: return { type: 'IF_PURCHASE_WITH_CASHBACK', value: 5 };
+      case 0x06: return { type: 'IF_CVM_NOT_SUCCESSFUL', value: 6 };
+      case 0x07: return { type: 'IF_PREVIOUS_CVM_FAILED', value: 7 };
+      default: return { type: 'ALWAYS', value: 0 };
+    }
+  }
+
+  private evaluateRule(rule: CVMRule, pinEntered?: string): CVMResult {
+    // Check if condition is met
+    if (!this.evaluateCondition(rule.condition)) {
+      return {
+        success: false,
+        method: this.mapMethodToResult(rule.method),
+        reason: 'Condition not met'
+      };
+    }
+
+    // Check if method is supported by terminal
+    if (!this.isMethodSupported(rule.method)) {
+      return {
+        success: false,
+        method: this.mapMethodToResult(rule.method),
+        reason: 'Method not supported by terminal'
+      };
+    }
+
+    // Process the method
+    switch (rule.method) {
+      case 'FAIL':
+        return {
+          success: false,
+          method: 'UNKNOWN',
+          failed: true,
+          reason: 'CVM rule requires failure'
+        };
+
+      case 'PLAIN_PIN':
+      case 'ENCIPHERED_PIN':
+        return this.processPINVerification(pinEntered);
+
+      case 'SIGNATURE':
+        return {
+          success: true,
+          method: 'SIGNATURE',
+          signatureRequired: true,
+          reason: 'Signature required'
+        };
+
+      case 'NO_CVM':
+        return {
+          success: true,
+          method: 'NO_CVM',
+          reason: 'No CVM required'
+        };
+
+      case 'PLAIN_PIN_AND_SIGNATURE':
+      case 'ENCIPHERED_PIN_AND_SIGNATURE':
+        const pinResult = this.processPINVerification(pinEntered);
+        if (pinResult.success) {
+          return {
+            success: true,
+            method: 'SIGNATURE',
+            pinVerified: true,
+            signatureRequired: true,
+            reason: 'PIN verified, signature required'
+          };
+        }
+        return pinResult;
+
+      default:
+        return {
+          success: false,
+          method: 'UNKNOWN',
+          failed: true,
+          reason: 'Unknown CVM method'
+        };
+    }
+  }
+
+  private evaluateCondition(condition: CVMCondition): boolean {
+    switch (condition.type) {
+      case 'ALWAYS':
+        return true;
+
+      case 'IF_UNATTENDED_CASH':
+        // Simplified: assume not unattended cash
+        return false;
+
+      case 'IF_NOT_UNATTENDED_CASH':
+        // Simplified: assume not unattended cash
+        return true;
+
+      case 'IF_TERMINAL_SUPPORT':
+        // Check if terminal supports the method
+        return true;
+
+      case 'IF_MANUAL_CASH':
+        // Simplified: assume not manual cash
+        return false;
+
+      case 'IF_PURCHASE_WITH_CASHBACK':
+        // Simplified: assume no cashback
+        return false;
+
+      case 'IF_CVM_NOT_SUCCESSFUL':
+        // Check if previous CVM failed
+        return this.pinAttempts > 0;
+
+      case 'IF_PREVIOUS_CVM_FAILED':
+        // Check if previous CVM failed
+        return this.pinAttempts > 0;
+
+      default:
+        return false;
+    }
+  }
+
+  private isMethodSupported(method: CVMRule['method']): boolean {
+    switch (method) {
+      case 'PLAIN_PIN':
+      case 'ENCIPHERED_PIN':
+        return this.supportedMethods.includes('PLAIN_PIN');
+
+      case 'SIGNATURE':
+        return this.supportedMethods.includes('SIGNATURE');
+
+      case 'NO_CVM':
+        return this.supportedMethods.includes('NO_CVM');
+
+      case 'PLAIN_PIN_AND_SIGNATURE':
+      case 'ENCIPHERED_PIN_AND_SIGNATURE':
+        return this.supportedMethods.includes('PLAIN_PIN') && this.supportedMethods.includes('SIGNATURE');
+
+      default:
+        return false;
+    }
+  }
+
+  private processPINVerification(pinEntered?: string): CVMResult {
+    if (!pinEntered) {
+      this.pinAttempts++;
+      return {
+        success: false,
+        method: 'PIN',
+        pinVerified: false,
+        reason: 'PIN not entered'
+      };
+    }
+
+    // Simplified PIN verification
+    // In a real implementation, this would verify against card's PIN
+    if (pinEntered.length >= 4 && pinEntered.length <= 12) {
+      this.pinAttempts = 0; // Reset attempts on success
+      return {
+        success: true,
+        method: 'PIN',
+        pinVerified: true,
+        reason: 'PIN verified'
+      };
+    }
+
+    this.pinAttempts++;
+    return {
+      success: false,
+      method: 'PIN',
+      pinVerified: false,
+      reason: 'PIN verification failed'
+    };
+  }
+
+  private mapMethodToResult(method: CVMRule['method']): CVMResult['method'] {
+    switch (method) {
+      case 'PLAIN_PIN':
+      case 'ENCIPHERED_PIN':
+      case 'PLAIN_PIN_AND_SIGNATURE':
+      case 'ENCIPHERED_PIN_AND_SIGNATURE':
+        return 'PIN';
+
+      case 'SIGNATURE':
+        return 'SIGNATURE';
+
+      case 'NO_CVM':
+        return 'NO_CVM';
+
+      default:
+        return 'UNKNOWN';
+    }
+  }
+
+  getSupportedMethods(): string[] {
+    return [...this.supportedMethods];
+  }
+
+  setSupportedMethods(methods: string[]): void {
+    this.supportedMethods = methods;
+  }
+
+  getPinAttempts(): number {
+    return this.pinAttempts;
+  }
+
+  resetPinAttempts(): void {
+    this.pinAttempts = 0;
+  }
+}

@@ -1,0 +1,36 @@
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Android Studio
+*.iml
+.idea/
+*.ipr
+*.iws
+
+# Keystore files (CRITICAL - never commit!)
+*.jks
+*.keystore
+*.p12
+
+# API Keys and Secrets
+*.key
+secrets.properties
+api-keys.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+/app/build/
+/build/
+/captures/
+.externalNativeBuild
+.cxx/
+
+# Version control
+*.orig

@@ -1,0 +1,56 @@
+# POS-201.3 Flutter Build Script (Safe Version)
+
+try {
+    Write-Host "=========================================" -ForegroundColor Cyan
+    Write-Host "  POS-201.3 Flutter Release Builder" -ForegroundColor Cyan
+    Write-Host "=========================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Check for Flutter
+    flutter --version > $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Flutter command not found. Please ensure Flutter is installed and in your PATH."
+    }
+    Write-Host "✓ Flutter found." -ForegroundColor Green
+
+    Write-Host ""
+    Write-Host "Step 1: Cleaning..." -ForegroundColor Yellow
+    flutter clean
+
+    Write-Host ""
+    Write-Host "Step 2: Getting dependencies..." -ForegroundColor Yellow
+    flutter pub get
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to get dependencies."
+    }
+    Write-Host "✓ Dependencies installed." -ForegroundColor Green
+
+    Write-Host ""
+    Write-Host "Step 3: Building release APK..." -ForegroundColor Yellow
+    flutter build apk --release
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ""
+        Write-Host "=========================================" -ForegroundColor Green
+        Write-Host "  ✓ BUILD SUCCESSFUL!" -ForegroundColor Green
+        Write-Host "=========================================" -ForegroundColor Green
+        $apkPath = "build\app\outputs\flutter-apk\app-release.apk"
+        $apkLocationLine = "APK Location: " + $apkPath
+        Write-Host $apkLocationLine -ForegroundColor Cyan
+    } else {
+        throw "Flutter build failed. See log for details."
+    }
+}
+catch {
+    Write-Host ""
+    Write-Host "=========================================" -ForegroundColor Red
+    Write-Host "  ✗ SCRIPT FAILED!" -ForegroundColor Red
+    Write-Host "=========================================" -ForegroundColor Red
+    $errorMessage = $_.Exception.Message
+    $errorLine = "Error: " + $errorMessage
+    Write-Host $errorLine -ForegroundColor Red
+}
+finally {
+    Write-Host ""
+    Read-Host -Prompt 'Press Enter to exit'
+}

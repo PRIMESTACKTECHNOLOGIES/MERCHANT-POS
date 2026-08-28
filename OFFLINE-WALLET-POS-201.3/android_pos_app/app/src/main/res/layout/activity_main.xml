@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#1A1A2E"
+    android:padding="16dp"
+    tools:context=".ui.MainActivity">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="POS 201.3 Terminal"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvConnectionStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🟢 Online"
+            android:textColor="#4CAF50"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <!-- Merchant Info -->
+    <TextView
+        android:id="@+id/tvMerchantInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Merchant: MRC-1001"
+        android:textColor="#AAAAAA"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/tvTerminalInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Terminal: TERM-001"
+        android:textColor="#AAAAAA"
+        android:textSize="12sp" />
+
+    <!-- Amount Display -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Amount"
+        android:textColor="#AAAAAA"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/tvAmount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="0.00"
+        android:textColor="#FFFFFF"
+        android:textSize="46sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:background="#16213E"
+        android:padding="16dp"
+        android:layout_marginTop="8dp" />
+
+    <!-- Pending Count -->
+    <TextView
+        android:id="@+id/tvPendingCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="3 pending"
+        android:textColor="#FFC107"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <!-- Number Pad -->
+    <GridLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:columnCount="3"
+        android:rowCount="4">
+
+        <Button
+            android:id="@+id/btn1"
+            style="@style/NumberPadButton"
+            android:text="1" />
+
+        <Button
+            android:id="@+id/btn2"
+            style="@style/NumberPadButton"
+            android:text="2" />
+
+        <Button
+            android:id="@+id/btn3"
+            style="@style/NumberPadButton"
+            android:text="3" />
+
+        <Button
+            android:id="@+id/btn4"
+            style="@style/NumberPadButton"
+            android:text="4" />
+
+        <Button
+            android:id="@+id/btn5"
+            style="@style/NumberPadButton"
+            android:text="5" />
+
+        <Button
+            android:id="@+id/btn6"
+            style="@style/NumberPadButton"
+            android:text="6" />
+
+        <Button
+            android:id="@+id/btn7"
+            style="@style/NumberPadButton"
+            android:text="7" />
+
+        <Button
+            android:id="@+id/btn8"
+            style="@style/NumberPadButton"
+            android:text="8" />
+
+        <Button
+            android:id="@+id/btn9"
+            style="@style/NumberPadButton"
+            android:text="9" />
+
+        <Button
+            android:id="@+id/btnClear"
+            style="@style/NumberPadButton"
+            android:text="C"
+            android:textColor="#FF5252" />
+
+        <Button
+            android:id="@+id/btn0"
+            style="@style/NumberPadButton"
+            android:text="0" />
+
+        <Button
+            android:id="@+id/btnDot"
+            style="@style/NumberPadButton"
+            android:text="." />
+    </GridLayout>
+
+    <!-- Backspace -->
+    <Button
+        android:id="@+id/btnBackspace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="⌫ Backspace"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#0F3460" />
+
+    <!-- Action Buttons -->
+    <Button
+        android:id="@+id/btnProcessPayment"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:layout_marginTop="16dp"
+        android:text="💳 Process Payment"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:backgroundTint="#4CAF50" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnRedeemCode"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_weight="1"
+            android:text="🎫 Redeem Code"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2196F3" />
+
+        <Button
+            android:id="@+id/btnSync"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="🔄 Sync"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#FF9800"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnSettings"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="8dp"
+        android:text="⚙️ Settings"
+        android:textColor="#AAAAAA"
+        android:backgroundTint="#16213E"
+        android:textSize="12sp" />
+
+    <!-- Progress Bar -->
+    <ProgressBar
+        android:id="@+id/progressBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone"
+        android:layout_marginTop="8dp" />
+
+</LinearLayout>
