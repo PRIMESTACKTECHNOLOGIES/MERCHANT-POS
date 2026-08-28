@@ -20,6 +20,13 @@ RUN rm -f /root/.npmrc
 COPY backend ./backend
 RUN npm --prefix backend run build
 
+# Build the React frontend during the image build so Render always deploys the
+# current client instead of relying on a stale checked-in client/dist folder.
+COPY client/package*.json ./client/
+RUN npm --prefix client install --no-audit --no-fund
+COPY client ./client
+RUN npm --prefix client run build
+
 # ── Stage 2: Production runtime ───────────────────────────────────────────────
 FROM node:20-bookworm-slim AS run
 WORKDIR /app
@@ -46,8 +53,8 @@ RUN rm -f /root/.npmrc
 # Copy compiled backend from Stage 1
 COPY --from=backend-build /app/backend/dist ./backend/dist
 
-# Copy pre-built React client
-COPY client/dist ./backend/dist/public
+# Copy the freshly built React client
+COPY --from=backend-build /app/client/dist ./backend/dist/public
 
 # Writable directories for SQLite database
 RUN mkdir -p /app/data /app/backend/data && chown -R node:node /app/data /app/backend/data

@@ -1,6 +1,8 @@
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import path from "path";
+import fs from "fs";
+import { db } from "./config/db";
 import { authenticateToken } from "./middleware/auth.middleware";
 import { terminalsRouter } from "./domain/terminals/terminals.router";
 import { transactionsRouter } from "./domain/transactions/transactions.router";
@@ -18,6 +20,7 @@ import apiRouter from "./domain/api/api.router";
 import payoutBankRouter from './domain/payouts/bank.router';
 import payoutCryptoRouter from './domain/payouts/crypto.router';
 import settlementsRouter from './domain/settlements/settlements.router';
+import afseRouter from './domain/settlements/afse.router';
 import { conflictResolutionRouter } from './domain/conflicts/conflict-resolution.router';
 import { auditTrailRouter } from './domain/audit/audit-trail.router';
 import { dashboardRouter } from './domain/dashboard/dashboard.router';
@@ -26,6 +29,7 @@ import { batchFileRouter } from './domain/batchfile/batchfile.router';
 import { wiseWebhookRouter } from './domain/payouts/wiseWebhook.router';
 import { cashoutsRouter } from "./domain/cashouts/cashouts.router";
 import { paymentReceiverRouter } from "./domain/paymentreceiver/paymentreceiver.router";
+import { recoveryRouter } from "./domain/reconciliation/recovery.router";
 
 export const app = express();
 
@@ -76,13 +80,17 @@ app.use("/auth/login", loginRateLimiter);
 app.use("/auth", authRouter);
 
 // ── Health checks (public) ────────────────────────────────────────────────────
-app.get("/", (_req, res) => res.json({
-  status: "ok",
-  service: "POS 201.3 Backend",
-  timestamp: new Date().toISOString(),
-  health_endpoints: ["GET /health", "GET /api/health"],
-  auth_endpoints:  ["POST /auth/login"],
-}));
+app.get("/", (_req, res) => {
+  const indexPath = path.join(__dirname, "public", "index.html");
+  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+  return res.json({
+    status: "ok",
+    service: "POS 201.3 Backend",
+    timestamp: new Date().toISOString(),
+    health_endpoints: ["GET /health", "GET /api/health"],
+    auth_endpoints:  ["POST /auth/login"],
+  });
+});
 app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 
@@ -111,9 +119,8 @@ app.post("/merchant/v1/pos/201.3/offline-batch", batchesController.processOfflin
 app.post("/merchant/v1/api/payment2013/redeem", batchesController.redeemPaymentCode.bind(batchesController));
 app.post("/merchant/v1/pos/201.3/redeem", batchesController.redeemPaymentCode.bind(batchesController));
 app.post("/merchant/v1/api/payment2013/verify", batchesController.verifyCredentials.bind(batchesController));
-
-// ── Payment router with card reader and processor endpoints ───────────────
-app.use("/merchant/v1/payments", paymentsRouter);
+app.post("/merchant/v1/api/payment2013/retry-captures", batchesController.retryFailedCaptures.bind(batchesController));
+app.post("/merchant/v1/pos/201.3/retry-captures", batchesController.retryFailedCaptures.bind(batchesController));
 
 // ── Public webhook endpoint for Wise payout notifications
 app.use('/webhooks', wiseWebhookRouter);
@@ -213,7 +220,93 @@ app.post('/webhooks/transak', express.raw({ type: 'application/json' }), async (
 });
 
 // ══ ALL ROUTES BELOW REQUIRE AUTHENTICATION ══════════════════════════════════
+
+// Diagnostic endpoints are authenticated below; never expose balances or wallet data publicly.
+app.get("/test/merchant-balance/:merchantId", authenticateToken, async (req, res) => {
+  try {
+    const { merchantId } = req.params;
+    const result = await db.query(
+      'SELECT * FROM merchant_wallets WHERE merchant_id = ? AND currency = ?',
+      [merchantId, 'USD']
+    );
+    if (result.rows.length === 0) {
+      return res.json({ error: 'Wallet not found', merchantId, balance: 0 });
+    }
+    const wallet = result.rows[0] as any;
+    console.log('[TEST] Merchant wallet from DB:', wallet);
+    res.json({ 
+      success: true,
+      merchantId, 
+      balance: Number(wallet.balance || 0),
+      currency: wallet.currency,
+      balanceRaw: wallet.balance,
+      wallet: wallet
+    });
+  } catch (e: any) {
+    console.error('[TEST] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Test endpoint: Tron hot wallet TRX + USDT balance (no auth)
+app.get("/test/tron-hot-wallet", authenticateToken, async (req, res) => {
+  try {
+    const mod = await import('./exchange/tronweb.service');
+    const addr = mod.getHotWalletAddress();
+    const trx = await mod.getHotWalletTrxBalance();
+    const usdt = await mod.getHotWalletUsdtBalance();
+    res.json({ success: true, address: addr, trx_balance: trx, usdt_trc20_balance: usdt });
+  } catch (e: any) {
+    console.error('[TEST] Tron:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Test endpoint: dump authorization_requests rows (no auth, minimal cols, AFSE debug)
+app.get("/test/authorization-requests", authenticateToken, async (req, res) => {
+  try {
+    const { db } = await import('./config/db');
+    const r = await db.query(`
+      SELECT id, authorization_code, status, amount, currency, customer_id, merchant_id,
+             transaction_id, requested_at, authorized_at, settled_at, expires_at,
+             transaction_type
+      FROM authorization_requests
+      ORDER BY COALESCE(requested_at, authorized_at) ASC
+    `);
+    res.json({ success: true, count: r.rowCount || 0, rows: r.rows || [] });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
+// Test endpoint: dump pos2013_transactions + customer mapping (no auth)
+app.get("/test/pos-transactions-cust", authenticateToken, async (req, res) => {
+  try {
+    const { db } = await import('./config/db');
+    const r = await db.query(`
+      SELECT t.id, t.auth_code, t.status, t.amount_minor, t.currency, t.card_brand,
+             t.pan_masked, t.merchant_id, t.terminal_id, t.batch_id, t.local_txn_id,
+             t.txn_timestamp, t.created_at,
+             ar.id as auth_row_id, ar.customer_id as auth_customer_id,
+             c.id as cust_id, c.name as customer_name,
+             w.id as wallet_id, w.balance, w.currency as wallet_ccy, w.wallet_code
+      FROM pos2013_transactions t
+      LEFT JOIN authorization_requests ar ON ar.transaction_id = t.id
+      LEFT JOIN customers c ON c.id = COALESCE(ar.customer_id, NULL)
+      LEFT JOIN customer_wallets w ON w.customer_id = c.id
+                                      AND w.currency = t.currency
+      ORDER BY t.created_at ASC
+    `);
+    res.json({ success: true, count: r.rowCount || 0, rows: r.rows || [] });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
 app.use(authenticateToken);
+
+// Payment and diagnostic routes require JWT authentication.
+app.use("/merchant/v1/payments", paymentsRouter);
 
 // Wallet routes
 app.use("/wallet", walletsRouter);
@@ -224,6 +317,7 @@ app.use('/api', apiRouter);
 app.use('/api', payoutBankRouter);
 app.use('/api', payoutCryptoRouter);
 app.use('/api', settlementsRouter);
+app.use('/api/settlement-engine', afseRouter);
 app.use('/api/conflicts', conflictResolutionRouter);
 app.use('/api/audit', auditTrailRouter);
 app.use('/api/dashboard', dashboardRouter);
@@ -236,6 +330,8 @@ app.use("/merchant/v1", transactionsRouter);
 app.use("/merchant/v1", productsRouter);
 app.use("/merchant/v1", settingsRouter);
 app.use("/merchant/v1", batchesRouter);
+app.use("/merchant/v1/reconciliation", recoveryRouter);
+app.use("/merchant/v1/recovery", recoveryRouter);
 app.use("/merchant/v1/receipts", receiptsRouter);
 app.use("/merchant/v1/cashouts", cashoutsRouter);
 // Internal payment receiver for standalone testing and internal integrations
