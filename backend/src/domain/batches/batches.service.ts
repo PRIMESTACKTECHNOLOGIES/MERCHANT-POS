@@ -2,9 +2,13 @@ import { db } from "../../config/db";
 import { settingsService } from "../settings/settings.service";
 import { walletsService } from "../wallets/wallets.service";
 import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
+import { ensureRecoverySchema } from '../reconciliation/recovery-engine.service';
 import crypto from "crypto";
 import { cashoutsService } from "../cashouts/cashouts.service";
 import { v4 as uuidv4 } from "uuid";
+import axios from "axios";
+import { P2013, explain, buildCode, SystemFamily, SettlementEngineModule, GatewayIntegrationsModule, ActionCode, type ProtocolCode } from "../pos2013/protocol-2013-codes";
+import { invoiceReceiptService } from "../receipts/invoice-receipt.service";
 import {
   batchExporter,
   type ExportFormat,
@@ -16,13 +20,227 @@ import {
 
 export class BatchesService {
 
+  private isUsableProcessorUrl(value: string): boolean {
+    const url = String(value || '').trim();
+    if (!/^https:\/\//i.test(url)) return false;
+    return !/(your[-_.]?processor|example\.com|localhost|127\.0\.0\.1)/i.test(url);
+  }
+
+  private getProcessorConfig() {
+    const LOOKUP_URL = process.env.CARD_PROCESSOR_LOOKUP_URL || "";
+    const CAPTURE_URL = process.env.CARD_PROCESSOR_CAPTURE_URL || "";
+    const AUTH_HEADER = process.env.CARD_PROCESSOR_AUTH_HEADER || "";
+    const TIMEOUT_MS = Number(process.env.CARD_PROCESSOR_TIMEOUT_MS || 15000);
+    const MERCHANT_ID_OVERRIDE = process.env.CARD_PROCESSOR_MERCHANT_ID || "";
+    const enabledRaw = String(process.env.CARD_PROCESSOR_ENABLED || "false").trim().toLowerCase();
+    const ENABLED =
+      (enabledRaw === "1" || enabledRaw === "true" || enabledRaw === "on" || enabledRaw === "yes") &&
+      this.isUsableProcessorUrl(LOOKUP_URL) && this.isUsableProcessorUrl(CAPTURE_URL);
+    return { LOOKUP_URL, CAPTURE_URL, AUTH_HEADER, TIMEOUT_MS, MERCHANT_ID_OVERRIDE, ENABLED };
+  }
+
+  private processorHeaders(): Record<string, string> {
+    const cfg = this.getProcessorConfig();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (cfg.AUTH_HEADER) headers["Authorization"] = cfg.AUTH_HEADER;
+    return headers;
+  }
+
+  private inferSchemeFromBrandOrPan(brand: string | null, panMasked: string | null):
+    | "visa" | "mastercard" | "unionpay" | "amex" | "unknown" {
+    try {
+      const brandLower = String(brand || "").toLowerCase().trim();
+      if (brandLower.includes("visa")) return "visa";
+      if (brandLower.includes("master") || brandLower.includes("mc") || brandLower === "mastercard") return "mastercard";
+      if (brandLower.includes("amex") || brandLower.includes("american")) return "amex";
+      if (brandLower.includes("union") || brandLower.includes("cup")) return "unionpay";
+      const pan = String(panMasked || "").replace(/\s+/g, "");
+      const first1 = pan.charAt(0);
+      const first2 = pan.slice(0, 2);
+      const first4 = Number(pan.slice(0, 4));
+      if (first1 === "4") return "visa";
+      if (["51", "52", "53", "54", "55"].includes(first2)) return "mastercard";
+      if (first4 >= 2221 && first4 <= 2720) return "mastercard";
+      if (first2 === "34" || first2 === "37") return "amex";
+      if (first1 === "6" || first1 === "9" || pan.startsWith("62")) return "unionpay";
+      return "unknown";
+    } catch { return "unknown"; }
+  }
+
+  /**
+   * Single transaction: processor LOOKUP + CAPTURE (pull real funds).
+   * Cardholder bank deducts money here during sync reconciliation.
+   * Protocol codes: 1801xx (Gateway / Processor Lookup), 1802xx (Gateway / Processor Capture)
+   */
+  private async processorLookupAndCapture(
+    merchantId: string,
+    txn: {
+      id: string; local_txn_id: string; batch_id: string; terminal_id: string;
+      stan: string; rrn?: string; auth_code?: string;
+      amount_minor: number; currency: string; pan_masked: string;
+      card_brand?: string; txn_timestamp?: string; created_at?: string;
+    }
+  ): Promise<{ success: boolean; captureRef?: string; lookupRef?: string; error?: string; events: { code: ProtocolCode; at: string; ref?: string }[] }> {
+    const cfg = this.getProcessorConfig();
+    const scheme = this.inferSchemeFromBrandOrPan(txn.card_brand || null, txn.pan_masked || null);
+    const resolvedMerchantId = cfg.MERCHANT_ID_OVERRIDE || merchantId;
+    const amount = Number(txn.amount_minor) / 100;
+    const currency = (txn.currency || "USD").toUpperCase();
+    const events: { code: ProtocolCode; at: string; ref?: string }[] = [];
+    const stamp = () => new Date().toISOString();
+
+    if (!cfg.ENABLED) {
+      events.push({ code: P2013.GATEWAY_PROCESSOR_LOOKUP_FAILED, at: stamp(), ref: txn.stan });
+      return {
+        success: false,
+        error: "LIVE_PROCESSOR_REQUIRED: CARD_PROCESSOR_ENABLED=false; transaction blocked and no funds were credited.",
+        events,
+      };
+    }
+    if (!cfg.LOOKUP_URL || !cfg.CAPTURE_URL) {
+      events.push({ code: P2013.GATEWAY_PROCESSOR_LOOKUP_FAILED, at: stamp(), ref: txn.stan });
+      return { success: false, error: `Processor not wired (missing ${!cfg.LOOKUP_URL ? "LOOKUP" : "CAPTURE"}_URL)`, events };
+    }
+
+    const lookupPayload = {
+      authorization_reference: txn.auth_code || txn.local_txn_id,
+      pos_transaction_id: txn.id,
+      local_txn_id: txn.local_txn_id,
+      batch_id: txn.batch_id,
+      terminal_id: txn.terminal_id,
+      merchant_id: resolvedMerchantId,
+      stan: txn.stan || null,
+      rrn: txn.rrn || null,
+      amount,
+      amount_minor: Number(txn.amount_minor),
+      currency,
+      card_brand: txn.card_brand || null,
+      pan_masked: txn.pan_masked || null,
+      scheme,
+      txn_timestamp: txn.txn_timestamp || null,
+      created_at: txn.created_at || null,
+    };
+
+    events.push({ code: P2013.GATEWAY_PROCESSOR_LOOKUP_STARTED, at: stamp(), ref: txn.stan });
+    let lookupResult: any = null;
+    try {
+      const r1 = await axios.post(cfg.LOOKUP_URL, lookupPayload, {
+        headers: this.processorHeaders(),
+        timeout: cfg.TIMEOUT_MS,
+      });
+      lookupResult = r1.data || {};
+      if (lookupResult && (lookupResult.success === false || lookupResult.ok === false)) {
+        events.push({ code: P2013.GATEWAY_PROCESSOR_LOOKUP_FAILED, at: stamp(), ref: txn.stan });
+        return { success: false, error: lookupResult.message || "processor lookup declined", events };
+      }
+      const lookupRef =
+        lookupResult?.lookup_id || lookupResult?.id || lookupResult?.ref || `LOOKUP-${txn.stan}`;
+      events.push({ code: P2013.GATEWAY_PROCESSOR_LOOKUP_SUCCESS, at: stamp(), ref: lookupRef });
+    } catch (err: any) {
+      events.push({ code: P2013.GATEWAY_PROCESSOR_LOOKUP_FAILED, at: stamp(), ref: txn.stan });
+      return {
+        success: false,
+        error: `LOOKUP_FAILED: ${err?.response?.data?.message || err?.message || "network error"}`,
+        events,
+      };
+    }
+
+    const pullLocation =
+      lookupResult?.funds_location ||
+      lookupResult?.funds_held_at ||
+      lookupResult?.location ||
+      "suspense";
+    const lookupRef =
+      lookupResult?.lookup_id ||
+      lookupResult?.id ||
+      lookupResult?.ref ||
+      `LOOKUP-${txn.stan}`;
+
+    const capturePayload = {
+      authorization_reference: txn.auth_code || txn.local_txn_id,
+      lookup_ref: lookupRef,
+      funds_location: pullLocation,
+      pos_transaction_id: txn.id,
+      amount,
+      amount_minor: Number(txn.amount_minor),
+      currency,
+      scheme,
+      card_brand: txn.card_brand || null,
+      pan_masked: txn.pan_masked || null,
+      merchant_id: resolvedMerchantId,
+      terminal_id: txn.terminal_id || null,
+      batch_id: txn.batch_id || null,
+      stan: txn.stan || null,
+      rrn: txn.rrn || null,
+      txn_timestamp: txn.txn_timestamp || null,
+    };
+
+    events.push({ code: P2013.GATEWAY_PROCESSOR_CAPTURE_STARTED, at: stamp(), ref: lookupRef });
+    try {
+      const r2 = await axios.post(cfg.CAPTURE_URL, capturePayload, {
+        headers: this.processorHeaders(),
+        timeout: cfg.TIMEOUT_MS,
+      });
+      const captureResult = r2.data || {};
+      const explicitFail = captureResult && (captureResult.success === false || captureResult.ok === false);
+      if (explicitFail) {
+        events.push({ code: P2013.GATEWAY_PROCESSOR_CAPTURE_FAILED, at: stamp(), ref: lookupRef });
+        return { success: false, lookupRef, error: captureResult.message || captureResult.error || "processor capture unsuccessful", events };
+      }
+      const captureRef =
+        captureResult?.captureId ||
+        captureResult?.capture_id ||
+        captureResult?.id ||
+        captureResult?.settlement_id ||
+        captureResult?.ref ||
+        `CAP-${txn.stan}`;
+      events.push({ code: P2013.GATEWAY_PROCESSOR_CAPTURE_SUCCESS, at: stamp(), ref: captureRef });
+      return { success: true, captureRef, lookupRef, events };
+    } catch (err2: any) {
+      events.push({ code: P2013.GATEWAY_PROCESSOR_CAPTURE_FAILED, at: stamp(), ref: lookupRef });
+      return {
+        success: false,
+        lookupRef,
+        error: `CAPTURE_FAILED: ${err2?.response?.data?.message || err2?.message || "network error"}`,
+        events,
+      };
+    }
+  }
+
   /**
    * Process offline batch upload — Protocol 201.3
    * Fully SQLite-compatible (no PostgreSQL syntax)
    * IDEMPOTENT: Replaying the same (batchId, merchantId, terminalId) a 2nd time returns
    * the existing settlement code and never double-credits the merchant wallet.
+   *
+   * FLOW:
+   *   1. Idempotency pre-check
+   *   2. Verify HMAC signature
+   *   3. Insert batch + transactions (status = PENDING_CAPTURE)
+   *   4. For each transaction:
+   *        a. Processor LOOKUP (find funds in scheme suspense pool)
+   *        b. Processor CAPTURE / PULL  ← THIS IS WHEN CARDHOLDER BANK DEDUCTS MONEY
+   *        c. Only on successful capture: mark SYNCED, credit merchant wallet
+   *   5. Mark batch PROCESSED, save settlement code
    */
   async processOfflineBatch(merchantId: string, terminalId: string, batchData: any) {
+    // SQLite-safe schema bootstrap — no-op if columns already exist
+    try { await db.query(`ALTER TABLE pos2013_batches ADD COLUMN captured_amount_minor INTEGER DEFAULT 0`); } catch (_) {}
+    try { await db.query(`ALTER TABLE pos2013_batches ADD COLUMN captured_count INTEGER DEFAULT 0`); } catch (_) {}
+    try { await db.query(`ALTER TABLE pos2013_batches ADD COLUMN failed_count INTEGER DEFAULT 0`); } catch (_) {}
+    try { await db.query(`ALTER TABLE pos2013_transactions ADD COLUMN upload_attempts INTEGER DEFAULT 0`); } catch (_) {}
+    try { await db.query(`ALTER TABLE ledger_entries ADD COLUMN reference_id TEXT`); } catch (_) {}
+    try { await db.query(`ALTER TABLE merchant_pos_settlements ADD COLUMN processor_capture_ref TEXT`); } catch (_) {}
+    try { await db.query(`ALTER TABLE merchant_pos_settlements ADD COLUMN processor_lookup_ref TEXT`); } catch (_) {}
+    await ensureRecoverySchema(db.query.bind(db)).catch(() => {});
+
+    const protocolEvents: { code: ProtocolCode; at: string; ref?: string; message?: string; amountMinor?: number; currency?: string }[] = [];
+    const stamp = () => new Date().toISOString();
+    protocolEvents.push({ code: P2013.BATCH_UPLOAD_STARTED, at: stamp(), ref: batchData.batchId, message: `merchant=${merchantId} terminal=${terminalId}` });
+
     const {
       protocolVersion = "201.3",
       batchId,
@@ -32,24 +250,48 @@ export class BatchesService {
       transactions = []
     } = batchData;
 
+    if (protocolVersion !== '201.3' || !batchId || !timestamp || !nonce || !signature) {
+      throw new Error('INVALID_PROTOCOL_201_3_REQUEST: protocolVersion, batchId, timestamp, nonce, and signature are required');
+    }
+    const timestampText = String(timestamp);
+    const requestTime = typeof timestamp === 'number'
+      ? timestamp
+      : /^\d+$/.test(timestampText) ? Number(timestampText) : Date.parse(timestampText);
+    if (!Number.isFinite(requestTime) || Math.abs(Date.now() - requestTime) > 10 * 60 * 1000) {
+      throw new Error('REPLAY_PROTECTION_FAILED: signed batch timestamp is missing, invalid, or expired');
+    }
+
     // ── 1. Idempotency pre-check: short-circuit if already PROCESSED ─────────
     const priorRes = await db.query(
-      `SELECT id, status, settlement_code, txn_count, total_amount_minor
+      `SELECT id, status, settlement_code, signature, nonce, txn_count, total_amount_minor, captured_count, captured_amount_minor, failed_count
          FROM pos2013_batches
         WHERE batch_id = ? AND merchant_id = ? AND terminal_id = ?
         LIMIT 1`,
       [batchId, merchantId, terminalId]
     );
-    if (priorRes.rowCount > 0 && priorRes.rows[0].status === 'PROCESSED') {
+    if (priorRes.rowCount > 0 && (priorRes.rows[0].status === 'PROCESSED' || priorRes.rows[0].status === 'PARTIAL')) {
       const prior = priorRes.rows[0];
-      console.log(`[Protocol 201.3] Batch ${batchId} replay detected — returning prior settlement (safe idempotency).`);
+      if (prior.signature !== signature || prior.nonce !== nonce) {
+        throw new Error('IDEMPOTENCY_CONFLICT: batchId was already used with a different signed request');
+      }
+      const priorCode = prior.status === 'PROCESSED' ? P2013.BATCH_UPLOAD_SUCCESS : buildCode(SystemFamily.SETTLEMENT_ENGINE, SettlementEngineModule.BATCH_UPLOAD, ActionCode.PENDING);
+      protocolEvents.push({ code: priorCode, at: stamp(), ref: prior.settlement_code, message: `idempotent replay: ${prior.status}` });
+      console.log(`[P2013 | ${P2013.BATCH_UPLOAD_SUCCESS}] Batch ${batchId} replay detected (status=${prior.status}) — returning prior settlement (safe idempotency).`);
       return {
         success: true,
         replayed: true,
         batchId,
         settlementCode: prior.settlement_code,
         txnCount: Number(prior.txn_count || 0),
-        totalAmountMinor: Number(prior.total_amount_minor || 0)
+        totalAmountMinor: Number(prior.total_amount_minor || 0),
+        capturedCount: Number(prior.captured_count || 0),
+        capturedAmountMinor: Number(prior.captured_amount_minor || 0),
+        failedCount: Number(prior.failed_count || 0),
+        batchStatus: prior.status,
+        captureErrors: [],
+        processorMode: this.getProcessorConfig().ENABLED ? 'LIVE' : 'DRY-RUN',
+        protocolLastCode: priorCode,
+        protocolEvents,
       };
     }
 
@@ -79,10 +321,30 @@ export class BatchesService {
       tsString, nonce, transactions.length, secretKey
     );
 
-    if (!signature || signature !== expectedSignature) {
-      console.warn(`[BatchService] Signature invalid or missing — expected=${expectedSignature} got=${signature}`);
+    const suppliedSignature = Buffer.from(String(signature), 'base64');
+    const expectedSignatureBytes = Buffer.from(expectedSignature, 'base64');
+    if (suppliedSignature.length !== expectedSignatureBytes.length ||
+      !crypto.timingSafeEqual(suppliedSignature, expectedSignatureBytes)) {
+      const failCode = P2013.BATCH_UPLOAD_FAILED;
+      protocolEvents.push({ code: failCode, at: stamp(), ref: batchId, message: `HMAC signature mismatch` });
+      console.warn(`[P2013 | ${failCode}] Batch ${batchId} signature invalid or missing — expected=${expectedSignature} got=${signature}`);
       throw new Error("Invalid or missing signature");
     }
+
+    const requestHash = crypto.createHash('sha256')
+      .update(JSON.stringify({ protocolVersion, merchantId, terminalId, batchId, timestamp, nonce, transactions }))
+      .digest('hex');
+    const replayInsert = await db.query(
+      `INSERT OR IGNORE INTO protocol_replay_nonces
+       (merchant_id, terminal_id, nonce, batch_id, request_hash)
+       VALUES (?, ?, ?, ?, ?)`,
+      [merchantId, terminalId, nonce, batchId, requestHash]
+    );
+    if (replayInsert.rowCount === 0) {
+      throw new Error('REPLAY_PROTECTION_FAILED: nonce has already been used');
+    }
+
+    protocolEvents.push({ code: P2013.BATCH_BUILD_STARTED, at: stamp(), ref: batchId, message: `${transactions.length} transactions in payload` });
 
     const totalAmountMinor = transactions.reduce(
       (sum: number, txn: any) => sum + (Number(txn.amountMinor) || 0), 0
@@ -109,25 +371,45 @@ export class BatchesService {
     // check (race with concurrent upload), return prior settlement safely.
     if (!actuallyInserted) {
       const recheck = await db.query(
-        `SELECT status, settlement_code, txn_count, total_amount_minor
+        `SELECT status, settlement_code, txn_count, total_amount_minor, captured_count, captured_amount_minor, failed_count
            FROM pos2013_batches WHERE batch_id = ? AND merchant_id = ? AND terminal_id = ? LIMIT 1`,
         [batchId, merchantId, terminalId]
       );
-      if (recheck.rowCount > 0 && recheck.rows[0].status === 'PROCESSED') {
+      if (recheck.rowCount > 0 && (recheck.rows[0].status === 'PROCESSED' || recheck.rows[0].status === 'PARTIAL')) {
         const p = recheck.rows[0];
-        console.log(`[Protocol 201.3] Concurrent race for ${batchId} resolved idempotently.`);
+        const rc = p.status === 'PROCESSED' ? P2013.BATCH_UPLOAD_SUCCESS : buildCode(SystemFamily.SETTLEMENT_ENGINE, SettlementEngineModule.BATCH_UPLOAD, ActionCode.PENDING);
+        protocolEvents.push({ code: rc, at: stamp(), ref: p.settlement_code, message: `idempotent concurrent race: ${p.status}` });
+        console.log(`[P2013 | ${rc}] Concurrent race for ${batchId} resolved idempotently (status=${p.status}).`);
         return {
           success: true,
           replayed: true,
           batchId,
           settlementCode: p.settlement_code,
           txnCount: Number(p.txn_count || 0),
-          totalAmountMinor: Number(p.total_amount_minor || 0)
+          totalAmountMinor: Number(p.total_amount_minor || 0),
+          capturedCount: Number(p.captured_count || 0),
+          capturedAmountMinor: Number(p.captured_amount_minor || 0),
+          failedCount: Number(p.failed_count || 0),
+          batchStatus: p.status,
+          captureErrors: [],
+          processorMode: this.getProcessorConfig().ENABLED ? 'LIVE' : 'DRY-RUN',
+          protocolLastCode: rc,
+          protocolEvents,
         };
       }
     }
+    protocolEvents.push({ code: P2013.BATCH_BUILD_SUCCESS, at: stamp(), ref: batchId, message: `rows inserted, totalAmountMinor=${totalAmountMinor}` });
 
     // ── 4. Insert transactions (INSERT OR IGNORE for idempotency) ────────────
+    //     Status starts as PENDING_CAPTURE — processor pull happens NEXT.
+    const insertedTxns: Array<{
+      id: string; local_txn_id: string; batch_id: string; terminal_id: string;
+      stan: string; rrn?: string; auth_code?: string;
+      amount_minor: number; currency: string; pan_masked: string;
+      card_brand?: string; txn_timestamp: string; created_at: string;
+      amount: number;
+    }> = [];
+
     for (const txn of transactions) {
       const txnId = txn.id || uuidv4();
       const localTxnId = txn.localTxnId || `LOCAL-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
@@ -144,7 +426,7 @@ export class BatchesService {
            amount_minor, currency, pan_masked, txn_type, auth_mode,
            entry_mode, card_brand, reader_source, cvm_result, pin_verified,
            status, emv_data, txn_timestamp, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_CAPTURE', ?, ?, ?)
       `, [
         txnId, merchantId, terminalId, batchId, localTxnId,
         txn.stan || "000000",
@@ -162,10 +444,17 @@ export class BatchesService {
         txnTimestamp, now
       ]);
 
+      await invoiceReceiptService.create({
+        type: 'POS_INVOICE', sourceTable: 'pos2013_transactions', sourceId: txnId,
+        merchantId, amount: txnAmount, currency: txnCurrency, status: 'PENDING_CAPTURE',
+        reference: txn.rrn || txn.stan || txnId, description: 'Offline batch POS invoice',
+        details: { batchId, localTxnId, stan: txn.stan || '000000', terminalId },
+      });
+
       await db.query(`
         INSERT OR IGNORE INTO offline_funds_receipts
           (id, merchant_id, terminal_id, transaction_id, stan, amount_minor, currency, status, receipt_payload, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_CAPTURE', ?, ?, ?)
       `, [
         uuidv4(),
         merchantId,
@@ -217,42 +506,161 @@ export class BatchesService {
          VALUES (?, ?, ?, ?, ?, 'unsettled', CURRENT_TIMESTAMP, ?)`,
         [settlementId, merchantId, ledgerEntry.id, txnAmount, txnCurrency, settlementMeta]
       );
+
+      insertedTxns.push({
+        id: txnId, local_txn_id: localTxnId, batch_id: batchId, terminal_id: terminalId,
+        stan: txn.stan || "000000", rrn: txn.rrn,
+        amount_minor: txnAmountMinor, currency: txnCurrency,
+        pan_masked: txn.panMasked || "****", card_brand: txn.cardBrand,
+        txn_timestamp: txnTimestamp, created_at: now,
+        amount: txnAmount,
+      });
     }
 
-    // ── 5. Mark batch PROCESSED and save settlement code ─────────────────────
+    // ── 5. Processor LOOKUP + CAPTURE per transaction — CARDHOLDER $ DEDUCTS HERE ─
+    protocolEvents.push({ code: P2013.BATCH_RECONCILE_STARTED, at: stamp(), ref: batchId, message: `capturing ${insertedTxns.length} transactions` });
+    let capturedAmountMinor = 0;
+    let capturedCount = 0;
+    let failedCount = 0;
+    const captureErrors: string[] = [];
+
+    for (const txn of insertedTxns) {
+      const capture = await this.processorLookupAndCapture(merchantId, txn);
+      protocolEvents.push(...capture.events.map(e => ({ ...e, amountMinor: txn.amount_minor, currency: txn.currency })));
+      if (capture.success) {
+        // Cardholder bank has deducted. Now: mark SYNCED + credit merchant wallet.
+        const useAuthCode = capture.captureRef && /^[0-9]{6}$/.test(capture.captureRef)
+          ? capture.captureRef
+          : settlementCode;
+        await db.query(`
+          UPDATE pos2013_transactions
+          SET status = 'SYNCED', auth_code = ?, updated_at = ?
+          WHERE id = ?
+        `, [useAuthCode, now, txn.id]);
+
+        await db.query(`
+          UPDATE offline_funds_receipts
+          SET status = 'SYNCED', synced_at = ?, updated_at = ?
+          WHERE transaction_id = ?
+        `, [now, now, txn.id]);
+
+        protocolEvents.push({ code: P2013.WALLET_CREDIT_STARTED, at: stamp(), ref: txn.id, amountMinor: txn.amount_minor, currency: txn.currency });
+        const walletRes = await walletsService.creditMerchantWallet(
+          merchantId,
+          txn.amount,
+          'offline_batch_processor_settlement',
+          capture.captureRef || settlementCode,
+          txn.currency
+        );
+        const walletOk = walletRes && (walletRes as any).success !== false;
+        protocolEvents.push({
+          code: walletOk ? P2013.WALLET_CREDIT_SUCCESS : P2013.WALLET_CREDIT_FAILED,
+          at: stamp(), ref: (walletRes as any)?.id || (walletRes as any)?.entryId || txn.id,
+          amountMinor: txn.amount_minor, currency: txn.currency
+        });
+        if (walletOk) {
+          protocolEvents.push({
+            code: P2013.WALLET_CREDIT_CREDITED, at: stamp(),
+            ref: (walletRes as any)?.id || (walletRes as any)?.entryId || capture.captureRef,
+            amountMinor: txn.amount_minor, currency: txn.currency
+          });
+        }
+
+        protocolEvents.push({ code: P2013.EMV_OFFLINE_SYNC_COMPLETED, at: stamp(), ref: txn.id, amountMinor: txn.amount_minor, currency: txn.currency });
+
+        try {
+          await db.query(
+            `UPDATE merchant_pos_settlements
+             SET status = 'settled', settled_at = ?, updated_at = ?, meta = JSON_SET(COALESCE(meta,'{}'), '$.processor_capture_ref', ?, '$.processor_lookup_ref', ?)
+             WHERE merchant_id = ? AND ledger_entry_id IN (
+               SELECT id FROM ledger_entries WHERE COALESCE(reference_id, transaction_id) = ?
+             )`,
+            [now, now, capture.captureRef || null, capture.lookupRef || null, merchantId, txn.id]
+          );
+        } catch (_settleUpdate) {
+          /* settlement audit row is best-effort only — don't fail critical capture */
+        }
+
+        capturedAmountMinor += txn.amount_minor;
+        capturedCount++;
+      } else {
+        // Processor unreachable / declined: leave PENDING_CAPTURE for retry
+        failedCount++;
+        captureErrors.push(`STAN=${txn.stan}: ${capture.error || "capture failed"}`);
+        try {
+          await db.query(`
+            UPDATE pos2013_transactions
+            SET status = 'CAPTURE_FAILED', auth_code = COALESCE(auth_code, ?), updated_at = ?
+            WHERE id = ? AND status = 'PENDING_CAPTURE'
+          `, [settlementCode, now, txn.id]);
+        } catch (_) {
+          await db.query(`
+            UPDATE pos2013_transactions
+            SET status = 'PENDING_CAPTURE', updated_at = ?
+            WHERE id = ?
+          `, [now, txn.id]);
+        }
+        try {
+          await db.query(`
+            UPDATE offline_funds_receipts
+            SET status = 'CAPTURE_FAILED', updated_at = ?
+            WHERE transaction_id = ?
+          `, [now, txn.id]);
+        } catch (_) {}
+      }
+    }
+
+    // ── 6. Mark batch PROCESSED and save settlement code ─────────────────────
+    //     If some captures failed, batch status = PARTIAL; if all failed = CAPTURE_FAILED.
+    const allInserted = insertedTxns.length;
+    let finalBatchStatus = 'PROCESSED';
+    let finalProtocolCode: ProtocolCode = P2013.BATCH_UPLOAD_SUCCESS;
+    if (failedCount > 0 && capturedCount === 0) { finalBatchStatus = 'CAPTURE_FAILED'; finalProtocolCode = P2013.BATCH_UPLOAD_FAILED; }
+    else if (failedCount > 0) { finalBatchStatus = 'PARTIAL'; finalProtocolCode = buildCode(SystemFamily.SETTLEMENT_ENGINE, SettlementEngineModule.BATCH_RECONCILE, ActionCode.PENDING); }
+    else finalProtocolCode = P2013.BATCH_RECONCILE_SUCCESS;
+
     await db.query(`
       UPDATE pos2013_batches
-      SET status = 'PROCESSED', settlement_code = ?,
-          processed_at = ?, updated_at = ?
+      SET status = ?, settlement_code = ?,
+          processed_at = ?, updated_at = ?,
+          captured_amount_minor = ?, captured_count = ?, failed_count = ?
       WHERE batch_id = ? AND merchant_id = ? AND terminal_id = ?
-    `, [settlementCode, now, now, batchId, merchantId, terminalId]);
+    `, [
+      finalBatchStatus, settlementCode, now, now,
+      capturedAmountMinor, capturedCount, failedCount,
+      batchId, merchantId, terminalId
+    ]);
+    protocolEvents.push({
+      code: finalProtocolCode, at: stamp(), ref: settlementCode,
+      amountMinor: capturedAmountMinor,
+      message: `status=${finalBatchStatus} captured=${capturedCount}/${allInserted} failed=${failedCount}`
+    });
 
-    // ── 6. Mark transactions SYNCED ──────────────────────────────────────────
-    await db.query(`
-      UPDATE pos2013_transactions
-      SET status = 'SYNCED', auth_code = ?
-      WHERE batch_id = ? AND merchant_id = ? AND terminal_id = ?
-    `, [settlementCode, batchId, merchantId, terminalId]);
-
-    // ── 7. Credit merchant wallet (total batch amount) ────────────────────────
-    //    NEVER run this on replay — idempotency guards at steps 1 & 3 protect against it.
-    if (totalAmountMinor > 0) {
-      await walletsService.creditMerchantWallet(
-        merchantId,
-        totalAmountMinor / 100,
-        'offline_batch',
-        settlementCode
-      );
+    const cfg = this.getProcessorConfig();
+    console.log(`[P2013 | ${finalProtocolCode}] Batch ${batchId} ${finalBatchStatus}. ` +
+      `captured=${capturedCount}/${allInserted} ($${(capturedAmountMinor/100).toFixed(2)}), ` +
+      `failed=${failedCount}, settlement=${settlementCode}, ` +
+      `processor=${cfg.ENABLED ? 'LIVE' : 'DRY-RUN'}`);
+    if (captureErrors.length > 0) {
+      console.warn(`[P2013 | ${buildCode(SystemFamily.SETTLEMENT_ENGINE, SettlementEngineModule.BATCH_RECONCILE, ActionCode.FAILED)}] Capture failures in batch ${batchId}:`, captureErrors);
     }
-
-    console.log(`[Protocol 201.3] Batch ${batchId} processed. Settlement code: ${settlementCode}`);
 
     return {
       success: true,
+      replayed: false,
       batchId,
       settlementCode,
       txnCount: transactions.length,
-      totalAmountMinor
+      totalAmountMinor,
+      capturedCount,
+      capturedAmountMinor,
+      failedCount,
+      batchStatus: finalBatchStatus,
+      captureErrors: captureErrors.slice(0, 25),
+      processorMode: this.getProcessorConfig().ENABLED ? 'LIVE' : 'DRY-RUN',
+      protocolLastCode: finalProtocolCode,
+      protocolLastMeaning: explain(finalProtocolCode),
+      protocolEvents,
     };
   }
 
@@ -320,6 +728,161 @@ export class BatchesService {
       terminalId: terminalId || null,
       syncedCount: synced.length,
       items: synced
+    };
+  }
+
+  /**
+   * Retry processor capture for transactions stuck in PENDING_CAPTURE or CAPTURE_FAILED.
+   * Called by: background worker / "Retry Failed Captures" button in dashboard.
+   * Cardholder bank deducts funds here on successful retry.
+   */
+  async retryFailedCaptures(params: {
+    merchantId: string;
+    terminalId?: string;
+    maxRetries?: number;
+  }) {
+    const { merchantId, terminalId, maxRetries = 10 } = params;
+    const now = new Date().toISOString();
+    const protocolEvents: { code: ProtocolCode; at: string; ref?: string; message?: string; amountMinor?: number; currency?: string }[] = [];
+    const stamp = () => new Date().toISOString();
+
+    try { await db.query(`ALTER TABLE pos2013_batches ADD COLUMN captured_amount_minor INTEGER DEFAULT 0`); } catch (_) {}
+    try { await db.query(`ALTER TABLE pos2013_batches ADD COLUMN captured_count INTEGER DEFAULT 0`); } catch (_) {}
+    try { await db.query(`ALTER TABLE pos2013_batches ADD COLUMN failed_count INTEGER DEFAULT 0`); } catch (_) {}
+    try { await db.query(`ALTER TABLE ledger_entries ADD COLUMN reference_id TEXT`); } catch (_) {}
+    await ensureRecoverySchema(db.query.bind(db)).catch(() => {});
+
+    const p: any[] = [merchantId];
+    let where = `WHERE t.merchant_id = ? AND t.status IN ('PENDING_CAPTURE','CAPTURE_FAILED')`;
+    if (terminalId) { where += ` AND t.terminal_id = ?`; p.push(terminalId); }
+    where += ` AND (COALESCE(t.upload_attempts,0) < ?)`; p.push(maxRetries);
+    where += ` ORDER BY t.created_at ASC LIMIT 100`;
+
+    const txnRes = await db.query(`
+      SELECT t.id, t.local_txn_id, t.batch_id, t.terminal_id, t.stan, t.rrn,
+             t.auth_code, t.amount_minor, t.currency, t.pan_masked, t.card_brand,
+             t.txn_timestamp, t.created_at, b.settlement_code
+      FROM pos2013_transactions t
+      LEFT JOIN pos2013_batches b ON b.batch_id = t.batch_id AND b.merchant_id = t.merchant_id
+      ${where}
+    `, p);
+
+    const txns = txnRes.rows || [];
+    protocolEvents.push({
+      code: P2013.BATCH_RECONCILE_STARTED, at: stamp(),
+      ref: `retry-capture-${merchantId.slice(0, 8)}`,
+      message: `retrying ${txns.length} captures`
+    });
+    if (txns.length === 0) {
+      protocolEvents.push({ code: P2013.BATCH_RECONCILE_SUCCESS, at: stamp(), message: "nothing to retry" });
+      return { success: true, merchantId, retried: 0, captured: 0, failed: 0, message: "No pending captures to retry.", protocolLastCode: P2013.BATCH_RECONCILE_SUCCESS, protocolLastMeaning: explain(P2013.BATCH_RECONCILE_SUCCESS), protocolEvents };
+    }
+
+    let captured = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const t of txns as any[]) {
+      const settlementCode = t.settlement_code || `SETTLE-${Date.now()}`;
+      const capture = await this.processorLookupAndCapture(merchantId, {
+        id: t.id, local_txn_id: t.local_txn_id, batch_id: t.batch_id, terminal_id: t.terminal_id,
+        stan: t.stan || "000000", rrn: t.rrn, auth_code: t.auth_code || t.local_txn_id,
+        amount_minor: Number(t.amount_minor), currency: t.currency || "USD",
+        pan_masked: t.pan_masked || "****", card_brand: t.card_brand,
+        txn_timestamp: t.txn_timestamp, created_at: t.created_at,
+      });
+      protocolEvents.push(...capture.events.map(e => ({ ...e, amountMinor: Number(t.amount_minor), currency: t.currency || "USD" })));
+      if (capture.success) {
+        const useAuthCode = capture.captureRef && /^[0-9]{6}$/.test(capture.captureRef)
+          ? capture.captureRef
+          : settlementCode;
+        await db.query(`
+          UPDATE pos2013_transactions
+          SET status = 'SYNCED', auth_code = ?, updated_at = ?
+          WHERE id = ?
+        `, [useAuthCode, now, t.id]);
+        await db.query(`
+          UPDATE offline_funds_receipts
+          SET status = 'SYNCED', synced_at = ?, updated_at = ?
+          WHERE transaction_id = ?
+        `, [now, now, t.id]);
+        const amount = Number(t.amount_minor) / 100;
+        protocolEvents.push({ code: P2013.WALLET_CREDIT_STARTED, at: stamp(), ref: t.id, amountMinor: Number(t.amount_minor), currency: t.currency || "USD" });
+        const wRes = await walletsService.creditMerchantWallet(
+          merchantId, amount, 'offline_batch_retry_settlement',
+          capture.captureRef || settlementCode, t.currency || "USD"
+        );
+        const wOk = wRes && (wRes as any).success !== false;
+        protocolEvents.push({ code: wOk ? P2013.WALLET_CREDIT_SUCCESS : P2013.WALLET_CREDIT_FAILED, at: stamp(), ref: (wRes as any)?.id || t.id, amountMinor: Number(t.amount_minor), currency: t.currency || "USD" });
+        if (wOk) protocolEvents.push({ code: P2013.WALLET_CREDIT_CREDITED, at: stamp(), ref: capture.captureRef, amountMinor: Number(t.amount_minor), currency: t.currency || "USD" });
+        protocolEvents.push({ code: P2013.EMV_OFFLINE_SYNC_COMPLETED, at: stamp(), ref: t.id, amountMinor: Number(t.amount_minor), currency: t.currency || "USD" });
+        try {
+          await db.query(`
+            UPDATE merchant_pos_settlements
+            SET status = 'settled', settled_at = ?, updated_at = ?,
+                meta = JSON_SET(COALESCE(meta,'{}'), '$.processor_capture_ref', ?, '$.processor_lookup_ref', ?, '$.retry_capture', 'true')
+            WHERE merchant_id = ? AND ledger_entry_id IN (
+              SELECT id FROM ledger_entries WHERE COALESCE(reference_id, transaction_id) = ?
+            )
+          `, [now, now, capture.captureRef || null, capture.lookupRef || null, merchantId, t.id]);
+        } catch (_settleUpdateRetry) {
+          /* settlement audit best-effort only */
+        }
+        await db.query(`
+          UPDATE pos2013_batches SET
+            captured_amount_minor = COALESCE(captured_amount_minor,0) + ?,
+            captured_count = COALESCE(captured_count,0) + 1,
+            failed_count = MAX(0, COALESCE(failed_count,0) - 1),
+            updated_at = ?
+          WHERE batch_id = ? AND merchant_id = ?
+        `, [Number(t.amount_minor), now, t.batch_id, merchantId]);
+        captured++;
+      } else {
+        failed++;
+        errors.push(`TXN=${t.id.slice(0,8)} STAN=${t.stan}: ${capture.error || "capture failed"}`);
+        await db.query(`
+          UPDATE pos2013_transactions
+          SET status = 'CAPTURE_FAILED',
+              upload_attempts = COALESCE(upload_attempts,0) + 1,
+              updated_at = ?
+          WHERE id = ?
+        `, [now, t.id]);
+      }
+    }
+
+    const batchIds = [...new Set((txns as any[]).map((t: any) => t.batch_id).filter(Boolean))];
+    for (const bid of batchIds) {
+      await db.query(`
+        UPDATE pos2013_batches SET
+          status = CASE
+            WHEN COALESCE(failed_count,0) = 0 AND COALESCE(captured_count,0) > 0 THEN 'PROCESSED'
+            WHEN COALESCE(failed_count,0) > 0 AND COALESCE(captured_count,0) = 0 THEN 'CAPTURE_FAILED'
+            WHEN COALESCE(failed_count,0) > 0 THEN 'PARTIAL'
+            ELSE status
+          END,
+          updated_at = ?
+        WHERE batch_id = ? AND merchant_id = ?
+      `, [now, bid, merchantId]);
+    }
+    const finalCode: ProtocolCode = failed === 0
+      ? P2013.BATCH_RECONCILE_SUCCESS
+      : (captured > 0
+        ? buildCode(SystemFamily.SETTLEMENT_ENGINE, SettlementEngineModule.BATCH_RECONCILE, ActionCode.PENDING)
+        : P2013.BATCH_UPLOAD_FAILED);
+    protocolEvents.push({ code: finalCode, at: stamp(), message: `retried=${txns.length} captured=${captured} failed=${failed}` });
+    console.log(`[P2013 | ${finalCode}] retryFailedCaptures merchant=${merchantId.slice(0, 8)} retried=${txns.length} captured=${captured} failed=${failed}`);
+
+    return {
+      success: true,
+      merchantId,
+      retried: txns.length,
+      captured,
+      failed,
+      processorMode: this.getProcessorConfig().ENABLED ? 'LIVE' : 'DRY-RUN',
+      errors: errors.slice(0, 50),
+      protocolLastCode: finalCode,
+      protocolLastMeaning: explain(finalCode),
+      protocolEvents,
     };
   }
 
@@ -537,11 +1100,14 @@ export class BatchesService {
   }) {
     const { merchantId, terminalId, includeGhost = false, force = false } = params;
     const now = new Date().toISOString();
+    const stamp = () => new Date().toISOString();
+    const protocolEvents: { code: ProtocolCode; at: string; ref?: string; message?: string }[] = [];
 
     if (params.batchId) {
       const existing = await this.getBatchDetails(params.batchId, merchantId);
       if (!existing) throw new Error("Batch not found");
       const batch = existing.batch;
+      protocolEvents.push({ code: P2013.BATCH_CLOSE_STARTED, at: stamp(), ref: batch.batch_id });
       const secret = await this.resolveSecret(merchantId, existing.batch.terminal_id);
       const signatureNonce = batch.nonce || crypto.randomBytes(12).toString("hex");
       const signed = this.generateHmacSignature(
@@ -549,6 +1115,7 @@ export class BatchesService {
         merchantId, batch.terminal_id, batch.batch_id,
         now, signatureNonce, existing.txnCount, secret
       );
+      const finalSettlement = batch.settlement_code || String(Math.floor(100000 + Math.random() * 900000));
       await db.query(
         `UPDATE pos2013_batches
             SET status = 'CLOSED',
@@ -560,14 +1127,18 @@ export class BatchesService {
           WHERE batch_id = ? AND merchant_id = ? AND terminal_id = ?`,
         [
           signed, signatureNonce,
-          batch.settlement_code || String(Math.floor(100000 + Math.random() * 900000)),
+          finalSettlement,
           batch.processed_at || now,
           now, batch.batch_id, merchantId, batch.terminal_id
         ]
       );
-      return this.getBatchDetails(batch.batch_id, merchantId);
+      protocolEvents.push({ code: P2013.BATCH_CLOSE_SUCCESS, at: stamp(), ref: batch.batch_id, message: `settlement=${finalSettlement}` });
+      console.log(`[P2013 | ${P2013.BATCH_CLOSE_SUCCESS}] closeBatch explicit bid=${batch.batch_id} txns=${existing.txnCount}`);
+      const details = await this.getBatchDetails(batch.batch_id, merchantId);
+      return { ...details!, protocolLastCode: P2013.BATCH_CLOSE_SUCCESS, protocolLastMeaning: explain(P2013.BATCH_CLOSE_SUCCESS), protocolEvents };
     }
 
+    protocolEvents.push({ code: P2013.BATCH_CLOSE_STARTED, at: stamp(), message: `closing orphans for merchant=${merchantId.slice(0,8)}` });
     let fromClause = `FROM pos2013_transactions WHERE merchant_id = ? AND (batch_id IS NULL OR batch_id = '')`;
     const queryParams: any[] = [merchantId];
     if (terminalId) { fromClause += ` AND terminal_id = ?`; queryParams.push(terminalId); }
@@ -613,8 +1184,10 @@ export class BatchesService {
       `UPDATE pos2013_transactions SET batch_id = ?, status = 'CLOSED', updated_at = CURRENT_TIMESTAMP WHERE id IN (${orphanTxns.map(() => "?").join(",")})`,
       [newBatchId, ...orphanTxns.map(t => t.id)]
     );
-
-    return this.getBatchDetails(newBatchId, merchantId);
+    protocolEvents.push({ code: P2013.BATCH_CLOSE_SUCCESS, at: stamp(), ref: newBatchId, message: `txns=${orphanTxns.length} settlement=${settlementCode}` });
+    console.log(`[P2013 | ${P2013.BATCH_CLOSE_SUCCESS}] closeBatch new bid=${newBatchId} orphans=${orphanTxns.length}`);
+    const details = await this.getBatchDetails(newBatchId, merchantId);
+    return { ...details!, protocolLastCode: P2013.BATCH_CLOSE_SUCCESS, protocolLastMeaning: explain(P2013.BATCH_CLOSE_SUCCESS), protocolEvents };
   }
 
   async exportBatch(batchId: string, format: ExportFormat, opts: Partial<ExportOpts> & { merchantId?: string; }) {
@@ -627,17 +1200,127 @@ export class BatchesService {
     const banking = ext.banking || {};
     const business = ext.business || {};
 
+    let defaultBank: any = null;
+    try {
+      const bRes = await db.query(`
+        SELECT * FROM bank_accounts
+         WHERE merchant_id = ? AND (is_default = 1 OR verified = 1)
+         ORDER BY is_default DESC, verified DESC, created_at DESC
+         LIMIT 1
+      `, [batch.merchant_id]);
+      if (bRes.rowCount) defaultBank = bRes.rows[0];
+    } catch (_e) { defaultBank = null; }
+
+    let bizInfo: any = null;
+    try {
+      const biRes = await db.query(`SELECT * FROM merchant_business_info WHERE merchant_id = ? LIMIT 1`, [batch.merchant_id]);
+      if (biRes.rowCount) bizInfo = biRes.rows[0];
+    } catch (_e) { bizInfo = null; }
+
+    const routingNumber =
+      banking.routingNumber ||
+      banking.routing_number ||
+      defaultBank?.routing_number ||
+      "";
+    const accountNumber =
+      banking.accountNumber ||
+      banking.account_number ||
+      defaultBank?.account_number ||
+      "";
+    const iban =
+      banking.iban ||
+      defaultBank?.iban ||
+      "";
+    const swiftBic =
+      banking.bic_swift ||
+      banking.swift_code ||
+      defaultBank?.swift_code ||
+      defaultBank?.bic_swift ||
+      "";
+    const accountHolder =
+      banking.account_holder ||
+      banking.accountHolder ||
+      defaultBank?.account_holder ||
+      "";
+    const bankName =
+      banking.bank_name ||
+      banking.bankName ||
+      defaultBank?.bank_name ||
+      "";
+    const accountCurrency =
+      banking.currency ||
+      defaultBank?.currency ||
+      "";
+
+    const addressCountryCode =
+      (bizInfo?.business_country || business.business_country || defaultBank?.country || "")
+        .trim().toUpperCase();
+
+    const addressCity =
+      bizInfo?.business_city || business.business_city || "";
+
+    const addressFirstLine =
+      bizInfo?.business_address || business.business_address || defaultBank?.bank_branch || "";
+
+    const addressState =
+      bizInfo?.business_state || business.business_state ||
+      (addressCountryCode === "AE" ? (addressCity && /dubai|DXB/i.test(addressCity) ? "DU" : "AB") : "");
+
+    const transferPurpose =
+      banking.transferPurpose || banking.transfer_purpose ||
+      "BUSINESS_PAYMENT";
+
+    const receiverType: "PRIVATE" | "INSTITUTION" =
+      (banking.receiverType || banking.receiver_type === "PRIVATE")
+        ? "PRIVATE"
+        : "INSTITUTION";
+
+    const companyName =
+      ext.display_name ||
+      business.businessName ||
+      business.business_name ||
+      bizInfo?.business_name ||
+      settings.merchant_name ||
+      batch.merchant_id;
+
+    const merchantName =
+      settings.merchant_name ||
+      companyName;
+
+    const supportEmail =
+      settings.support_email ||
+      bizInfo?.business_email ||
+      "";
+
+    const supportPhone =
+      settings.support_phone ||
+      bizInfo?.business_phone ||
+      "";
+
     const result = batchExporter.export(batch as BatchRowShape, transactions as TxnRowShape[], format, {
       includeGhost: opts.includeGhost === true,
       secretKey: secret,
       generatedAt: opts.generatedAt,
       merchant: {
-        merchantName: settings.merchant_name || business.businessName || batch.merchant_id,
-        companyName: business.businessName || settings.merchant_name || batch.merchant_id,
-        supportEmail: settings.support_email,
-        ein: business.taxId || business.ein || "",
-        routingNumber: banking.routingNumber || "",
-        accountNumber: banking.accountNumber || "",
+        merchantName,
+        companyName,
+        supportEmail,
+        supportPhone,
+        businessCountry: bizInfo?.business_country || business.business_country || "",
+        businessAddress: bizInfo?.business_address || business.business_address || "",
+        ein: business.taxId || business.ein || bizInfo?.business_reg_no || bizInfo?.tax_id || "",
+        routingNumber,
+        accountNumber,
+        iban,
+        swiftBic,
+        accountHolder,
+        bankName,
+        accountCurrency,
+        accountType:
+          banking.account_type ||
+          banking.accountType ||
+          defaultBank?.account_type ||
+          "",
         settlementCode: batch.settlement_code || undefined,
       },
     });
@@ -660,6 +1343,11 @@ export class BatchesService {
         signature: result.signature,
         canonicalPayload: result.canonicalPayload,
         generatedAt: result.generatedAt,
+        meta: {
+          default_bank_id: defaultBank?.id || null,
+          business_info_used: !!bizInfo,
+          banking_source: defaultBank && !banking.accountNumber ? "bank_accounts_table" : "extended_settings",
+        },
       }),
       batch.batch_id, batch.merchant_id, batch.terminal_id
     ]);

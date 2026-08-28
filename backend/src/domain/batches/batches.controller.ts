@@ -478,6 +478,25 @@ export class BatchesController {
       res.status(500).json({ success: false, error: e.message });
     }
   }
+
+  /**
+   * Retry processor capture for failed / stuck transactions.
+   * POST /batches/retry-captures
+   * Body: { terminalId?, maxRetries? }
+   * Triggers: when processor was offline during initial sync → retries cardholder deduction.
+   */
+  async retryFailedCaptures(req: Request, res: Response) {
+    try {
+      const merchantId = (req.headers['x-merchant-id'] as string) || req.body.merchantId || 'MRC-1001';
+      const terminalId = (req.headers['x-terminal-id'] as string) || req.body?.terminalId;
+      const maxRetries = Number(req.body?.maxRetries || req.query?.maxRetries || 10);
+      const result = await batchesService.retryFailedCaptures({ merchantId, terminalId, maxRetries });
+      res.json({ ...result });
+    } catch (e: any) {
+      console.error('retryFailedCaptures error:', e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  }
 }
 
 export const batchesController = new BatchesController();
