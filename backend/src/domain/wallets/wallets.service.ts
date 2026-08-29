@@ -689,60 +689,96 @@ export class WalletsService {
     };
   }
 
-  async buyCryptoWithWallet(customerId: string, cryptoCoin: string, fiatAmount: number, network?: string, currency: string = 'AED') {
+  async buyCryptoWithWallet(
+    customerId: string,
+    cryptoCoin: string,
+    fiatAmount: number,
+    network?: string,
+    currency: string = 'USD'
+  ) {
     const ccy = this.normalizeCurrency(currency);
-    const coin = cryptoCoin.toUpperCase();
-    const cryptoWallet = await this.getOrCreateCryptoWallet(customerId, coin);
-    const exchangeRate = await this.getCryptoPrice(coin);
-    let cryptoAmount = fiatAmount / exchangeRate;
-    let exchangeOrderId: string | null = null;
-    let providerMode = 'live';
+    const coin = String(cryptoCoin || '').trim().toUpperCase();
+    const amount = Number(fiatAmount);
+    if (!customerId || !coin || !Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Customer, crypto coin, and a positive fiat amount are required');
+    }
 
     const wallet = await this.getOrCreateWallet(customerId, ccy);
     const balRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
-    if (Number(balRes.rows[0]?.balance ?? 0) < fiatAmount) throw new Error(`Insufficient ${ccy} wallet balance`);
+    const balance = Number(balRes.rows[0]?.balance ?? 0);
+    if (balance < amount) throw new Error(`Insufficient ${ccy} wallet balance`);
+
+    const usdAmount = amount * getFxRate(ccy, 'USD');
+    let cryptoAmount = 0;
+    let exchangeOrderId: string | null = null;
+    let providerMode = '';
+    let exchangeRate = 0;
 
     try {
       const xr = await import('../../exchange/exchange-router.service');
-      const usdAmount = ccy === 'AED' ? fiatAmount / 3.67 : fiatAmount;
+      const quote = await xr.getBestPrice(coin);
+      exchangeRate = Number(quote.priceUsd);
       const order = await xr.buyAssetBestEffort(coin, usdAmount);
-      if (order && order.ok) {
-        cryptoAmount = parseFloat(String(order.executedQty ?? cryptoAmount));
-        exchangeOrderId = String(order.order_id || '');
-        providerMode = order.provider;
-        console.log(`[Crypto] Customer buy: ${cryptoAmount} ${coin} via ${providerMode} orderId=${exchangeOrderId}`);
+      if (!order?.ok) throw new Error('Exchange did not confirm the purchase');
+
+      cryptoAmount = Number(order.executedQty ?? order.executed_qty ?? 0);
+      exchangeOrderId = order.order_id ? String(order.order_id) : null;
+      providerMode = String(order.provider || 'live');
+      if (!Number.isFinite(cryptoAmount) || cryptoAmount <= 0) {
+        throw new Error('Exchange returned no executed quantity');
       }
+      console.log(`[Crypto] Customer buy: ${cryptoAmount} ${coin} via ${providerMode} orderId=${exchangeOrderId || 'n/a'}`);
     } catch (exErr: any) {
       const message = String(exErr?.message || 'Live crypto purchase failed').slice(0, 500);
-      throw new Error(
-        /WIDGET_REQUIRED|NO_LIVE_CRYPTO_EXCHANGE_CONFIGURED|LIVE_PRICE_UNAVAILABLE/.test(message)
-          ? `Transak checkout required: open the Transak BUY widget to purchase ${coin} with an external payment method.`
-          : `Customer crypto purchase aborted: ${message}`
-      );
+      throw new Error(`Customer crypto purchase aborted: ${message}`);
     }
-    await db.query(
-      `INSERT INTO wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description) VALUES (?, ?, 'debit', ?, ?, 'crypto_purchase', ?, ?)`,
-      [uuidv4(), wallet.id, fiatAmount, ccy, exchangeOrderId || uuidv4(), `Bought ${cryptoAmount.toFixed(8)} ${coin} @ ${exchangeRate} [${providerMode}]`]
-    );
 
-    await db.query('UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cryptoAmount, cryptoWallet.id]);
-    await db.query(
-      `INSERT INTO crypto_transactions (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount, fiat_currency, exchange_rate, source, provider_mode, status)
-       VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, 'wallet_balance', ?, 'completed')`,
-      [uuidv4(), customerId, coin, fiatAmount, cryptoAmount, ccy, exchangeRate, network || providerMode]
-    );
+    const cryptoWallet = await this.getOrCreateCryptoWallet(customerId, coin);
+    const reference = exchangeOrderId || uuidv4();
+    await db.query('BEGIN');
+    try {
+      const current = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
+      if (Number(current.rows[0]?.balance ?? 0) < amount) {
+        throw new Error(`Insufficient ${ccy} wallet balance`);
+      }
+      await db.query(
+        'UPDATE customer_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [amount, wallet.id]
+      );
+      await db.query(
+        `INSERT INTO wallet_transactions
+         (id, wallet_id, type, amount, currency, source, reference, description)
+         VALUES (?, ?, 'debit', ?, ?, 'crypto_purchase', ?, ?)`,
+        [uuidv4(), wallet.id, amount, ccy, reference, `Bought ${cryptoAmount.toFixed(8)} ${coin} @ ${exchangeRate} [${providerMode}]`]
+      );
+      await db.query(
+        'UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [cryptoAmount, cryptoWallet.id]
+      );
+      await db.query(
+        `INSERT INTO crypto_transactions
+         (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount,
+          fiat_currency, exchange_rate, source, provider_mode, status)
+         VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, 'wallet_balance', ?, 'completed')`,
+        [uuidv4(), customerId, coin, amount, cryptoAmount, ccy, exchangeRate, providerMode]
+      );
+      await db.query('COMMIT');
+    } catch (err) {
+      await db.query('ROLLBACK');
+      throw err;
+    }
 
     return {
       success: true,
       cryptoAmount,
       cryptoCoin: coin,
       exchangeRate,
-      fiatAmount,
+      fiatAmount: amount,
       fiat_currency: ccy,
       providerMode,
       binanceOrderId: exchangeOrderId,
       exchangeOrderId,
-      network: network || 'primary'
+      network: network || 'primary',
     };
   }
 
