@@ -126,11 +126,22 @@ export class PaymentsController {
         });
       }
 
-      const card = await acr122uReaderService.readCard();
+      const amountMinor = Number(req.body?.amountMinor || 0);
+      const currency = String(req.body?.currency || 'USD').toUpperCase();
+      const card = await acr122uReaderService.readCard(amountMinor, currency);
       if (!card) {
         return res.status(404).json({
           success: false,
           error: "No card detected."
+        });
+      }
+
+      if (!(card as any).emvReady) {
+        return res.status(422).json({
+          success: false,
+          nfcDetected: true,
+          paymentCardReady: false,
+          error: (card as any).error || 'NFC device detected, but no EMV payment application was available. Use a certified contactless terminal for phone wallets.'
         });
       }
 

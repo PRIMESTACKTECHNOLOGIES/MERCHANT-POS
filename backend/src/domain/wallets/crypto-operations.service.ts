@@ -4,6 +4,7 @@ import { cryptoWalletsService } from './crypto-wallets.service';
 import { transakService } from './transak.service';
 import axios from 'axios';
 import { getOrDeriveCustomerWallet, toDerivationNetwork } from '../../utils/walletGen';
+import { invoiceReceiptService } from '../receipts/invoice-receipt.service';
 
 export interface BuyCryptoRequest {
   customer_id: string;
@@ -145,6 +146,13 @@ export class CryptoOperationsService {
         ]
       );
 
+      await invoiceReceiptService.create({
+        type: 'CRYPTO_PURCHASE_RECEIPT', sourceTable: 'crypto_transactions_log_v2', sourceId: txnId,
+        customerId: req.customer_id, amount: req.amount_usd, currency: 'USD', status: 'PENDING_PAYMENT',
+        reference: order.order_id, description: `Crypto purchase order for ${req.crypto_currency}`,
+        details: { cryptoCurrency: req.crypto_currency, network: req.network, walletAddress, orderId: order.order_id },
+      });
+
       return {
         success: true,
         transaction_id: txnId,
@@ -238,6 +246,13 @@ export class CryptoOperationsService {
           now,
         ]
       );
+
+      await invoiceReceiptService.create({
+        type: 'CRYPTO_PURCHASE_RECEIPT', sourceTable: 'crypto_transactions_log_v2', sourceId: txnId,
+        customerId: req.customer_id, amount: req.amount_usd, currency: 'USD', status: 'COMPLETED',
+        reference: walletAddress, description: `Crypto purchase of ${req.crypto_currency}`,
+        details: { cryptoCurrency: req.crypto_currency, network: req.network, walletAddress, cryptoAmount, priceUsd },
+      });
 
       return {
         success: true,

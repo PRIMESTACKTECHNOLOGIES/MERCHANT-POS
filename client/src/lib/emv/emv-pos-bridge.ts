@@ -22,6 +22,7 @@ import { generateUnpredictableNumber, txnDate, txnTime } from './emv-utils';
 import { generateHmacSignature } from '../crypto';
 import { resolveApiBaseUrl } from '../backendUrl';
 import { getCurrency } from '../currencies';
+import { P2013, explain2013, recordProtocolEvent, nowISO, type ProtocolEvent } from '../pos2013/protocol-2013-codes';
 
 // ─── Singleton engine with Visa + Mastercard CAPKs ───────────────────────────
 const engine = new EMVOfflineTransactionEngine([
@@ -64,7 +65,7 @@ export interface EMVResult {
   cryptogram:    string;
   cryptogramInfo: string;
   atc:           string;
-  authCode?:     string;     // for TC (offline approval)
+  authCode?:     string;
   reason:        string;
   stan:          string;
   offlineRef:    string;
@@ -75,6 +76,9 @@ export interface EMVResult {
   timestamp:     string;
   tvr:           string;
   tsi:           string;
+  protocolLastCode?:  string;
+  protocolLastMeaning?: string;
+  protocolEvents?: ProtocolEvent[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -147,6 +151,11 @@ export async function processEMVOffline(
   const stan    = generateSTAN();
   const ref     = buildOfflineRef();
   const ts      = new Date().toISOString();
+  const events: ProtocolEvent[] = [];
+  const stamp = () => nowISO();
+  events.push({ code: P2013.EMV_CONTACT_STARTED, at: stamp(), ref: stan, amountMinor: Math.round(amount * 100), currency, message: `brand=${brand} amount=${amount} ${currency}` });
+  events.push({ code: P2013.POS_SALE_STARTED, at: stamp(), ref: stan, amountMinor: Math.round(amount * 100), currency });
+  recordProtocolEvent(events[events.length - 1]);
 
   // 1. Build card TLV from manual entry (simple TLV structure)
   const cardTLV = "9F020000000000" + Math.round(amount * Math.pow(10, cur.decimals)).toString(16).padStart(12, '0');
@@ -216,6 +225,22 @@ export async function processEMVOffline(
     ? `TC-${cryptResult.cryptogram.slice(0, 6)}`
     : undefined;
 
+  if (decision === 'TC') {
+    events.push({ code: P2013.EMV_OFFLINE_APPROVAL_SUCCESS, at: stamp(), ref: stan, amountMinor: Math.round(amount * 100), currency });
+    events.push({ code: P2013.EMV_CONTACT_APPROVED, at: stamp(), ref: authCode || stan, amountMinor: Math.round(amount * 100), currency });
+    events.push({ code: P2013.EMV_OFFLINE_SYNC_REQUIRED, at: stamp(), ref: ref, amountMinor: Math.round(amount * 100), currency });
+    events.push({ code: P2013.POS_SALE_APPROVED, at: stamp(), ref: stan, amountMinor: Math.round(amount * 100), currency });
+  } else if (decision === 'ARQC') {
+    events.push({ code: P2013.EMV_OFFLINE_SYNC_REQUIRED, at: stamp(), ref: ref, amountMinor: Math.round(amount * 100), currency });
+    events.push({ code: P2013.POS_SALE_APPROVED, at: stamp(), ref: stan, amountMinor: Math.round(amount * 100), currency, message: "ARQC pending online auth" });
+  } else {
+    events.push({ code: P2013.EMV_CONTACT_DECLINED, at: stamp(), ref: stan, message: `AAC: ${emvResult.reason || "declined"}` });
+    events.push({ code: P2013.EMV_OFFLINE_APPROVAL_FAILED, at: stamp(), ref: stan, message: emvResult.reason });
+    events.push({ code: P2013.POS_SALE_FAILED, at: stamp(), ref: stan, amountMinor: Math.round(amount * 100), currency });
+  }
+  events.forEach(recordProtocolEvent);
+
+  const lastCode = events[events.length - 1]?.code || P2013.POS_SALE_APPROVED;
   return {
     approved:       decision === 'TC',
     declined:       decision === 'AAC',
@@ -236,6 +261,9 @@ export async function processEMVOffline(
     timestamp:      ts,
     tvr:            emvResult.offlineTransaction?.terminalVerificationResults || '0000000000',
     tsi:            emvResult.offlineTransaction?.transactionStatusInformation || '0000',
+    protocolLastCode: lastCode,
+    protocolLastMeaning: explain2013(lastCode),
+    protocolEvents: events,
   };
 }
 
@@ -244,11 +272,12 @@ export async function syncEMVTransactions(
   merchantId: string = 'MRC-1001',
   terminalId: string = 'WEB-POS-001',
   secretKey: string = ''
-): Promise<{ synced: number; failed: number; settlementCode?: string }> {
+): Promise<{ synced: number; failed: number; settlementCode?: string; protocolLastCode?: string; protocolLastMeaning?: string; lastResponse?: any }> {
   const storage = engine.getStorage();
   const pending = storage.getTransactionsForUpload();
+  const events: ProtocolEvent[] = [];
+  const stamp = () => nowISO();
 
-  // Also pick up anything in the lightweight offline queue
   let queueItems: any[] = [];
   try {
     queueItems = JSON.parse(localStorage.getItem('emv_offline_queue') || '[]');
@@ -282,10 +311,12 @@ export async function syncEMVTransactions(
   if (allItems.length === 0) return { synced: 0, failed: 0 };
 
   try {
-    // Build Protocol 201.3 batch
     const batchId = `BATCH-${Date.now()}`;
     const ts = new Date().toISOString();
     const nonce = Math.random().toString(36).substring(2, 14).toUpperCase();
+    events.push({ code: P2013.BATCH_BUILD_STARTED, at: stamp(), ref: batchId, message: `${allItems.length} txns` });
+    events.push({ code: P2013.BATCH_UPLOAD_STARTED, at: stamp(), ref: batchId });
+    events.forEach(recordProtocolEvent);
 
     const signature = await generateHmacSignature(
       '201.3', merchantId, terminalId, batchId, ts, nonce, allItems.length, secretKey
@@ -311,18 +342,32 @@ export async function syncEMVTransactions(
 
     if (res.ok) {
       const result = await res.json();
-      // Mark all as uploaded
+      const capturedCount = Number(result?.capturedCount || 0);
+      const failedCount  = Number(result?.failedCount || 0);
+      let finalCode: string = result?.protocolLastCode || (capturedCount === allItems.length ? P2013.BATCH_UPLOAD_SUCCESS : (capturedCount > 0 ? P2013.BATCH_RECONCILE_SUCCESS : P2013.BATCH_UPLOAD_FAILED));
+      events.push({ code: finalCode, at: stamp(), ref: result?.settlementCode, message: `captured=${capturedCount} failed=${failedCount}` });
+      events.forEach(recordProtocolEvent);
       pending.forEach(tx => storage.markTransactionUploaded(tx.id, true));
       localStorage.setItem('emv_offline_queue', '[]');
       return {
-        synced: allItems.length,
-        failed: 0,
-        settlementCode: result.settlementCode
+        synced: capturedCount > 0 ? capturedCount : allItems.length,
+        failed: failedCount,
+        settlementCode: result.settlementCode,
+        protocolLastCode: finalCode,
+        protocolLastMeaning: explain2013(finalCode),
+        lastResponse: result,
       };
+    } else {
+      events.push({ code: P2013.BATCH_UPLOAD_FAILED, at: stamp(), ref: batchId, message: `HTTP ${res.status}` });
+      events.forEach(recordProtocolEvent);
     }
-  } catch (_) {}
+  } catch (e: any) {
+    events.push({ code: P2013.BATCH_UPLOAD_FAILED, at: stamp(), message: e?.message || String(e) });
+    events.forEach(recordProtocolEvent);
+  }
 
-  return { synced: 0, failed: allItems.length };
+  const last = events[events.length - 1]?.code || P2013.BATCH_UPLOAD_FAILED;
+  return { synced: 0, failed: allItems.length, protocolLastCode: last, protocolLastMeaning: explain2013(last) };
 }
 
 // ─── Storage stats (for UI display) ──────────────────────────────────────────

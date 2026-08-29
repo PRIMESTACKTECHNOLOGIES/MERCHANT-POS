@@ -35,6 +35,8 @@ export interface Transaction {
   txnTimestamp: string;
   cardBrand?: string;
   invoiceId?: string;
+  receiptId?: string;
+  documentType?: string;
   paymentId?: string;
   paymentMethod?: "card" | "wallet" | "code";
   customerId?: string;
@@ -277,7 +279,11 @@ export async function checkBackendHealth(timeoutMs = 3000): Promise<{ status: st
 
 export async function fetchTerminals(): Promise<Terminal[]> {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/terminals`);
-  return res.json();
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    throw new Error(data?.error || 'Invalid terminals response from server');
+  }
+  return data;
 }
 
 export async function fetchTransactions(): Promise<Transaction[]> {
@@ -404,10 +410,10 @@ export async function createProduct(data: Partial<Product>) {
   return res.json();
 }
 
-export async function readAcr122uCard() {
+export async function readAcr122uCard(amountMinor = 0, currency = 'USD') {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/payments/read-acr122u`, {
     method: 'POST',
-    body: JSON.stringify({})
+    body: JSON.stringify({ amountMinor, currency })
   });
 
   if (!res.ok) {
@@ -786,8 +792,8 @@ export async function addBankAccount(data: { customerId: string; bankName: strin
   if (!res.ok) throw new Error('Failed to add bank account');
   return res.json();
 }
-export async function bankPayout(customerId: string, bankAccountId: string, amount: number) {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/bank-payout`, { method: 'POST', body: JSON.stringify({ customerId, bankAccountId, amount }) });
+export async function bankPayout(customerId: string, bankAccountId: string, amount: number, currency: string = 'USD') {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/bank-payout`, { method: 'POST', body: JSON.stringify({ customerId, bankAccountId, amount, currency }) });
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Payout failed'); }
   return res.json();
 }
@@ -954,8 +960,18 @@ export async function getCryptoTransactions(customerId: string): Promise<CryptoT
 
 export async function getMerchantBalance(merchantId: string): Promise<MerchantWallet> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant-balance/${encodeURIComponent(merchantId)}`);
-  if (!res.ok) return { id: '', merchant_id: merchantId, balance: 0, currency: 'USD' };
+  if (!res.ok) {
+    console.error(`[API] getMerchantBalance failed: ${res.status} ${res.statusText}`);
+    try {
+      const errorData = await res.json();
+      console.error('[API] Error details:', errorData);
+    } catch (e) {
+      console.error('[API] Could not parse error response');
+    }
+    return { id: '', merchant_id: merchantId, balance: 0, currency: 'USD' };
+  }
   const data = await res.json();
+  console.log('[API] getMerchantBalance success:', data);
   return {
     id: data.id ?? '',
     merchant_id: data.merchant_id ?? data.merchantId ?? merchantId,

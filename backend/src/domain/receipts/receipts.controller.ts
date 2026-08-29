@@ -1,8 +1,32 @@
 import { Request, Response } from "express";
 import { receiptsService } from "./receipts.service";
 import { thermalReceiptService } from "./thermalReceipt.service";
+import { invoiceReceiptService } from "./invoice-receipt.service";
 
 export class ReceiptsController {
+  async listFinancialDocuments(req: Request, res: Response) {
+    try {
+      const documents = await invoiceReceiptService.list({
+        merchantId: req.query.merchantId as string | undefined,
+        customerId: req.query.customerId as string | undefined,
+        type: req.query.type as string | undefined,
+        limit: parseInt(req.query.limit as string) || 100,
+      });
+      res.json({ success: true, documents });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  }
+
+  async getFinancialDocument(req: Request, res: Response) {
+    try {
+      const document = await invoiceReceiptService.get(req.params.documentNumber);
+      if (!document) return res.status(404).json({ success: false, error: "Invoice/receipt not found" });
+      res.json({ success: true, document });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  }
   /**
    * Generate a new thermal receipt for a transaction (both CUSTOMER + MERCHANT copies)
    */

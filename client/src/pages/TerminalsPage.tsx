@@ -47,6 +47,7 @@ export const TerminalsPage = () => {
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [showConfigureModal, setShowConfigureModal] = useState<Terminal | null>(null);
   const [newTerminalName, setNewTerminalName] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [registrationResult, setRegistrationResult] = useState<{
     merchantId: string;
     terminalId: string;
@@ -61,8 +62,9 @@ export const TerminalsPage = () => {
   const loadTerminals = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const data = await fetchTerminals();
-      setTerminals(data.map((t: any) => {
+      setTerminals((Array.isArray(data) ? data : []).filter(Boolean).map((t: any) => {
         let status = 'REGISTERED'; // default — any terminal in DB is registered
         if (t.lastBatchAt) {
           // Has synced at least once — check if recently active
@@ -72,7 +74,7 @@ export const TerminalsPage = () => {
         }
         return {
           ...t,
-          status,
+          status: status as any,
           ipAddress: '-',
           appVersion: 'v1.0'
         };
@@ -80,6 +82,7 @@ export const TerminalsPage = () => {
     } catch (e: any) {
       console.error(e);
       const message = e?.message || "Failed to load terminals";
+      setLoadError(message);
       showToast(message, "error");
     } finally {
       setLoading(false);
@@ -204,6 +207,12 @@ export const TerminalsPage = () => {
       </div>
 
       {/* Table */}
+      {loadError && !loading && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 flex items-center justify-between gap-4">
+          <span>Unable to load terminals: {loadError}</span>
+          <button onClick={loadTerminals} className="rounded-lg bg-red-600 px-3 py-2 font-semibold text-white hover:bg-red-700">Retry</button>
+        </div>
+      )}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         {loading ? (
           <TableSkeleton rows={5} />
@@ -243,7 +252,7 @@ export const TerminalsPage = () => {
                       <StatusBadge status={terminal.status} />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {terminal.id.startsWith('WEB') ? 'Web POS' : 'Android App'}
+                      {String(terminal.id || terminal.terminalId || '').startsWith('WEB') ? 'Web POS' : 'Android App'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {terminal.lastBatchAt ? new Date(terminal.lastBatchAt).toLocaleString() : 'Never'}

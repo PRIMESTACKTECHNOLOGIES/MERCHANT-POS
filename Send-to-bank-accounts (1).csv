@@ -1,0 +1,2 @@
+name,recipientEmail,paymentReference,referenceNumber,receiverType,amountCurrency,amount,sourceCurrency,targetCurrency,IBAN,addressCountryCode,addressCity,addressFirstLine,addressState,transferPurpose
+"e.g. Batch Payment Recipient","e.g. example@example.ex (optional)","e.g. Invoice 101 (optional)","e.g. 12131295 (optional)","INSTITUTION","target","1","USD","AED","e.g. AE070331234567890123456","AE","e.g. London","e.g. 1 City Road","DU","CHARITABLE_DONATIONS"

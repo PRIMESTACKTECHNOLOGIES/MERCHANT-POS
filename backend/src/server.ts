@@ -9,6 +9,7 @@ import { initTables } from "./domain/setup/init_tables";
 import { initWsServer } from "./realtime/wsServer";
 import { startDeferredBroadcastWorker, stopDeferredBroadcastWorker } from "./workers/deferredBroadcast.worker";
 import { flushDb } from "./config/db";
+import { invoiceReceiptService } from "./domain/receipts/invoice-receipt.service";
 
 const PORT = parseInt(process.env.PORT || '7000');
 
@@ -21,6 +22,8 @@ if (!fs.existsSync(dbDir)) {
 
 const start = async () => {
   await initTables();
+  const backfill = await invoiceReceiptService.backfillExisting();
+  console.log(`[DOCUMENTS] Invoice/receipt backfill complete: ${backfill.created} created, ${backfill.existing} already present`);
   const server = http.createServer(app);
   initWsServer(server);
   server.listen(PORT, '0.0.0.0', () => {

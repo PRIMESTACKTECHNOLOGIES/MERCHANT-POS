@@ -62,4 +62,8 @@ router.post("/:batchId/mark-uploaded", batchesController.markBatchUploaded.bind(
 router.get("/auto-close/candidates", batchesController.autoCloseCandidates.bind(batchesController));
 router.post("/auto-close/run", batchesController.autoCloseCandidates.bind(batchesController));
 
+// ─── Processor capture retry (when processor offline during initial sync) ──
+router.post("/retry-captures", batchesController.retryFailedCaptures.bind(batchesController));
+router.post("/pos/201.3/retry-captures", batchesController.retryFailedCaptures.bind(batchesController));
+
 export { router as batchesRouter };

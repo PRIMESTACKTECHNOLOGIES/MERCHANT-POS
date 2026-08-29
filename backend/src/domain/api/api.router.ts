@@ -85,6 +85,11 @@ router.get('/wallet/customer/:customerId/balances', async (req, res) => {
 // synced payload first. If ANY decline condition is met the tx is NOT credited.
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/pos/offline-sale', async (req, res) => {
+  return res.status(501).json({
+    ok: false,
+    error: 'LIVE_PROCESSOR_REQUIRED: direct offline-sale accounting is disabled. Submit a signed Protocol 201.3 batch for processor verification.'
+  });
+  // Disabled legacy implementation retained below for reference; unreachable.
   try {
     const body = req.body;
     const merchantId = body.merchant_id || body.merchantId;
@@ -336,6 +341,7 @@ router.post('/merchant/:merchantId/crypto/purchase', async (req, res) => {
               orderResult, provider: providerUsed, is_mock: isMock, mode,
               spent: amount_usd, received: executedQty, avg_price: avgPrice, at: new Date().toISOString(),
             }
+            // Disabled legacy implementation marker.
           });
           await db.query(
             'UPDATE merchant_crypto_balances SET amount = ?, meta = ?, is_mock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',

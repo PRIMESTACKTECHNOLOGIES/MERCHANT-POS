@@ -1,6 +1,6 @@
 import crypto from "crypto";
 
-export type ExportFormat = "json" | "csv" | "nacha";
+export type ExportFormat = "json" | "csv" | "nacha" | "wise";
 
 export interface BatchRowShape {
   id: string;
@@ -48,11 +48,28 @@ export interface TxnRowShape {
 export interface MerchantMeta {
   merchantName?: string;
   supportEmail?: string;
+  supportPhone?: string;
   companyName?: string;
+  businessCountry?: string;
+  businessAddress?: string;
   routingNumber?: string;
   accountNumber?: string;
+  accountType?: string;
+  bankName?: string;
   ein?: string;
   settlementCode?: string;
+  iban?: string;
+  swiftBic?: string;
+  accountHolder?: string;
+  accountCurrency?: string;
+  addressCountryCode?: string;
+  addressCity?: string;
+  addressFirstLine?: string;
+  addressState?: string;
+  transferPurpose?: string;
+  fxRateToAccount?: number;
+  receiverType?: "PRIVATE" | "INSTITUTION";
+  [key: string]: any;
 }
 
 export interface ExportOpts {
@@ -329,6 +346,88 @@ export class BatchExporter {
 
         return {
           format: "csv", filename,
+          contentType: "text/csv; charset=utf-8",
+          body, byteLength: Buffer.byteLength(body, "utf8"),
+          txnCount, ghostExcluded, totalDebitMinor, totalCreditMinor,
+          controlEntryHash, signature, canonicalPayload, generatedAt: stamp.iso
+        };
+      }
+      case "wise": {
+        const wiseHeader = [
+          "name",
+          "recipientEmail",
+          "paymentReference",
+          "referenceNumber",
+          "receiverType",
+          "amountCurrency",
+          "amount",
+          "sourceCurrency",
+          "targetCurrency",
+          "IBAN",
+          "addressCountryCode",
+          "addressCity",
+          "addressFirstLine",
+          "addressState",
+          "transferPurpose",
+        ];
+
+        const m = opts.merchant || {};
+        const name = (m.accountHolder || m.companyName || m.merchantName || batch.merchant_id).trim();
+        const recipientEmail = (m.supportEmail || "").trim();
+        const receiverType: string = (m.receiverType === "PRIVATE" ? "PRIVATE" : "INSTITUTION");
+        const addressCountryCode = (m.addressCountryCode || "").trim().toUpperCase();
+        const addressCity = (m.addressCity || "").trim();
+        const addressFirstLine = (m.addressFirstLine || "").trim();
+        const addressState = (m.addressState || "").trim().toUpperCase();
+        const transferPurpose = (m.transferPurpose || "BUSINESS_PAYMENT").trim().toUpperCase();
+        const iban = (m.iban || "").trim();
+        const targetCurrency = (m.accountCurrency || "AED").trim().toUpperCase();
+        const fxRate = Number(m.fxRateToAccount) || 0;
+
+        const csvEscape = (v: any) => {
+          const s = String(v == null ? "" : v).replace(/"/g, '""');
+          return /[",\n\r]/.test(s) ? `"${s}"` : s;
+        };
+
+        const rows = txns.map(t => {
+          const amountMinor = Number(t.amount_minor) || 0;
+          const whole = amountMinor / 100;
+          const srcCur = String(t.currency || "USD").toUpperCase();
+          const tgtCur = targetCurrency;
+          const amountInTarget = (srcCur === tgtCur)
+            ? whole.toFixed(2)
+            : (fxRate > 0 ? (whole * fxRate).toFixed(2) : "");
+
+          const refParts = [
+            batch.merchant_id,
+            t.auth_code ? "Auth " + t.auth_code : "",
+            t.stan ? "STAN " + t.stan : "",
+            t.currency + " " + whole.toFixed(2),
+          ].filter(Boolean).join(" ");
+
+          return [
+            csvEscape(name),
+            csvEscape(recipientEmail),
+            csvEscape("POS Card Settlement " + refParts),
+            csvEscape(String(t.auth_code || batch.settlement_code || t.local_txn_id)),
+            csvEscape(receiverType),
+            "target",
+            csvEscape(amountInTarget),
+            csvEscape(srcCur),
+            csvEscape(tgtCur),
+            csvEscape(iban),
+            csvEscape(addressCountryCode),
+            csvEscape(addressCity),
+            csvEscape(addressFirstLine),
+            csvEscape(addressState),
+            csvEscape(transferPurpose),
+          ].join(",");
+        });
+
+        const body = [wiseHeader.join(","), ...rows].join("\n") + "\n";
+
+        return {
+          format: "wise", filename,
           contentType: "text/csv; charset=utf-8",
           body, byteLength: Buffer.byteLength(body, "utf8"),
           txnCount, ghostExcluded, totalDebitMinor, totalCreditMinor,

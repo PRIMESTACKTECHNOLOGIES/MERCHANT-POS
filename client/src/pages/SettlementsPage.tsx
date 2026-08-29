@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { CardSkeleton, TableSkeleton } from "../components/ui/Skeleton";
-import { cashoutBraintree, fetchBatches, fetchSettings, getCashouts, createCashout, processCashout } from "../lib/api";
+import { cashoutBraintree, fetchBatches, fetchSettings, getCashouts, createCashout, processCashout, getMerchantBalance } from "../lib/api";
 import type { Cashout } from "../lib/api";
 import { useToast } from "../components/ui/Toast";
 
@@ -258,6 +258,8 @@ export function SettlementsPage() {
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
   const [cashoutLoading, setCashoutLoading] = useState(false);
   const [merchantSettings, setMerchantSettings] = useState<any>(null);
+  const [merchantBalance, setMerchantBalance] = useState<number>(0);
+  const [merchantBalanceLoading, setMerchantBalanceLoading] = useState(true);
   const { showToast } = useToast();
   
   // Filter States
@@ -265,11 +267,27 @@ export function SettlementsPage() {
   const [batchStatusFilter, setBatchStatusFilter] = useState("ALL");
   const [settlementDate, setSettlementDate] = useState("");
 
-  // Load real batches from API
+  // Load real balances and batches from API
   useEffect(() => {
     loadBatches();
     loadSettings();
+    loadMerchantBalance();
   }, []);
+
+  const loadMerchantBalance = async () => {
+    try {
+      setMerchantBalanceLoading(true);
+      console.log('[SettlementsPage] Loading merchant balance for MRC-1001...');
+      const data = await getMerchantBalance('MRC-1001');
+      console.log('[SettlementsPage] Merchant balance loaded:', data);
+      setMerchantBalance(data.balance || 0);
+    } catch (err) {
+      console.error("[SettlementsPage] Failed to load merchant balance:", err);
+      setMerchantBalance(0);
+    } finally {
+      setMerchantBalanceLoading(false);
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -515,6 +533,43 @@ export function SettlementsPage() {
           >
             Settlement
           </button>
+        </div>
+      </div>
+
+      {/* MERCHANT WALLET BALANCE - REAL FUNDS */}
+      <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-6 shadow-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-green-700 mb-1">💼 Merchant Wallet - Settlement Balance</p>
+            <p className="text-xs text-green-600 mb-3">Live merchant funds credited from offline POS batches and reduced by payouts or crypto purchases.</p>
+            {merchantBalanceLoading ? (
+              <div className="animate-pulse flex space-x-4">
+                <div className="h-10 w-48 bg-green-200 rounded"></div>
+              </div>
+            ) : (
+              <>
+                <p className="text-4xl font-bold text-green-900">
+                  ${merchantBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <p className="text-xs text-green-600 mt-2">
+                  {merchantBalance > 0 
+                    ? `✅ Live available balance • ${batches.filter(b => b.status === 'ACCEPTED' || b.status === 'UPLOADED').length} batches settled`
+                    : '⏳ Waiting for batch settlement'}
+                </p>
+              </>
+            )}
+          </div>
+          <div className="bg-green-500 bg-opacity-20 p-4 rounded-lg">
+            <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+        </div>
+        <div className="mt-4 pt-4 border-t border-green-200">
+          <p className="text-xs text-green-700">
+            <strong>Merchant ID:</strong> MRC-1001 • <strong>Currency:</strong> USD • 
+            <strong className="ml-2">Last Update:</strong> {new Date().toLocaleString()}
+          </p>
         </div>
       </div>
 

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../config/db';
 import { submitBankPayout, getWiseDiagnostics } from './payoutProvider.service';
 import { authenticateToken } from '../../middleware/auth.middleware';
+import { invoiceReceiptService } from '../receipts/invoice-receipt.service';
 
 const router = Router();
 
@@ -175,6 +176,15 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
     }
   }
 
+  const receiverCurrency = String(bank_account.currency || currency).toUpperCase();
+  if (receiverCurrency !== currency) {
+    return res.status(400).json({
+      error: `Selected payout currency is ${currency}, but the receiver account accepts ${receiverCurrency}. Choose a matching account or currency.`,
+      payout_currency: currency,
+      receiver_currency: receiverCurrency,
+    });
+  }
+
   // ─── Wise PREFLIGHT: confirm sufficient balance BEFORE debiting wallet ───
   //      Failure path here returns early — no wallet debit, no DB insert, no partial state.
   if (isWise) {
@@ -252,6 +262,13 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
         payoutId,
       ]
     );
+
+    await invoiceReceiptService.create({
+      type: 'BANK_PAYOUT_RECEIPT', sourceTable: 'merchant_payouts', sourceId: payoutId,
+      merchantId, amount: Number(amount), currency, status: payoutResult.status || 'submitted',
+      reference: payoutId, description: 'Merchant bank payout receipt',
+      details: { provider: payoutResult.provider || null, providerReference: payoutResult.providerReference || null, bankAccount: bank_account },
+    });
 
     res.json({
       ok: true,

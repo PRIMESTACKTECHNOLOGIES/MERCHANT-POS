@@ -1,0 +1,2 @@
+name,recipientEmail,paymentReference,referenceNumber,receiverType,amountCurrency,amount,sourceCurrency,targetCurrency,IBAN,addressCountryCode,addressCity,addressFirstLine,addressState,transferPurpose
+"ABDELLAH MENDJOUM COMMERCIAL TRADING FZE LLC","a.medjoum@gmail.com","MRC-1001 POS Card Settlement DANIA Auth 423685 $1 USD","423685","INSTITUTION","target","3.67","USD","AED","AE550351001327120647001","AE","ABU DHABI","CORNICHE ROAD - FAB/NBAD TRANSACTIONAL BANKING BUILDING","AB","BUSINESS_PAYMENT"

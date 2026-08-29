@@ -517,7 +517,12 @@ export const WalletsPage = () => {
     const snapSelBank = selBank;
 
     if (!snapSelId||!snapSelBank) throw new Error('Select bank account');
-    await bankPayout(snapSelId, snapSelBank, parseFloat(snapF.amount));
+    const selectedAccount = bankAccounts.find((account) => account.id === snapSelBank);
+    const payoutCurrency = String(snapF.currency || balance.currency || 'USD').toUpperCase();
+    if (selectedAccount?.currency && selectedAccount.currency.toUpperCase() !== payoutCurrency) {
+      throw new Error(`Selected bank account accepts ${selectedAccount.currency}, not ${payoutCurrency}`);
+    }
+    await bankPayout(snapSelId, snapSelBank, parseFloat(snapF.amount), payoutCurrency);
     await refreshWallet(); await refreshBank();
   }, 'Payout initiated');
 
@@ -1580,13 +1585,17 @@ export const WalletsPage = () => {
       )}
       {modal==='bank-payout' && (
         <ModalShell onClose={closeAll} busy={busy} title="Send Bank Payout" onConfirm={handleBankPayout} confirmLabel="Send" confirmColor="bg-green-600 hover:bg-green-700">
-          <p className="text-sm text-gray-500">Available: <strong>${Number(balance.balance).toFixed(2)}</strong></p>
+          <p className="text-sm text-gray-500">Available: <strong>{balance.currency} {Number(balance.balance).toFixed(2)}</strong></p>
           {bankAccounts.length===0 ? <p className="text-red-500 text-sm">Add a bank account first</p>
             : <select value={selBank} onChange={e=>setSelBank(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm">
-                {bankAccounts.map((b, index)=><option key={b.id || `bank-option-${index}`} value={b.id}>{b.bank_name} â€¢â€¢â€¢â€¢ {b.account_number.slice(-4)}</option>)}
+                {bankAccounts.map((b, index)=><option key={b.id || `bank-option-${index}`} value={b.id}>{b.bank_name} · {b.currency || 'USD'} ····{b.account_number.slice(-4)}</option>)}
               </select>}
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Payout Currency</label>
+          <select value={f.currency || balance.currency || 'USD'} onChange={e=>setF(p=>({...p,currency:e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm">
+            {['USD','EUR','GBP','AED','SAR','INR','CAD','AUD'].map(c=><option key={c}>{c}</option>)}
+          </select>
           {inp('amount','Amount','number',true)}
-          {f.amount && <p className="text-sm text-green-700">Net: ${(parseFloat(f.amount||'0')*0.995).toFixed(2)} (fee 0.5%)</p>}
+          {f.amount && <p className="text-sm text-green-700">Net: {f.currency || balance.currency || 'USD'} {(parseFloat(f.amount||'0')*0.995).toFixed(2)} (fee 0.5%)</p>}
         </ModalShell>
       )}
       {modal==='buy-crypto' && (() => {

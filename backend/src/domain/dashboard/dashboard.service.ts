@@ -546,6 +546,10 @@ export interface ProcessResult {
 }
 
 export async function processUnprocessedTransactions(merchantId: string): Promise<ProcessResult> {
+  throw new Error(
+    'LIVE_PROCESSOR_REQUIRED: dashboard batch settlement is disabled. Upload a signed Protocol 201.3 batch so each transaction is authorized and captured by the live processor before wallet settlement.'
+  );
+
   const { v4: uuidv4 } = await import('uuid');
 
   // 1. Get all unprocessed transactions for this merchant

@@ -302,21 +302,9 @@ export async function sellAssetBestEffort(asset: string, amountBase: number): Pr
       }
     } catch { /* continue */ }
   }
-  const price = (await getBestPrice(asset)).priceUsd;
-  const usdtReceived = price > 0 ? amountBase * price : 0;
-  return {
-    ok: true,
-    provider: 'tronweb' as ExchangeProviderId,
-    asset: asset.toUpperCase(),
-    amount_sold: Number(amountBase),
-    executed_qty: Number(amountBase),
-    executedQty: Number(amountBase),
-    usdt_received: usdtReceived,
-    fills: [],
-    status: 'INTERNAL_ONLY_NO_EXCHANGE_CONFIGURED',
-    order_id: `INT-${Date.now()}`,
-    raw: { errors, note: 'No live exchange configured. Balance was internally accounted.' },
-  };
+  throw Object.assign(new Error(
+    `NO_LIVE_CRYPTO_EXCHANGE_CONFIGURED: sell blocked for ${asset.toUpperCase()}. Errors: [${errors.join(' | ')}]`
+  ), { exchange_errors: errors, status: 'NO_LIVE_PROVIDER', blocked: true });
 }
 
 /**

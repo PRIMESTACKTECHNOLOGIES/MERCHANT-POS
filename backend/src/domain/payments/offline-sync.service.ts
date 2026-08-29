@@ -1,5 +1,6 @@
 import { db } from "../../config/db";
 import { v4 as uuidv4 } from "uuid";
+import { invoiceReceiptService } from "../receipts/invoice-receipt.service";
 
 export async function applyOfflineSaleToWallet(
   customerId: string,
@@ -122,6 +123,13 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
       txnTimestamp,
     ]
   );
+
+  await invoiceReceiptService.create({
+    type: 'POS_INVOICE', sourceTable: 'pos2013_transactions', sourceId: txnId,
+    merchantId, amount, currency: currencyCode, status: 'PENDING', reference: rrn || stan || txnId,
+    description: 'Offline POS transaction invoice',
+    details: { terminalId: terminalId || 'UNKNOWN', batchId, localTxnId: localId, stan, rrn, authCode },
+  });
 
   await db.query(
     `INSERT INTO offline_funds_receipts

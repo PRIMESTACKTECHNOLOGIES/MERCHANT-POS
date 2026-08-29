@@ -55,8 +55,49 @@ echo [3/3] Starting backend and frontend...
 start "POS Backend" cmd /k "cd /d ""%~dp0backend"" && set PORT=%BACKEND_PORT% && set JWT_SECRET=offline-pos-kodolo-2026-jwt-secret-change-live && npm run dev"
 start "POS Frontend" cmd /k "cd /d ""%~dp0client"" && set VITE_API_URL=http://localhost:%BACKEND_PORT% && npm run dev -- --host 0.0.0.0 --port %FRONTEND_PORT%"
 
-ping -n 8 127.0.0.1 >nul
+echo.
+echo Waiting for the backend and frontend to become ready...
+set "BACKEND_READY=0"
+set "FRONTEND_READY=0"
+set /a WAIT_SECONDS=0
+
+:WAIT_FOR_SERVICES
+if "%BACKEND_READY%"=="0" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:%BACKEND_PORT%/health' -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>nul
+    if not errorlevel 1 (
+        set "BACKEND_READY=1"
+        echo Backend is ready: http://localhost:%BACKEND_PORT%
+    )
+)
+
+if "%FRONTEND_READY%"=="0" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:%FRONTEND_PORT%/' -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>nul
+    if not errorlevel 1 (
+        set "FRONTEND_READY=1"
+        echo Frontend is ready: http://localhost:%FRONTEND_PORT%
+    )
+)
+
+if "%BACKEND_READY%"=="1" if "%FRONTEND_READY%"=="1" goto SERVICES_READY
+
+if %WAIT_SECONDS% GEQ 120 (
+    echo.
+    echo ERROR: Services did not become ready within 120 seconds.
+    echo Keep the CMD windows open and check their error messages.
+    powershell -NoProfile -Command "[Console]::Beep(500,400)" >nul 2>nul
+    pause
+    exit /b 1
+)
+
+timeout /t 2 /nobreak >nul
+set /a WAIT_SECONDS+=2
+goto WAIT_FOR_SERVICES
+
+:SERVICES_READY
+echo.
+echo All POS services are ready. Opening the POS in your default browser...
 start "" "http://localhost:%FRONTEND_PORT%"
+powershell -NoProfile -Command "[Console]::Beep(1400,180); [Console]::Beep(1800,220)" >nul 2>nul
 
 echo.
 echo System is running.

@@ -497,10 +497,11 @@ export class ThermalReceiptService {
     const stripLegacy = (s: string) => s.replace(/[\x00-\x1F\x7F]/g, "");
 
     await db.query(
-      `INSERT INTO receipts (receipt_id, transaction_id, merchant_id, receipt_data, generated_at)
-       VALUES (?, ?, ?, ?, datetime('now'))
+      `INSERT INTO receipts (id, receipt_id, transaction_id, merchant_id, receipt_data, generated_at)
+       VALUES (?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(receipt_id) DO UPDATE SET receipt_data = excluded.receipt_data, generated_at = datetime('now')`,
       [
+        `LEGACY-${full.id}`,
         `RCP-${full.id}`,
         full.id,
         full.merchant_id,

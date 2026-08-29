@@ -688,11 +688,59 @@ export class AutomaticFundSettlementEngine {
     let lookupResult: any = null;
     try {
       if (transactPay) {
+        // ── Real TransactPay order verify (pre-capture check) ──────────────
+        // POST /payment/order/verify confirms the order exists, has been
+        // pre-authorized, and the amount matches before we attempt capture.
+        const verifyPreRes = await axios.post(
+          `${this.transactPayBaseUrl()}/payment/order/verify`,
+          { reference: codeClean },
+          { headers: this.transactPayHeaders(), timeout: this.TIMEOUT_MS }
+        );
+        const verifyPreBody = verifyPreRes.data || {};
+        const verifyPreData = verifyPreBody.data || {};
+        // TransactPay returns status=false at the top level on failure
+        if (verifyPreBody.status === false) {
+          throw new Error(
+            verifyPreBody.message ||
+            verifyPreData.paymentResponseMessage ||
+            'TransactPay order verification failed before capture'
+          );
+        }
+        // statusId 1 = pending/pre-auth, 2 = processing — both are capturable.
+        // statusId 5 = already successful (already captured — idempotency safe).
+        // statusId 3/4/6+ = failed/reversed — block capture.
+        const preStatusId = Number(
+          verifyPreData.statusId ||
+          verifyPreData.orderSummary?.statusId ||
+          0
+        );
+        const preStatus = String(
+          verifyPreData.status ||
+          verifyPreData.orderSummary?.status ||
+          ''
+        ).toLowerCase();
+        if (preStatusId >= 3 && preStatusId !== 5 && preStatus !== 'successful') {
+          throw new Error(
+            `TransactPay order ${codeClean} is not capturable (statusId=${preStatusId} status=${preStatus})`
+          );
+        }
+        // Grab the authorised amount from the order for amount-match validation
+        const authorisedAmount = Number(
+          verifyPreData.requestedAmount ||
+          verifyPreData.orderSummary?.amount ||
+          verifyPreData.amount ||
+          amount
+        );
         lookupResult = {
           success: true,
           provider: 'transactpay',
           reference: codeClean,
-          note: 'TransactPay path skips scheme clearing lookup and verifies the order reference before/after capture.',
+          statusId: preStatusId,
+          status: preStatus,
+          authorisedAmount,
+          funds_location: 'transactpay_pre_auth_hold',
+          can_pull: true,
+          verifyResponse: verifyPreBody,
         };
       } else if (isDryRun) {
         lookupResult = {
@@ -766,7 +814,17 @@ export class AutomaticFundSettlementEngine {
       meta: { scheme, lookupResult, initiated_by: initiatedBy, step: isDryRun ? "dry_capture_started" : "capture_started" },
     });
     const capturePayload = transactPay
-      ? { reference: codeClean, Amount: amount }
+      ? {
+          // TransactPay capture contract:
+          // reference  — the original TransactPay order reference (= auth_code stored at POS time)
+          // Amount     — decimal amount (NOT minor units) must match the pre-authorised amount
+          reference: codeClean,
+          Amount: amount,
+          // Extra fields TransactPay accepts for reconciliation / idempotency
+          merchantReference: txn.local_txn_id || txn.id,
+          currency,
+          narration: `POS settlement ${txn.stan || txn.id}`.slice(0, 100),
+        }
       : {
       authorization_reference: codeClean,
       lookup_ref:
@@ -806,30 +864,67 @@ export class AutomaticFundSettlementEngine {
     let captureResult: any = null;
     try {
       if (transactPay) {
-        const captureResponse = await axios.post(`${this.transactPayBaseUrl()}/payment/order/pay/capture`, capturePayload, {
-          headers: this.transactPayHeaders(),
-          timeout: this.TIMEOUT_MS,
-        });
+        const captureResponse = await axios.post(
+          `${this.transactPayBaseUrl()}/payment/order/pay/capture`,
+          capturePayload,
+          { headers: this.transactPayHeaders(), timeout: this.TIMEOUT_MS }
+        );
         const captureBody = captureResponse.data || {};
-        if (captureBody.status === false || captureBody.statusCode && String(captureBody.statusCode) !== '00') {
-          throw new Error(captureBody.message || 'TransactPay capture failed');
+        const captureData = captureBody.data || {};
+        // TransactPay signals failure via status:false OR non-'00' statusCode
+        const captureFailed =
+          captureBody.status === false ||
+          (captureBody.statusCode !== undefined && String(captureBody.statusCode) !== '00');
+        if (captureFailed) {
+          throw new Error(
+            captureBody.message ||
+            captureData.paymentResponseMessage ||
+            'TransactPay capture request failed'
+          );
         }
-        const verifyResponse = await axios.post(`${this.transactPayBaseUrl()}/payment/order/verify`, { reference: codeClean }, {
-          headers: this.transactPayHeaders(),
-          timeout: this.TIMEOUT_MS,
-        });
+        // Post-capture verify — confirms money actually moved (statusId must be 5)
+        const verifyResponse = await axios.post(
+          `${this.transactPayBaseUrl()}/payment/order/verify`,
+          { reference: codeClean },
+          { headers: this.transactPayHeaders(), timeout: this.TIMEOUT_MS }
+        );
         const verifyBody = verifyResponse.data || {};
         const verifyData = verifyBody.data || {};
-        const status = String(verifyData.status || verifyData.orderSummary?.status || '').toLowerCase();
-        const statusId = Number(verifyData.statusId || verifyData.orderSummary?.statusId || 0);
+        const statusId = Number(
+          verifyData.statusId ||
+          verifyData.orderSummary?.statusId ||
+          0
+        );
+        const status = String(
+          verifyData.status ||
+          verifyData.orderSummary?.status ||
+          ''
+        ).toLowerCase();
         if (verifyBody.status === false || (statusId !== 5 && status !== 'successful')) {
-          throw new Error(verifyBody.message || verifyData.paymentResponseMessage || 'TransactPay capture was not verified as successful');
+          throw new Error(
+            verifyBody.message ||
+            verifyData.paymentResponseMessage ||
+            `TransactPay capture not confirmed (statusId=${statusId} status=${status})`
+          );
         }
+        // Extract the confirmed capture reference — try every known field TransactPay returns
+        const resolvedCaptureId =
+          captureData.captureId ||
+          captureData.reference ||
+          captureData.transactionReference ||
+          verifyData.paymentReference ||
+          verifyData.transactionReference ||
+          verifyData.orderSummary?.transactionReference ||
+          codeClean;
         captureResult = {
           provider: 'transactpay',
+          captureId: resolvedCaptureId,
+          statusId,
+          status,
+          settledAmount: Number(verifyData.requestedAmount || verifyData.orderSummary?.amount || amount),
+          currency: String(verifyData.currency || verifyData.orderSummary?.currency || currency).toUpperCase(),
           capture: captureBody,
           verification: verifyBody,
-          captureId: captureBody.data?.captureId || captureBody.data?.reference || verifyData.paymentReference || codeClean,
         };
       } else if (isDryRun) {
         captureResult = {
@@ -925,6 +1020,9 @@ export class AutomaticFundSettlementEngine {
       return base;
     }
     try {
+      // Use the captureId already resolved in the capture block above.
+      // For TransactPay this is the confirmed transactionReference / paymentReference.
+      // For generic processors fall back through known field names.
       const captureId =
         captureResult?.captureId ||
         captureResult?.capture_id ||
@@ -932,8 +1030,26 @@ export class AutomaticFundSettlementEngine {
         captureResult?.settlement_id ||
         captureResult?.ref ||
         `AFSE-${codeClean}`;
+
+      // For TransactPay use the amount confirmed by the post-capture verify response
+      // (captureResult.settledAmount). For other processors fall back to the POS amount.
+      const settledAmount =
+        (transactPay && typeof captureResult?.settledAmount === 'number' && captureResult.settledAmount > 0)
+          ? captureResult.settledAmount
+          : amount;
+      const settledCurrency =
+        (transactPay && captureResult?.currency)
+          ? String(captureResult.currency).toUpperCase()
+          : currency;
+
       const now = new Date().toISOString();
-      const merchantSettlementSource = `afse_scheme_${scheme}_settlement`;
+
+      // Source key includes provider name so TransactPay and generic-processor
+      // credits are deduplicated independently (different source namespace).
+      const provider = transactPay ? 'transactpay' : `scheme_${scheme}`;
+      const merchantSettlementSource = `afse_${provider}_settlement`;
+
+      // Idempotency guard — never double-credit the same captureId
       const priorMerchantCredit = await db.query(
         `SELECT id FROM merchant_wallet_transactions
          WHERE source = ? AND reference = ? AND type = 'credit' LIMIT 1`,
@@ -942,37 +1058,43 @@ export class AutomaticFundSettlementEngine {
       if (!priorMerchantCredit.rows?.[0]) {
         await walletsService.creditMerchantWallet(
           merchantId || txn.merchant_id,
-          amount,
+          settledAmount,
           merchantSettlementSource,
           captureId,
-          currency
+          settledCurrency
         );
       }
+
+      // Mark the POS transaction as fully settled
       try {
         await db.query(
           `UPDATE pos2013_transactions SET status = 'REAL_SCHEME_SETTLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
           [txn.id]
         );
       } catch (_) {}
+
       const sid = await this.upsertSettlementRow({
         transaction_id: txn.id,
         merchant_id: merchantId || txn.merchant_id || null,
         status: "REAL_SCHEME_CREDITED_TO_MERCHANT",
         hold_reason: null,
-        gross_amount: amount,
+        gross_amount: settledAmount,
         fee_amount: 0,
-        net_amount: amount,
-        currency,
+        net_amount: settledAmount,
+        currency: settledCurrency,
         settled_at: now,
         adjusted_at: now,
         reconciliation_id: captureId,
         meta: {
+          provider,
           scheme,
           lookupResult,
           captureResult,
           initiated_by: initiatedBy,
           step: "merchant_credited",
           credited_to_merchant_id: merchantId || txn.merchant_id,
+          settled_amount: settledAmount,
+          settled_currency: settledCurrency,
           customer_mapping: resolved?.customer_id || null,
         },
       });
@@ -981,7 +1103,7 @@ export class AutomaticFundSettlementEngine {
       return base;
     } catch (creditErr: any) {
       base.run_status = "CREDIT_FAILED";
-      base.error_message = creditErr?.message || "customer wallet credit failed";
+      base.error_message = creditErr?.message || "merchant wallet credit failed after successful capture";
       await this.upsertSettlementRow({
         transaction_id: txn.id,
         status: "REAL_MERCHANT_CREDIT_FAILED",

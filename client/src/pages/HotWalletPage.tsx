@@ -7,19 +7,45 @@ export const HotWalletPage = () => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'transfer' | 'withdraw' | 'history' | 'settings'>('overview');
 
-  // Mock data - replace with actual API calls
+  // REAL data from API - NO MOCK DATA
   const [hotWalletBalance, setHotWalletBalance] = useState({
-    usdt: 15000.50,
-    trx: 1250.75,
-    bnb: 5.25,
-    matic: 850.00,
+    usdt: 0,
+    trx: 0,
+    bnb: 0,
+    matic: 0,
   });
 
-  const [recentTransactions, setRecentTransactions] = useState([
-    { id: '1', type: 'transfer', amount: 1000, asset: 'USDT', status: 'completed', date: '2026-08-24T10:30:00Z', destination: 'T123...abc' },
-    { id: '2', type: 'withdraw', amount: 500, asset: 'USDT', status: 'pending', date: '2026-08-24T09:15:00Z', destination: 'T456...def' },
-    { id: '3', type: 'deposit', amount: 2000, asset: 'USDT', status: 'completed', date: '2026-08-23T16:45:00Z', destination: 'Hot Wallet' },
-  ]);
+  const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
+
+  // Load REAL hot wallet balance from API
+  useEffect(() => {
+    const fetchRealBalance = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch('/api/wallet/hot-wallet-balance', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setHotWalletBalance({
+            usdt: data.tron?.USDT || 0,
+            trx: data.tron?.TRX || 0,
+            bnb: data.bsc?.BNB || 0,
+            matic: data.polygon?.MATIC || 0,
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch hot wallet balance:', error);
+        addNotification('Error', 'Failed to load hot wallet balance', 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRealBalance();
+  }, []);
 
   return (
     <div className="p-4 lg:p-8 space-y-6">

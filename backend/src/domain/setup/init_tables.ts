@@ -215,6 +215,20 @@ export const initTables = async () => {
       );
     `);
 
+    // Protocol 201.3 signed-request replay protection.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS protocol_replay_nonces (
+        merchant_id TEXT NOT NULL,
+        terminal_id TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        batch_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (merchant_id, terminal_id, nonce)
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_protocol_replay_created ON protocol_replay_nonces(created_at)`);
+
     // Local offline funds ledger for machine-offline receipt persistence
     await db.query(`
       CREATE TABLE IF NOT EXISTS offline_funds_receipts (
@@ -257,6 +271,34 @@ export const initTables = async () => {
         FOREIGN KEY (transaction_id) REFERENCES pos2013_transactions(id)
       );
     `);
+
+    // Universal immutable invoice/receipt ledger for every financial transaction type.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS financial_documents (
+        id TEXT PRIMARY KEY,
+        document_number TEXT UNIQUE NOT NULL,
+        document_type TEXT NOT NULL,
+        source_table TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        merchant_id TEXT,
+        customer_id TEXT,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL,
+        status TEXT NOT NULL,
+        reference TEXT,
+        description TEXT,
+        document_data TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(source_table, source_id)
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_financial_documents_created ON financial_documents(created_at DESC)`);
+    await db.query(`CREATE TRIGGER IF NOT EXISTS financial_documents_no_update
+      BEFORE UPDATE ON financial_documents
+      BEGIN SELECT RAISE(ABORT, 'financial documents are immutable'); END`);
+    await db.query(`CREATE TRIGGER IF NOT EXISTS financial_documents_no_delete
+      BEFORE DELETE ON financial_documents
+      BEGIN SELECT RAISE(ABORT, 'financial documents cannot be deleted'); END`);
 
     // Incoming Payments Table (internal receiver)
     await db.query(`
@@ -317,13 +359,88 @@ export const initTables = async () => {
     const hash = await bcrypt.hash(adminPassword, 10);
     const userRes = await db.query("SELECT * FROM admin_users WHERE username = ?", [adminUsername]);
 
+    let adminId: string;
     if (userRes.rowCount === 0) {
-      const adminId = uuidv4();
-      await db.query("INSERT INTO admin_users (id, username, password_hash) VALUES (?, ?, ?)", [adminId, adminUsername, hash]);
-      console.log(`Default admin user created: ${adminUsername} / ${adminPassword}`);
+      adminId = uuidv4();
+      await db.query("INSERT INTO admin_users (id, username, password_hash, full_name) VALUES (?, ?, ?, ?)", [adminId, adminUsername, hash, "System Administrator"]);
+      console.log(`✅ Default admin user created: ${adminUsername} / ${adminPassword}`);
     } else {
       await db.query("UPDATE admin_users SET password_hash = ? WHERE username = ?", [hash, adminUsername]);
-      console.log(`Admin password ensured for ${adminUsername}`);
+      adminId = (userRes.rows[0] as any).id;
+      console.log(`✅ Admin password ensured for ${adminUsername}`);
+    }
+
+    // Seed Security Roles
+    if (!skipSeed) {
+      const roles = [
+        {
+          id: 'role_super_admin',
+          name: 'super_admin',
+          display_name: 'Super Administrator',
+          description: 'Full system access - can do everything including security config',
+          permissions: JSON.stringify(['*']), // All permissions
+          priority: 100,
+          is_system_role: 1
+        },
+        {
+          id: 'role_admin',
+          name: 'admin',
+          display_name: 'Administrator',
+          description: 'Manage merchants, transactions, settlements - cannot change security',
+          permissions: JSON.stringify(['merchants.*', 'transactions.*', 'settlements.*', 'reports.view', 'customers.view']),
+          priority: 80,
+          is_system_role: 1
+        },
+        {
+          id: 'role_operator',
+          name: 'operator',
+          display_name: 'Operator',
+          description: 'Process transactions, view reports - limited access',
+          permissions: JSON.stringify(['transactions.create', 'transactions.view', 'reports.view', 'customers.view']),
+          priority: 50,
+          is_system_role: 1
+        },
+        {
+          id: 'role_viewer',
+          name: 'viewer',
+          display_name: 'Viewer',
+          description: 'Read-only access - can only view data',
+          permissions: JSON.stringify(['*.view', 'reports.view']),
+          priority: 10,
+          is_system_role: 1
+        }
+      ];
+
+      for (const role of roles) {
+        const roleRes = await db.query("SELECT * FROM user_roles WHERE id = ?", [role.id]);
+        if (roleRes.rowCount === 0) {
+          await db.query(`
+            INSERT INTO user_roles (id, name, display_name, description, permissions, priority, is_system_role)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `, [role.id, role.name, role.display_name, role.description, role.permissions, role.priority, role.is_system_role]);
+          console.log(`✅ Created role: ${role.display_name}`);
+        }
+      }
+
+      // Assign Super Admin role to default admin user
+      const assignRes = await db.query("SELECT * FROM user_role_assignments WHERE user_id = ? AND role_id = ?", [adminId, 'role_super_admin']);
+      if (assignRes.rowCount === 0) {
+        await db.query(`
+          INSERT INTO user_role_assignments (id, user_id, role_id, assigned_by)
+          VALUES (?, ?, ?, ?)
+        `, [uuidv4(), adminId, 'role_super_admin', 'system']);
+        console.log(`✅ Assigned Super Admin role to ${adminUsername}`);
+      }
+
+      // Seed default withdrawal limits for merchants
+      const limitRes = await db.query("SELECT * FROM withdrawal_limits WHERE entity_type = ? AND limit_type = ?", ['merchant', 'daily_limit']);
+      if (limitRes.rowCount === 0) {
+        await db.query(`
+          INSERT INTO withdrawal_limits (id, merchant_id, entity_type, limit_type, limit_amount, currency, period_type, period_start, period_end)
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+1 day'))
+        `, [uuidv4(), 'MRC-1001', 'merchant', 'daily_limit', 100000.00, 'USD', 'daily']);
+        console.log(`✅ Created default withdrawal limit: $100,000/day for MRC-1001`);
+      }
     }
 
     // Seed Merchant Settings and Terminal unless SKIP_SEED is set
@@ -616,6 +733,19 @@ export const initTables = async () => {
       );
     `);
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS merchant_wallet_transfers (
+        id TEXT PRIMARY KEY,
+        merchant_id TEXT NOT NULL,
+        customer_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        note TEXT,
+        status TEXT DEFAULT 'COMPLETED',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Bank Payouts Table (wallet-to-bank)
     await db.query(`
       CREATE TABLE IF NOT EXISTS bank_payouts (
@@ -775,6 +905,69 @@ export const initTables = async () => {
       );
     `);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // AUTHORIZATION ENGINE TABLES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Authorization Requests - Transaction authorization workflow
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS authorization_requests (
+        id TEXT PRIMARY KEY,
+        transaction_id TEXT UNIQUE NOT NULL,
+        transaction_type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        customer_id TEXT NOT NULL,
+        merchant_id TEXT,
+        terminal_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending_authorization',
+        authorization_code TEXT UNIQUE NOT NULL,
+        verification_source TEXT,
+        verification_data TEXT,
+        risk_score REAL DEFAULT 0.0,
+        fraud_flags TEXT,
+        requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        authorized_at TEXT,
+        settled_at TEXT,
+        expires_at TEXT,
+        decline_reason TEXT,
+        notes TEXT
+      );
+    `);
+
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_auth_status ON authorization_requests(status)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_auth_customer ON authorization_requests(customer_id)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_auth_transaction ON authorization_requests(transaction_id)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_auth_code ON authorization_requests(authorization_code)`); } catch(_) {}
+
+    // Authorization Holds - Funds on hold during authorization
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS authorization_holds (
+        id TEXT PRIMARY KEY,
+        authorization_id TEXT NOT NULL,
+        wallet_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        hold_type TEXT NOT NULL,
+        released_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Authorization Log - Audit trail of authorization events
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS authorization_log (
+        id TEXT PRIMARY KEY,
+        authorization_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        event_data TEXT,
+        performed_by TEXT,
+        performed_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_auth_log_id ON authorization_log(authorization_id)`); } catch(_) {}
+
     // Settlement Reversals - Track reversals and chargebacks
     await db.query(`
       CREATE TABLE IF NOT EXISTS settlement_reversals (
@@ -787,6 +980,221 @@ export const initTables = async () => {
         processed_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (settlement_id) REFERENCES transaction_settlements(id)
+      );
+    `);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SECURITY TABLES - FOR REAL FUNDS PROTECTION
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // User Roles - RBAC (Role-Based Access Control)
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_roles (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT,
+        permissions TEXT NOT NULL,
+        priority INTEGER DEFAULT 0,
+        is_system_role INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // User Role Assignments - Link users to roles
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_role_assignments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        role_id TEXT NOT NULL,
+        assigned_by TEXT NOT NULL,
+        assigned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT,
+        UNIQUE(user_id, role_id),
+        FOREIGN KEY (user_id) REFERENCES admin_users(id),
+        FOREIGN KEY (role_id) REFERENCES user_roles(id)
+      );
+    `);
+
+    // MFA Tokens - Two-Factor Authentication
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS mfa_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        mfa_type TEXT NOT NULL,
+        secret TEXT NOT NULL,
+        backup_codes TEXT,
+        verified INTEGER DEFAULT 0,
+        last_used_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES admin_users(id)
+      );
+    `);
+
+    // Security Audit Log - Track ALL security events
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS security_audit_log (
+        id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        user_id TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        action TEXT NOT NULL,
+        resource_type TEXT,
+        resource_id TEXT,
+        old_value TEXT,
+        new_value TEXT,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        metadata TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_sec_audit_user ON security_audit_log(user_id)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_sec_audit_type ON security_audit_log(event_type)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_sec_audit_created ON security_audit_log(created_at)`); } catch(_) {}
+
+    // Transaction Approvals - Dual Authorization Workflow
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS transaction_approvals (
+        id TEXT PRIMARY KEY,
+        transaction_id TEXT NOT NULL,
+        transaction_type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        initiated_by TEXT NOT NULL,
+        approved_by TEXT,
+        rejected_by TEXT,
+        status TEXT NOT NULL DEFAULT 'pending_approval',
+        approval_threshold REAL NOT NULL,
+        approval_level INTEGER DEFAULT 1,
+        approval_deadline TEXT,
+        rejection_reason TEXT,
+        metadata TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        approved_at TEXT,
+        rejected_at TEXT,
+        FOREIGN KEY (initiated_by) REFERENCES admin_users(id),
+        FOREIGN KEY (approved_by) REFERENCES admin_users(id),
+        FOREIGN KEY (rejected_by) REFERENCES admin_users(id)
+      );
+    `);
+
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_tx_approval_status ON transaction_approvals(status)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_tx_approval_initiated ON transaction_approvals(initiated_by)`); } catch(_) {}
+
+    // Withdrawal Limits - Daily/hourly withdrawal restrictions
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS withdrawal_limits (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        merchant_id TEXT,
+        customer_id TEXT,
+        entity_type TEXT NOT NULL,
+        limit_type TEXT NOT NULL,
+        limit_amount REAL NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        period_type TEXT NOT NULL,
+        current_usage REAL DEFAULT 0,
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Withdrawal Velocity Tracking - Detect suspicious withdrawal patterns
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS withdrawal_velocity_tracking (
+        id TEXT PRIMARY KEY,
+        entity_id TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        time_window_minutes INTEGER NOT NULL,
+        withdrawal_count INTEGER DEFAULT 0,
+        total_amount REAL DEFAULT 0,
+        currency TEXT DEFAULT 'USD',
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // IP Whitelist - Allowed IP addresses
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS ip_whitelist (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        merchant_id TEXT,
+        ip_address TEXT NOT NULL,
+        ip_range TEXT,
+        label TEXT,
+        added_by TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        last_used_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT
+      );
+    `);
+
+    // Security Alerts - Real-time security notifications
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS security_alerts (
+        id TEXT PRIMARY KEY,
+        alert_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        user_id TEXT,
+        entity_id TEXT,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        alert_data TEXT,
+        status TEXT DEFAULT 'active',
+        acknowledged_by TEXT,
+        acknowledged_at TEXT,
+        resolved_at TEXT,
+        notification_sent INTEGER DEFAULT 0,
+        notification_channels TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_sec_alert_status ON security_alerts(status)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_sec_alert_severity ON security_alerts(severity)`); } catch(_) {}
+
+    // Database Backups Log - Track automated backups
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS database_backups (
+        id TEXT PRIMARY KEY,
+        backup_type TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_size INTEGER,
+        encryption_enabled INTEGER DEFAULT 1,
+        encryption_key_id TEXT,
+        backup_hash TEXT,
+        status TEXT DEFAULT 'completed',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        error_message TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Geographic Restrictions - Block transactions from certain countries
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS geographic_restrictions (
+        id TEXT PRIMARY KEY,
+        rule_type TEXT NOT NULL,
+        country_code TEXT NOT NULL,
+        restriction_type TEXT NOT NULL,
+        reason TEXT,
+        added_by TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT
       );
     `);
 

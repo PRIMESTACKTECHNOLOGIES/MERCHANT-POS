@@ -415,11 +415,13 @@ export const POSPageSecure = () => {
   const handleReaderTap = async () => {
     setLoading(true);
     try {
-      const result = await readAcr122uCard();
-      if (result?.card?.uid) {
-        showToast(`Reader detected card UID: ${result.card.uid}`, 'success');
-        setCardData(prev => ({ ...prev, pan: result.card.uid.slice(-16), expiry: '12/30', cvv: '123' }));
+      const amountForNfc = Math.round(parseFloat(amount || '0') * Math.pow(10, getCurrency(currency).decimals));
+      const result = await readAcr122uCard(amountForNfc, currency);
+      if (result?.card?.uid && result?.card?.emvReady) {
+        showToast('Contactless EMV payment card detected. Enter any required card details and continue.', 'success');
         setCardEntryMode('NFC');
+      } else if (result?.nfcDetected) {
+        showToast(result.error || 'NFC device detected, but it is not readable as an EMV payment card.', 'warning');
       } else {
         showToast('No card detected by ACR122U reader', 'info');
       }

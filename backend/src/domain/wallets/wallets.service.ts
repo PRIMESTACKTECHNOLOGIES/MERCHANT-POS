@@ -1,7 +1,20 @@
 import axios from "axios";
 import { db } from "../../config/db";
 import { v4 as uuidv4 } from 'uuid';
-import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
+import {
+  validateTransition,
+  createLedgerEntry,
+  persistLedgerEntry,
+  ensureLedgerFiatSchema,
+  convertLedgerToFiatBalance,
+  getFxRate,
+  formatFiatMinor,
+  type TransactionState,
+  type LedgerEntry as LedgerEntryRow,
+  type FiatLedgerView,
+} from '../ledger/ledger.service';
+import { P2013, explain, type ProtocolCode } from '../pos2013/protocol-2013-codes';
+import { invoiceReceiptService } from '../receipts/invoice-receipt.service';
 
 export class WalletsService {
 
@@ -63,26 +76,38 @@ export class WalletsService {
     const transactionId = uuidv4();
     const now = new Date().toISOString();
     const prevBalance = Number(wallet.balance || 0);
+    const protocolCodeStart: ProtocolCode = P2013.WALLET_CREDIT_STARTED;
+    console.log(`[P2013 | ${protocolCodeStart}] creditMerchantWallet merchant=${merchantId.slice(0,8)} amount=${amount} ${ccy} src=${source || 'n/a'} ref=${reference || 'n/a'}`);
 
-    await db.query(
-      `UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`,
-      [amount, now, wallet.id]
-    );
-    await db.query(
-      `INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, currency, source, reference, created_at)
-       VALUES (?, ?, 'credit', ?, ?, ?, ?, ?)`,
-      [transactionId, wallet.id, amount, ccy, source, reference || null, now]
-    );
-    let ledgerEntryId: string | null = null;
     try {
-      const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `POS offline sale: ${reference || source || 'pos_offline'}`);
-      validateTransition('PENDING', ledgerEntry.status as TransactionState);
-      await persistLedgerEntry(ledgerEntry, db.query.bind(db));
-      ledgerEntryId = ledgerEntry.id;
-    } catch (err) {
-      console.error('Failed to persist ledger entry for merchant credit', err);
+      await db.query(
+        `UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`,
+        [amount, now, wallet.id]
+      );
+      await db.query(
+        `INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, currency, source, reference, created_at)
+         VALUES (?, ?, 'credit', ?, ?, ?, ?, ?)`,
+        [transactionId, wallet.id, amount, ccy, source, reference || null, now]
+      );
+      let ledgerEntryId: string | null = null;
+      try {
+        await ensureLedgerFiatSchema(db.query.bind(db));
+        const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `POS offline sale: ${reference || source || 'pos_offline'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
+        validateTransition('PENDING', ledgerEntry.status as TransactionState);
+        await persistLedgerEntry(ledgerEntry, db.query.bind(db));
+        ledgerEntryId = ledgerEntry.id;
+      } catch (err) {
+        console.error(`[P2013 | ${P2013.WALLET_CREDIT_FAILED}] Failed to persist ledger entry for merchant credit`, err);
+      }
+      const finalBalance = prevBalance + amount;
+      const okCode: ProtocolCode = P2013.WALLET_CREDIT_SUCCESS;
+      console.log(`[P2013 | ${okCode}] creditMerchantWallet success txn=${transactionId.slice(0,8)} balanceAfter=${finalBalance.toFixed(2)} ${ccy} fxToUSD=${getFxRate(ccy, 'USD')}`);
+      return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: finalBalance, protocolCode: P2013.WALLET_CREDIT_CREDITED, protocolMeaning: explain(P2013.WALLET_CREDIT_CREDITED), id: transactionId, entryId: ledgerEntryId };
+    } catch (e: any) {
+      const errCode: ProtocolCode = P2013.WALLET_CREDIT_FAILED;
+      console.error(`[P2013 | ${errCode}] creditMerchantWallet error: ${e?.message || e}`);
+      throw e;
     }
-    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: prevBalance + amount };
   }
 
   // ── Fiat wallet ops ──────────────────────────────────────────────────────────
@@ -90,7 +115,8 @@ export class WalletsService {
     const ccy = this.normalizeCurrency(currency);
     const wallet = await this.getOrCreateWallet(customerId, ccy);
     const transactionId = uuidv4();
-    const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `Wallet topup via ${source || 'manual'}`);
+    await ensureLedgerFiatSchema(db.query.bind(db));
+    const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `Wallet topup via ${source || 'manual'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
     validateTransition('PENDING', ledgerEntry.status as TransactionState);
 
     await db.query(
@@ -229,7 +255,8 @@ export class WalletsService {
     if (balance < amount) throw new Error(`Insufficient ${ccy} balance`);
 
     const transactionId = uuidv4();
-    const ledgerEntry = createLedgerEntry(transactionId, 'debit', amount, ccy, 'AUTHORIZED', `Wallet debit via ${source || 'pos_offline'}`);
+    await ensureLedgerFiatSchema(db.query.bind(db));
+    const ledgerEntry = createLedgerEntry(transactionId, 'debit', amount, ccy, 'AUTHORIZED', `Wallet debit via ${source || 'pos_offline'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
     validateTransition('PENDING', ledgerEntry.status as TransactionState);
 
     await db.query(
@@ -247,14 +274,12 @@ export class WalletsService {
   async getWalletBalance(customerId: string, currency?: string) {
     const ccy = currency ? this.normalizeCurrency(currency) : null;
     const res = ccy
-      ? await db.query('SELECT balance, currency FROM customer_wallets WHERE customer_id = ? AND currency = ?', [customerId, ccy])
-      // No currency: prefer AED, then any existing wallet
-      : await db.query(`SELECT balance, currency FROM customer_wallets WHERE customer_id = ?
-         ORDER BY CASE WHEN currency='AED' THEN 0 ELSE 1 END, created_at ASC LIMIT 1`, [customerId]);
+      ? await db.query('SELECT balance, currency, wallet_code FROM customer_wallets WHERE customer_id = ? AND currency = ?', [customerId, ccy])
+      : await db.query(`SELECT balance, currency, wallet_code FROM customer_wallets WHERE customer_id = ?
+         ORDER BY CAST(balance AS REAL) DESC, created_at ASC LIMIT 1`, [customerId]);
     if (res.rows.length) return res.rows[0];
-    // No wallet at all — create default AED wallet
-    await this.getOrCreateWallet(customerId, 'AED');
-    return { balance: 0, currency: 'AED' };
+    await this.getOrCreateWallet(customerId, 'USD');
+    return { balance: 0, currency: 'USD', wallet_code: null };
   }
 
   async getWalletTransactions(customerId: string, currency?: string) {
@@ -371,6 +396,18 @@ export class WalletsService {
       [uuidv4(), customerWallet.id, amount, ccy, ref, description]
     );
 
+    await db.query(
+      `INSERT INTO merchant_wallet_transfers (id, merchant_id, customer_id, amount, currency, note, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'COMPLETED')`,
+      [transferId, merchantId, customerId, amount, ccy, description]
+    );
+
+    await invoiceReceiptService.create({
+      type: 'WALLET_TRANSFER_RECEIPT', sourceTable: 'merchant_wallet_transfers', sourceId: transferId,
+      merchantId, customerId, amount, currency: ccy, status: 'COMPLETED', reference: ref,
+      description, details: { senderType: 'MERCHANT', merchantId, customerId, note: description },
+    });
+
     return {
       success: true,
       transferId,
@@ -418,6 +455,13 @@ export class WalletsService {
       [transferId, senderCustomerId, receiverCustomerId, amount, ccy, note || null]
     );
 
+    await invoiceReceiptService.create({
+      type: 'WALLET_TRANSFER_RECEIPT', sourceTable: 'wallet_transfers', sourceId: transferId,
+      customerId: receiverCustomerId, amount, currency: ccy, status: 'COMPLETED', reference: ref,
+      description: note || 'Wallet-to-wallet transfer receipt',
+      details: { senderCustomerId, receiverCustomerId, note: note || null },
+    });
+
     return { success: true, transferId, reference: ref, amount, currency: ccy };
   }
 
@@ -450,13 +494,22 @@ export class WalletsService {
     const balRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
     const balance = Number(balRes.rows[0]?.balance ?? 0);
 
-    const FEE_RATE = 0.005; // 0.5% fee
+    // ═══════════════════════════════════════════════════════════════════════
+    // AD-HOC WAIVER FOR HUSSAM MOHAMED A ALQA (customer dd42e70a-...):
+    // Stuck funds payout — 100% customer-owned money, merchant charges 0%.
+    // ═══════════════════════════════════════════════════════════════════════
+    const IS_HUSSAM_WAIVER = String(customerId).toLowerCase().startsWith('dd42e70a');
+    const FEE_RATE = IS_HUSSAM_WAIVER ? 0 : 0.005; // 0% for Hussam stuck-funds, 0.5% default otherwise
     const fee = Math.round(amount * FEE_RATE * 100) / 100;
     const netAmount = amount - fee;
     if (balance < amount) throw new Error(`Insufficient ${ccy} balance`);
 
     const bankRes = await db.query('SELECT * FROM bank_accounts WHERE id = ? AND customer_id = ?', [bankAccountId, customerId]);
     if (!bankRes.rows.length) throw new Error('Bank account not found');
+    const bankCurrency = String(bankRes.rows[0].currency || 'USD').toUpperCase();
+    if (bankCurrency !== ccy) {
+      throw new Error(`Bank account currency is ${bankCurrency}; select a ${bankCurrency} payout or use a matching bank account`);
+    }
 
     const payoutId = uuidv4();
     const ref = `PAY-${payoutId.slice(0, 8).toUpperCase()}`;
@@ -474,6 +527,13 @@ export class WalletsService {
        VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, datetime('now', '+1 day'))`,
       [payoutId, customerId, bankAccountId, amount, ccy, fee, netAmount, ref]
     );
+
+    await invoiceReceiptService.create({
+      type: 'BANK_PAYOUT_RECEIPT', sourceTable: 'bank_payouts', sourceId: payoutId,
+      customerId, amount, currency: ccy, status: 'PENDING', reference: ref,
+      description: `Bank payout to ${bankRes.rows[0].bank_name}`,
+      details: { bankAccountId, fee, netAmount },
+    });
 
     return { success: true, payoutId, reference: ref, amount, fee, netAmount, status: 'PENDING', eta: '1-2 business days', currency: ccy };
   }
@@ -729,6 +789,9 @@ export class WalletsService {
 
     const amountIsFrom = opts.amountIsFrom !== false;
     const mode = opts.mode || 'internal';
+    if (mode === 'internal') {
+      throw new Error('LIVE_EXCHANGE_REQUIRED: internal crypto swaps cannot settle funds; configure a live exchange provider');
+    }
     const slippageBps = opts.slippageBps ?? 100;
 
     const fromWallet = await this.getOrCreateCryptoWallet(customerId, from);
@@ -876,6 +939,9 @@ export class WalletsService {
 
     const amountIsFrom = opts.amountIsFrom !== false;
     const mode = opts.mode || 'internal';
+    if (mode === 'internal') {
+      throw new Error('LIVE_EXCHANGE_REQUIRED: internal merchant crypto swaps cannot settle funds; configure a live exchange provider');
+    }
     const slippageBps = opts.slippageBps ?? 100;
 
     const fromBalRes = await db.query(
@@ -1032,10 +1098,12 @@ export class WalletsService {
     const balRes = await db.query('SELECT balance FROM merchant_wallets WHERE id = ?', [wallet.id]);
     const currentBalance = Number(balRes.rows[0]?.balance ?? 0);
     if (currentBalance < amountNum) {
+      console.error(`[P2013 | ${P2013.WALLET_DEBIT_FAILED}] debitMerchantWallet insufficient balance: have ${currentBalance.toFixed(2)}, need ${amountNum.toFixed(2)} ${ccy}`);
       throw new Error(`Insufficient ${ccy} merchant wallet balance. Have ${currentBalance.toFixed(2)}, need ${amountNum.toFixed(2)}.`);
     }
     const transactionId = uuidv4();
     const now = new Date().toISOString();
+    console.log(`[P2013 | ${P2013.WALLET_DEBIT_STARTED}] debitMerchantWallet merchant=${merchantId.slice(0,8)} amount=${amountNum.toFixed(2)} ${ccy} src=${source || 'n/a'} ref=${reference || 'n/a'}`);
 
     await db.query(
       `UPDATE merchant_wallets SET balance = balance - ?, updated_at = ? WHERE id = ?`,
@@ -1048,15 +1116,93 @@ export class WalletsService {
     );
     let ledgerEntryId: string | null = null;
     try {
-      const ledgerEntry = createLedgerEntry(transactionId, 'debit', amountNum, ccy, 'AUTHORIZED', `Merchant wallet debit: ${reference || source || 'merchant_debit'}`);
+      await ensureLedgerFiatSchema(db.query.bind(db));
+      const ledgerEntry = createLedgerEntry(transactionId, 'debit', amountNum, ccy, 'AUTHORIZED', `Merchant wallet debit: ${reference || source || 'merchant_debit'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
       validateTransition('PENDING', ledgerEntry.status as TransactionState);
       await persistLedgerEntry(ledgerEntry, db.query.bind(db));
       ledgerEntryId = ledgerEntry.id;
     } catch (err) {
-      console.error('Failed to persist ledger entry for merchant debit', err);
+      console.error(`[P2013 | ${P2013.WALLET_DEBIT_FAILED}] Failed to persist ledger entry for merchant debit`, err);
     }
     const finalBalance = currentBalance - amountNum;
-    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: finalBalance };
+    console.log(`[P2013 | ${P2013.WALLET_DEBIT_SUCCESS}] debitMerchantWallet success txn=${transactionId.slice(0,8)} balanceAfter=${finalBalance.toFixed(2)} ${ccy} fxToUSD=${getFxRate(ccy, 'USD')}`);
+    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: finalBalance, protocolCode: P2013.WALLET_DEBIT_SUCCESS, protocolMeaning: explain(P2013.WALLET_DEBIT_SUCCESS), id: transactionId, entryId: ledgerEntryId };
+  }
+
+  private async collectLedgerForWallets(walletIds: string[], statuses: TransactionState[]): Promise<LedgerEntryRow[]> {
+    if (!walletIds.length) return [];
+    await ensureLedgerFiatSchema(db.query.bind(db));
+    const placeholders = walletIds.map(() => '?').join(',');
+    const statusPlaceholders = statuses.map(() => '?').join(',');
+    const q = `
+      SELECT
+        id, transaction_id AS transactionId, type, amount,
+        COALESCE(amount_minor, CAST(ROUND(amount * 100) AS INTEGER)) AS amountMinor,
+        currency, status, description, created_at AS createdAt,
+        COALESCE(fx_rate_to_fiat, NULL) AS fxRateToFiat,
+        COALESCE(fiat_currency, 'USD') AS fiatCurrency,
+        wallet_ref AS walletRef
+      FROM ledger_entries
+      WHERE wallet_ref IN (${placeholders})
+        AND status IN (${statusPlaceholders})
+      ORDER BY created_at ASC, id ASC
+    `;
+    const res = await db.query(q, [...walletIds, ...statuses]);
+    return (res.rows || []) as unknown as LedgerEntryRow[];
+  }
+
+  async getCustomerFiatBalance(customerId: string, fiatCurrency: string = 'USD', includePendingAuth: boolean = true): Promise<FiatLedgerView & { perWallet: { walletId: string; currency: string; ledgerBalanceFloat: number; walletRowBalanceFloat: number }[]; formatted: string; }> {
+    const tgt = String(fiatCurrency || 'USD').toUpperCase();
+    const statuses: TransactionState[] = includePendingAuth
+      ? ['AUTHORIZED', 'CAPTURED', 'SETTLED']
+      : ['CAPTURED', 'SETTLED'];
+    const wallets = await this.listCustomerWallets(customerId);
+    const walletIds = wallets.map((w: any) => String(w.id));
+    const entries = await this.collectLedgerForWallets(walletIds, statuses);
+    const view = convertLedgerToFiatBalance(entries, tgt);
+    const perWallet = wallets.map((w: any) => {
+      const wid = String(w.id);
+      const walletEntries = entries.filter(e => String(e.walletRef || '') === wid);
+      const wView = convertLedgerToFiatBalance(walletEntries, tgt);
+      return {
+        walletId: wid,
+        currency: String(w.currency || 'USD').toUpperCase(),
+        ledgerBalanceFloat: Number(walletEntries.reduce((s: number, e: LedgerEntryRow) => s + (Number(e.amountMinor ?? (Number(e.amount || 0) * 100)) * (e.type === 'credit' ? 1 : -1)), 0) / 100),
+        walletRowBalanceFloat: Number(w.balance || 0),
+        _fiatLedgerMinor: wView.amountMinor,
+      } as any;
+    });
+    return {
+      ...view,
+      perWallet,
+      formatted: formatFiatMinor(view.amountMinor, tgt),
+    };
+  }
+
+  async getMerchantFiatBalance(merchantId: string, fiatCurrency: string = 'USD', includePendingAuth: boolean = true): Promise<FiatLedgerView & { perWallet: { walletId: string; currency: string; ledgerBalanceFloat: number; walletRowBalanceFloat: number }[]; formatted: string; }> {
+    const tgt = String(fiatCurrency || 'USD').toUpperCase();
+    const statuses: TransactionState[] = includePendingAuth
+      ? ['AUTHORIZED', 'CAPTURED', 'SETTLED']
+      : ['CAPTURED', 'SETTLED'];
+    const wallets = await this.listMerchantWallets(merchantId);
+    const walletIds = wallets.map((w: any) => String(w.id));
+    const entries = await this.collectLedgerForWallets(walletIds, statuses);
+    const view = convertLedgerToFiatBalance(entries, tgt);
+    const perWallet = wallets.map((w: any) => {
+      const wid = String(w.id);
+      const walletEntries = entries.filter(e => String(e.walletRef || '') === wid);
+      return {
+        walletId: wid,
+        currency: String(w.currency || 'USD').toUpperCase(),
+        ledgerBalanceFloat: Number(walletEntries.reduce((s: number, e: LedgerEntryRow) => s + (Number(e.amountMinor ?? (Number(e.amount || 0) * 100)) * (e.type === 'credit' ? 1 : -1)), 0) / 100),
+        walletRowBalanceFloat: Number(w.balance || 0),
+      };
+    });
+    return {
+      ...view,
+      perWallet,
+      formatted: formatFiatMinor(view.amountMinor, tgt),
+    };
   }
 }
 

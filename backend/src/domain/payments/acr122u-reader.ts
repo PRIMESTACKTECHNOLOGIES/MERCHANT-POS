@@ -10,6 +10,8 @@ export interface ACR122UCardData {
   uid: string;
   atr: string;
   type: string;
+  emvReady?: boolean;
+  error?: string;
   aid?: string;
   gpo?: string;
   raw?: Buffer;
@@ -52,6 +54,11 @@ export class ACR122UReaderService {
       this.nfc.on('reader', (reader: ReaderLike) => {
         console.log(`[ACR122U] Reader connected: ${reader.reader.name}`);
         this.reader = reader;
+
+        // nfc-pcsc otherwise tries to process ISO 14443-4 cards immediately
+        // and raises "AID was not set" before our EMV AID-selection logic runs.
+        // Manual mode emits the card event and lets readEmvCard() select PPSE/AIDs.
+        (reader as any).autoProcessing = false;
 
         reader.on('card', (card: any) => {
           console.log(`[ACR122U] Card detected: ${card.uid}`);
@@ -141,7 +148,7 @@ export class ACR122UReaderService {
     });
   }
 
-  private async transmitApdu(reader: any, apdu: Buffer, responseMaxLength = 512): Promise<Buffer> {
+  private async transmitApdu(reader: any, apdu: Buffer, responseMaxLength = 512, operation = 'APDU'): Promise<Buffer> {
     const response = await reader.transmit(apdu, responseMaxLength);
 
     if (!response || response.length < 2) {
@@ -153,23 +160,57 @@ export class ACR122UReaderService {
     const payload = response.slice(0, -2);
 
     if (sw1 === 0x6c) {
-      return this.transmitApdu(reader, Buffer.concat([apdu.slice(0, -1), Buffer.from([sw2])]), responseMaxLength);
+      return this.transmitApdu(reader, Buffer.concat([apdu.slice(0, -1), Buffer.from([sw2])]), responseMaxLength, operation);
     }
 
     if (sw1 === 0x61) {
-      return this.transmitApdu(reader, Buffer.from([0x00, 0xc0, 0x00, 0x00, sw2]), responseMaxLength);
+      return this.transmitApdu(reader, Buffer.from([0x00, 0xc0, 0x00, 0x00, sw2]), responseMaxLength, operation);
     }
 
     if (sw1 === 0x90 && sw2 === 0x00) {
       return payload;
     }
 
-    throw new Error(`APDU failed: SW=${sw1.toString(16).padStart(2, '0')}${sw2.toString(16).padStart(2, '0')}`);
+    const sw = `${sw1.toString(16).padStart(2, '0')}${sw2.toString(16).padStart(2, '0')}`.toUpperCase();
+    const detail = sw === '6985'
+      ? 'conditions of use not satisfied (card rejected the command or terminal data)'
+      : 'card rejected the command';
+    throw new Error(`APDU failed during ${operation}: SW=${sw} — ${detail}`);
   }
 
-  private buildPdolData(pdol: Buffer): Buffer {
+  private buildPdolData(pdol: Buffer, amountMinor = 0, currency = 'USD'): Buffer {
     const values: Buffer[] = [];
     let offset = 0;
+
+    const bcd = (value: number, bytes: number) => {
+      const digits = Math.max(0, Math.round(value)).toString().padStart(bytes * 2, '0').slice(-(bytes * 2));
+      const out = Buffer.alloc(bytes);
+      for (let i = 0; i < bytes; i += 1) {
+        out[i] = (Number(digits[i * 2]) << 4) | Number(digits[i * 2 + 1]);
+      }
+      return out;
+    };
+    const currencyCodes: Record<string, number> = { USD: 840, AED: 784, EUR: 978, GBP: 826, SAR: 682, INR: 356, CAD: 124, AUD: 36 };
+    const currencyCode = currencyCodes[String(currency || 'USD').toUpperCase()] || 840;
+    const now = new Date();
+    const terminalData: Record<string, Buffer> = {
+      '9F02': bcd(amountMinor, 6),
+      '9F03': Buffer.alloc(6, 0),
+      '9F1A': Buffer.from([0x08, 0x40]),
+      '95': Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00]),
+      '5F2A': Buffer.from([(currencyCode >> 8) & 0xff, currencyCode & 0xff]),
+      '9A': Buffer.from([
+        ...bcd(now.getUTCFullYear() % 100, 1),
+        ...bcd(now.getUTCMonth() + 1, 1),
+        ...bcd(now.getUTCDate(), 1),
+      ]),
+      '9C': Buffer.from([0x00]),
+      '9F37': require('crypto').randomBytes(4),
+      '9F35': Buffer.from([0x22]),
+      '9F33': Buffer.from([0xe0, 0xf8, 0xc8]),
+      '9F40': Buffer.from([0xf0, 0x00, 0xf0, 0x01, 0x00]),
+      '9F66': Buffer.from([0x26, 0x00, 0x40, 0x00]),
+    };
 
     while (offset < pdol.length) {
       let tag = pdol[offset].toString(16).padStart(2, '0').toUpperCase();
@@ -192,7 +233,9 @@ export class ACR122UReaderService {
 
       const length = pdol[offset];
       offset += 1;
-      values.push(Buffer.alloc(length, 0x00));
+      values.push(terminalData[tag] && terminalData[tag].length === length
+        ? terminalData[tag]
+        : Buffer.alloc(length, 0x00));
     }
 
     return Buffer.concat(values);
@@ -208,16 +251,16 @@ export class ACR122UReaderService {
     return this.transmitApdu(reader, apdu);
   }
 
-  private async getProcessingOptions(reader: any, pdol: Buffer | null): Promise<Buffer> {
+  private async getProcessingOptions(reader: any, pdol: Buffer | null, amountMinor = 0, currency = 'USD'): Promise<Buffer> {
     if (!pdol || pdol.length === 0) {
-      return this.transmitApdu(reader, Buffer.from([0x80, 0xa8, 0x00, 0x00, 0x02, 0x83, 0x00, 0x00]));
+      return this.transmitApdu(reader, Buffer.from([0x80, 0xa8, 0x00, 0x00, 0x02, 0x83, 0x00, 0x00]), 512, 'GET PROCESSING OPTIONS');
     }
 
-    const pdolValues = this.buildPdolData(pdol);
+    const pdolValues = this.buildPdolData(pdol, amountMinor, currency);
     const data = Buffer.concat([Buffer.from([0x83, pdolValues.length]), pdolValues]);
     const apdu = Buffer.concat([Buffer.from([0x80, 0xa8, 0x00, 0x00, data.length]), data, Buffer.from([0x00])]);
 
-    return this.transmitApdu(reader, apdu);
+    return this.transmitApdu(reader, apdu, 512, 'GET PROCESSING OPTIONS');
   }
 
   private parseAfl(afl: Buffer): Array<{ sfi: number; firstRecord: number; lastRecord: number }> {
@@ -310,11 +353,12 @@ export class ACR122UReaderService {
     return this.selectAID(reader, Buffer.from('325041592E5359532E4444463031', 'hex'));
   }
 
-  private async readEmvCard(reader: any, card: any): Promise<ACR122UCardData> {
+  private async readEmvCard(reader: any, card: any, amountMinor = 0, currency = 'USD'): Promise<ACR122UCardData> {
     const result: ACR122UCardData = {
       uid: card.uid,
       atr: card.atr || '',
       type: card.type || 'unknown',
+      emvReady: false,
     };
 
     try {
@@ -355,7 +399,7 @@ export class ACR122UReaderService {
 
       const selectedTlv = parseTlv(selectAIDResponse);
       const pdol = selectedTlv['9F38'] || Buffer.alloc(0);
-      const gpoResponse = await this.getProcessingOptions(reader, pdol.length ? pdol : null);
+      const gpoResponse = await this.getProcessingOptions(reader, pdol.length ? pdol : null, amountMinor, currency);
       result.gpo = gpoResponse.toString('hex').toUpperCase();
 
       const gpoTlv = parseTlv(gpoResponse);
@@ -368,10 +412,12 @@ export class ACR122UReaderService {
       const recordResponses = await this.readRecords(reader, this.parseAfl(afl));
       const combinedRaw = Buffer.concat([ppseResponse, selectAIDResponse, gpoResponse, ...recordResponses]);
       result.raw = combinedRaw;
+      result.emvReady = true;
 
       return result;
     } catch (error: any) {
       console.warn('[ACR122U] EMV read failed:', error?.message || error);
+      result.error = error?.message || 'NFC device is not a readable EMV payment card';
       if (this.latestCard) {
         return result;
       }
@@ -379,7 +425,7 @@ export class ACR122UReaderService {
     }
   }
 
-  async readCard(): Promise<ACR122UCardData | null> {
+  async readCard(amountMinor = 0, currency = 'USD'): Promise<ACR122UCardData | null> {
     if (!this.enabled) {
       return null;
     }
@@ -388,7 +434,7 @@ export class ACR122UReaderService {
       const reader = await this.ensureReader();
 
       if (this.latestCard) {
-        return this.readEmvCard(reader, this.latestCard);
+        return this.readEmvCard(reader, this.latestCard, amountMinor, currency);
       }
 
       return new Promise((resolve) => {
@@ -400,7 +446,7 @@ export class ACR122UReaderService {
           clearTimeout(timeout);
           reader.removeListener('card', onCard);
           try {
-            const emvCard = await this.readEmvCard(reader, card);
+            const emvCard = await this.readEmvCard(reader, card, amountMinor, currency);
             resolve(emvCard);
           } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
