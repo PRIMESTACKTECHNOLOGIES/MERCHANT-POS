@@ -201,10 +201,10 @@ object ApiClient {
      * Default backend base URL.
      *   Emulator      → http://10.0.2.2:7000/
     *   Real device (same Wi-Fi as PC) → http://10.0.1.156:7000/
-     *   Cloud / Render → https://your-app.onrender.com/
+     *   Cloud / Render → https://pos-offline-api.onrender.com/
      * Override via Settings screen on the device.
      */
-    const val DEFAULT_URL = "http://10.0.1.156:7000/"
+    const val DEFAULT_URL = "https://pos-offline-api.onrender.com/"
 
     /** OkHttpClient — attaches JWT bearer token when provided */
     private fun buildOkHttp(jwtToken: String? = null): OkHttpClient {
