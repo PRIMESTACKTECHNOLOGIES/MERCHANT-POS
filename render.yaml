@@ -15,6 +15,10 @@ services:
         value: "false"
       - key: PORT
         value: 10000
+      - key: DATABASE_PATH
+        value: /app/data/database.sqlite
+      - key: ALLOWED_ORIGINS
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: PARTNER_ACCESS_TOKEN
@@ -23,13 +27,3 @@ services:
         value: https://api-gateway.transak.com/api/v2
       - key: WEBHOOK_SECRET
         generateValue: true
-      - key: DATABASE_URL
-        fromDatabase:
-          name: pos-postgres
-          property: connectionString
-
-databases:
-  - name: pos-postgres
-    databaseName: pos_offline
-    user: pos_offline_user
-    plan: free
