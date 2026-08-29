@@ -340,7 +340,7 @@ app.use("/internal/payment-receiver", paymentReceiverRouter);
 // ── Serve React frontend only when enabled ───────────────────────────────────
 // The API service can run without exposing the dashboard; a separate Render
 // frontend service may enable this with SERVE_FRONTEND=true.
-if (process.env.SERVE_FRONTEND !== 'false') {
+if (String(process.env.SERVE_FRONTEND || '').trim().toLowerCase() === 'true') {
   const clientBuildPath = path.join(__dirname, "public");
   app.use(express.static(clientBuildPath));
   // SPA fallback — any route not matched by the API returns index.html
