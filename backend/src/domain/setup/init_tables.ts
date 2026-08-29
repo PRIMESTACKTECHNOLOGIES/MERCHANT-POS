@@ -370,6 +370,54 @@ export const initTables = async () => {
       console.log(`✅ Admin password ensured for ${adminUsername}`);
     }
 
+    // Create RBAC tables before seeding roles. These tables are declared again
+    // in the security section below for compatibility with existing databases.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_roles (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT,
+        permissions TEXT NOT NULL,
+        priority INTEGER DEFAULT 0,
+        is_system_role INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_role_assignments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        role_id TEXT NOT NULL,
+        assigned_by TEXT NOT NULL,
+        assigned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT,
+        UNIQUE(user_id, role_id),
+        FOREIGN KEY (user_id) REFERENCES admin_users(id),
+        FOREIGN KEY (role_id) REFERENCES user_roles(id)
+      );
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS withdrawal_limits (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        merchant_id TEXT,
+        customer_id TEXT,
+        entity_type TEXT NOT NULL,
+        limit_type TEXT NOT NULL,
+        limit_amount REAL NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        period_type TEXT NOT NULL,
+        current_usage REAL DEFAULT 0,
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Seed Security Roles
     if (!skipSeed) {
       const roles = [
