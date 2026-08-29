@@ -337,18 +337,26 @@ app.use("/merchant/v1/cashouts", cashoutsRouter);
 // Internal payment receiver for standalone testing and internal integrations
 app.use("/internal/payment-receiver", paymentReceiverRouter);
 
-// ── Serve React frontend (production) ────────────────────────────────────────
-const clientBuildPath = path.join(__dirname, "public");
-app.use(express.static(clientBuildPath));
-// SPA fallback — any route not matched by the API returns index.html
-app.get("*", (_req, res) => {
-  const indexPath = path.join(clientBuildPath, "index.html");
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      res.status(200).json({ status: "ok", message: "POS 201.3 API running" });
-    }
+// ── Serve React frontend only when enabled ───────────────────────────────────
+// The API service can run without exposing the dashboard; a separate Render
+// frontend service may enable this with SERVE_FRONTEND=true.
+if (process.env.SERVE_FRONTEND !== 'false') {
+  const clientBuildPath = path.join(__dirname, "public");
+  app.use(express.static(clientBuildPath));
+  // SPA fallback — any route not matched by the API returns index.html
+  app.get("*", (_req, res) => {
+    const indexPath = path.join(clientBuildPath, "index.html");
+    res.sendFile(indexPath, (err) => {
+      if (err) {
+        res.status(200).json({ status: "ok", message: "POS 201.3 API running" });
+      }
+    });
   });
-});
+} else {
+  app.get("/", (_req, res) => {
+    res.json({ status: "ok", message: "POS 201.3 API running" });
+  });
+}
 
 // ── Global error handler ──────────────────────────────────────────────────────
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

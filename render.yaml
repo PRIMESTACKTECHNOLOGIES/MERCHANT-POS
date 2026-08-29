@@ -11,6 +11,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: SERVE_FRONTEND
+        value: "false"
       - key: PORT
         value: 10000
       - key: JWT_SECRET
