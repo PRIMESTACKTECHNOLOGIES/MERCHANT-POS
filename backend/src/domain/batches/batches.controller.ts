@@ -79,6 +79,19 @@ export class BatchesController {
       console.error('Error fetching transactions:', e);
       res.status(500).json({ error: e.message });
     }
+
+  }
+
+  async setTransactionAuthCode(req: Request, res: Response) {
+    try {
+      const result = await batchesService.setTransactionAuthCode(
+        String(req.params.transactionId || ''),
+        String(req.body?.authCode || ''),
+      );
+      return res.json({ success: true, ...result });
+    } catch (e: any) {
+      return res.status(e?.message === 'Offline transaction not found' ? 404 : 400).json({ error: e.message });
+    }
   }
 
   /**

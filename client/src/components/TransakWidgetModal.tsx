@@ -200,7 +200,7 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
           setError('Backend did not return a valid Transak widget session.');
           return;
         }
-        setSessionInfo({ widgetUrl: r.widgetUrl, sessionId: r.sessionId, expiresAt: r.expiresAt });
+        setSessionInfo({ widgetUrl: r.widgetUrl, sessionId: r.sessionId || '', expiresAt: r.expiresAt });
         setWidgetStatus('Initialising widget...');
         initSdk(r.widgetUrl);
       })

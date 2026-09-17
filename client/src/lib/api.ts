@@ -1,4 +1,4 @@
-import { generateHmacSignature } from './crypto';
+﻿import { generateHmacSignature } from './crypto';
 import { resolveApiBaseUrl } from './backendUrl';
 
 const BASE_URL = resolveApiBaseUrl({
@@ -53,11 +53,45 @@ export interface Customer {
   wallet_id?: string;
   wallet_code?: string;
   wallet_balance?: number;
+  // KYC / identity
+  id_type?: string;
+  id_number?: string;
+  id_expiry?: string;
+  id_country?: string;
+  date_of_birth?: string;
+  nationality?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  country?: string;
+  postal_code?: string;
+  occupation?: string;
+  kyc_status?: string;
+  kyc_verified_at?: string;
+  risk_level?: string;
+  notes?: string;
 }
 
 export interface WalletBalance {
   balance: number;
   currency: string;
+}
+
+export interface WalletCard {
+  cardId: string;
+  walletId: string;
+  currency: string;
+  offlineBalanceMinor: number;
+  offlineLimitMinor: number;
+}
+
+export interface MerchantCard {
+  merchantId: string;
+  cardId: string;
+  walletId: string;
+  currency: string;
+  authenticated: boolean;
+  alreadyIssued: boolean;
 }
 
 export interface WalletTransaction {
@@ -162,8 +196,6 @@ export interface Settings {
   merchant_phone?: string;
   license_number?: string;
   tax_id?: string;
-  paypal_client_id: string;
-  paypal_client_secret: string;
   paymentConfig?: Array<Record<string, unknown>>;
   terminal_id?: string;
 }
@@ -193,7 +225,7 @@ export interface Receipt {
 type ApiErrorPayload = { error?: string; message?: string };
 
 function getAuthHeader() {
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("token") || localStorage.getItem("jwt_token");
   return token ? { "Authorization": `Bearer ${token}` } : {};
 }
 
@@ -215,6 +247,7 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
         if (json?.error) {
           errorMessage = json.error;
         }
+
       } catch {
         if (text) {
           errorMessage = text;
@@ -222,8 +255,20 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
       }
 
       if (res.status === 401 || res.status === 403) {
-        localStorage.removeItem("token");
-        window.location.href = "/login";
+        // Only hard-logout on genuine AUTHENTICATION-layer failures (middleware
+        // returns these literal messages). Never kill login on APPLICATION-layer
+        // permission denials (e.g. "not authorized for this receipt") because
+        // those are specific to the endpoint, not the validity of the token itself.
+        const isHardAuthFail = /(Missing token|Invalid token|Invalid signature|jwt expired|token must be provided)/i.test(String(errorMessage || ''));
+        if (isHardAuthFail || res.status === 401) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("jwt_token");
+          window.location.href = "/login";
+        } else {
+          // Application 403 (owner / role mismatch on this endpoint only) — show
+          // error but keep login session alive. Receipt / download endpoints can
+          // legitimately return 403 for scoping reasons without killing login.
+        }
       }
 
       throw new Error(`${errorMessage} (${res.status})`);
@@ -235,6 +280,187 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
     const message = error instanceof Error ? error.message : "Network error";
     throw new Error(message);
   }
+}
+
+export interface VaultStats {
+  totalVaultBalance: number;
+  totalMerchantBalances: number;
+  totalPendingSettlement: number;
+  totalPendingPayouts: number;
+  totalOfflineApprovals: number;
+  totalStoredTransactions: number;
+}
+
+export interface ProviderFunds {
+  currency: string;
+  creditedFunds: number;
+  transactionCount: number;
+  lastCreditedAt?: string | null;
+  source: "provider_capture";
+  verified: boolean;
+  merchantId?: string | null;
+  walletId?: string | null;
+  cardId?: string | null;
+  authenticatedCard?: boolean;
+}
+
+export interface VaultTransfer {
+  id: string;
+  ts: string;
+  type: "VAULT_TO_MERCHANT" | "MERCHANT_TO_VAULT";
+  merchantId: string;
+  amount: number;
+  currency: string;
+  reference: string;
+  status: string;
+}
+
+export interface BatchSettlement {
+  id: string;
+  batchId: string;
+  merchantId: string;
+  amount: number;
+  currency: string;
+  status: string;
+  settlementRef: string;
+  ts: string;
+}
+
+export interface VaultPayout {
+  id: string;
+  merchantId: string;
+  amount: number;
+  currency: string;
+  bankName: string;
+  status: string;
+  ts: string;
+  providerRef?: string | null;
+}
+
+export interface VaultReconciliation {
+  currency: string;
+  vaultBalance: number;
+  merchantLiabilities: number;
+  pendingSettlement: number;
+  pendingPayouts: number;
+  reserve: number;
+  adjustments: number;
+  expected: number;
+  reconStatus: "OK" | "MISMATCH";
+  difference: number;
+}
+
+export interface VaultReserve {
+  id: string;
+  merchant_id: string;
+  amount: number;
+  currency: string;
+  reason: string;
+  release_ts?: string | null;
+  status: "ACTIVE" | "RELEASED" | "CANCELLED";
+  ts: string;
+}
+
+export interface VaultLiquidity {
+  currency: string;
+  vaultBalance: number;
+  reserve: number;
+  pendingPayouts: number;
+  riskBuffer: number;
+  liquidity: number;
+  status: "HEALTHY" | "WARNING" | "CRITICAL";
+}
+
+export interface VaultLiquidityLog {
+  ts: string;
+  currency: string;
+  vaultBalance: number;
+  reserve: number;
+  pendingPayouts: number;
+  riskBuffer: number;
+  liquidity: number;
+  status: "HEALTHY" | "WARNING" | "CRITICAL";
+}
+
+export interface VaultAuditEntry {
+  id: string;
+  ts: string;
+  actor: string;
+  event: string;
+  merchant_id?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  reference?: string | null;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  meta: Record<string, unknown>;
+  hash: string;
+  prev_hash?: string | null;
+}
+
+export async function getVaultStats(): Promise<VaultStats> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/stats`);
+  return res.json();
+}
+
+export async function getProviderFunds(currency = "USD"): Promise<ProviderFunds> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/provider-funds?currency=${encodeURIComponent(currency)}`);
+  return res.json();
+}
+
+export async function getVaultTransfers(): Promise<VaultTransfer[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/transfers`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error(data?.message || "Vault transfers endpoint returned an invalid response");
+  return data;
+}
+
+export async function getVaultBatchSettlements(): Promise<BatchSettlement[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/batch-settlements`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error(data?.message || "Batch settlements endpoint returned an invalid response");
+  return data;
+}
+
+export async function getVaultPayouts(): Promise<VaultPayout[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/payouts`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error(data?.message || "Vault payouts endpoint returned an invalid response");
+  return data;
+}
+
+export async function getVaultReconciliation(currency = "EUR"): Promise<VaultReconciliation> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/reconciliation?currency=${encodeURIComponent(currency)}`);
+  return res.json();
+}
+
+export async function getVaultReserves(status = "ACTIVE"): Promise<VaultReserve[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/reserve/list?status=${encodeURIComponent(status)}`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error(data?.message || "Reserve endpoint returned an invalid response");
+  return data;
+}
+
+export async function getVaultLiquidity(currency = "EUR"): Promise<VaultLiquidity> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/liquidity?currency=${encodeURIComponent(currency)}`);
+  return res.json();
+}
+
+export async function getVaultLiquidityLog(currency = "EUR"): Promise<VaultLiquidityLog[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/liquidity/log?currency=${encodeURIComponent(currency)}`);
+  return res.json();
+}
+
+export async function getVaultAudit(limit = 50): Promise<VaultAuditEntry[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/audit?limit=${limit}`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error(data?.message || "Audit endpoint returned an invalid response");
+  return data;
+}
+
+export async function verifyVaultAudit(): Promise<{ status: "OK" | "BROKEN"; checked: number; brokenId: string | null }> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/vault/audit/verify`);
+  return res.json();
 }
 
 export async function login(username: string, password: string) {
@@ -249,7 +475,10 @@ export async function login(username: string, password: string) {
     throw new Error(err.error || "Login failed");
   }
   const data = await res.json();
-  if (data?.token) localStorage.setItem("jwt_token", data.token);
+  if (data?.token) {
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("jwt_token", data.token);
+  }
   return data;
 }
 
@@ -275,6 +504,61 @@ export async function checkBackendHealth(timeoutMs = 3000): Promise<{ status: st
   } finally {
     clearTimeout(t);
   }
+}
+
+// ── Hot Wallet management ────────────────────────────────────────────────────
+export interface HotWalletBalance {
+  ok: boolean;
+  tron:    { address: string; USDT: number; TRX: number };
+  bsc:     { address: string; USDT: number; BNB: number };
+  polygon: { address: string; USDT: number; MATIC: number };
+}
+export async function getHotWalletBalance(): Promise<HotWalletBalance> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/hot-wallet-balance`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ ok: true, tron: { USDT: 0, TRX: 0, address: '' }, bsc: { USDT: 0, BNB: 0, address: '' }, polygon: { USDT: 0, MATIC: 0, address: '' } }));
+    return e;
+  }
+  const data = await res.json();
+  return data;
+}
+
+export interface HotWalletAutobuyResult {
+  ok: boolean;
+  preTopupUsdt: number;
+  postTopupUsdt: number;
+  targetUsdt: number;
+  neededTopup: boolean;
+  usdSpent?: number;
+  usdtBought?: number;
+  binanceBuyOrderId?: string;
+  binanceWithdrawId?: string;
+  settledAfterMs?: number;
+  rollbackApplied?: boolean;
+  rollbackAmount?: number;
+  hotWalletAddress?: string;
+  network?: 'tron' | 'bsc' | 'polygon';
+  note?: string;
+}
+
+export async function autobuyTopupHotWalletUsdt(payload: {
+  merchantId: string;
+  targetUsdt: number;
+  minUsdt?: number;
+  network?: 'tron' | 'bsc' | 'polygon';
+  maxWaitMs?: number;
+}): Promise<HotWalletAutobuyResult> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/hot-wallet/autobuy-usdt-topup`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err: any = new Error(data.error || 'Hot wallet USDT auto topup failed');
+    Object.assign(err, data || {});
+    throw err;
+  }
+  return data;
 }
 
 export async function fetchTerminals(): Promise<Terminal[]> {
@@ -360,6 +644,29 @@ export async function fetchBatches(): Promise<Batch[]> {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/batches`);
   if (!res.ok) {
     throw new Error("Failed to fetch batches");
+  }
+  return res.json();
+}
+
+export async function fetchBatchDetails(batchId: string): Promise<{
+  batch: Batch;
+  transactions: Array<Record<string, unknown>>;
+}> {
+  const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/batches/${encodeURIComponent(batchId)}/details`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch batch details");
+  }
+  return res.json();
+}
+
+export async function updateOfflineTransactionAuthCode(transactionId: string, authCode: string) {
+  const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/transactions/${encodeURIComponent(transactionId)}/auth-code`, {
+    method: "PATCH",
+    body: JSON.stringify({ authCode }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to save authorization code");
   }
   return res.json();
 }
@@ -472,7 +779,22 @@ export async function uploadBatch(batchData: Record<string, unknown>, secret: st
   return res.json();
 }
 
-export async function chargePayment(amountMinor: number, currency: string, merchantId: string = "MRC-1001", cardData?: { pan: string; expiry: string; cvv?: string; customerId?: string }) {
+export async function chargePayment(
+  amountMinor: number,
+  currency: string,
+  merchantId: string = "MRC-1001",
+  cardData?: {
+    pan: string;
+    expiry: string;
+    cvv?: string;
+    customerId?: string;
+    terminalId?: string;
+    stan?: string;
+    entryMode?: string;
+    authCode?: string;
+    protocolVersion?: "NORMAL" | "101.1" | "101.6" | "201.3";
+  }
+) {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/payments/charge`, {
     method: "POST",
     body: JSON.stringify({ amountMinor, currency, merchantId, ...cardData })
@@ -746,6 +1068,21 @@ export async function createCustomer(name: string, email?: string, phone?: strin
   if (!res.ok) throw new Error('Failed to create customer');
   return res.json();
 }
+
+export async function getCustomerProfile(customerId: string): Promise<Customer> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/customers/${customerId}/profile`);
+  if (!res.ok) throw new Error('Customer not found');
+  return res.json();
+}
+
+export async function updateCustomerKYC(customerId: string, kyc: Partial<Customer>): Promise<{ ok: boolean; customer: Customer }> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/customers/${customerId}/kyc`, {
+    method: 'PATCH',
+    body: JSON.stringify(kyc),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || 'KYC update failed'); }
+  return res.json();
+}
 export async function getWalletBalance(customerId: string): Promise<WalletBalance> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/balance/${customerId}`);
   if (!res.ok) return { balance: 0, currency: 'USD' };
@@ -761,10 +1098,63 @@ export async function topupWallet(customerId: string, amount: number, source?: s
   if (!res.ok) throw new Error('Topup failed');
   return res.json();
 }
-export async function topupWalletWithCard(customerId: string, amount: number, cardNumber: string, panMasked?: string, expiry?: string, cvv?: string, emvData?: unknown) {
+export async function issueWalletCard(customerId: string, currency = 'USD'): Promise<WalletCard & { cardSecret?: string; alreadyIssued: boolean }> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/card/issue`, {
+    method: 'POST',
+    body: JSON.stringify({ customerId, currency }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({} as ApiErrorPayload));
+    throw new Error(e.error || 'Wallet card issue failed');
+  }
+  return res.json();
+}
+export async function issueMerchantCard(merchantId: string, currency = 'USD'): Promise<MerchantCard & { cardSecret?: string }> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant/card/issue`, {
+    method: 'POST',
+    body: JSON.stringify({ merchantId, currency }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({} as ApiErrorPayload));
+    throw new Error(e.error || 'Merchant card issue failed');
+  }
+  return res.json();
+}
+export async function setWalletCardOfflineLimit(cardId: string, limitMinor: number) {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/card/offline-limit`, {
+    method: 'POST',
+    body: JSON.stringify({ cardId, limitMinor }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({} as ApiErrorPayload));
+    throw new Error(e.error || 'Offline limit update failed');
+  }
+  return res.json();
+}
+export async function syncWalletOfflineTransactions(transactions: Array<{
+  localTxnId: string;
+  cardId: string;
+  merchantId: string;
+  amountMinor: number;
+  currency: string;
+  transactionTimestamp: string;
+  newOfflineBalanceMinor: number;
+  mac: string;
+}>) {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/offline/sync`, {
+    method: 'POST',
+    body: JSON.stringify({ transactions }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({} as ApiErrorPayload));
+    throw new Error(e.error || 'Offline wallet sync failed');
+  }
+  return res.json();
+}
+export async function topupWalletWithCard(customerId: string, amount: number, cardNumber: string, panMasked?: string, expiry?: string, cvv?: string, emvData?: unknown, protocolVersion?: "NORMAL" | "101.1" | "101.6" | "201.3", authCode?: string) {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/topup/card`, {
     method: 'POST',
-    body: JSON.stringify({ customerId, amount, cardNumber, panMasked, expiry, cvv, emvData })
+    body: JSON.stringify({ customerId, amount, cardNumber, panMasked, expiry, cvv, emvData, protocolVersion, authCode })
   });
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({} as ApiErrorPayload));
@@ -780,6 +1170,34 @@ export async function debitWallet(customerId: string, amount: number, source?: s
 export async function walletTransfer(senderCustomerId: string, receiverCustomerId: string, amount: number, note?: string): Promise<WalletTransfer> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/transfer`, { method: 'POST', body: JSON.stringify({ senderCustomerId, receiverCustomerId, amount, note }) });
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Transfer failed'); }
+  return res.json();
+}
+
+export async function sendToHotWallet(params: {
+  customerId: string;
+  merchantId: string;
+  assetType: 'fiat' | 'crypto';
+  amount: number;
+  cryptoCoin?: string;
+  reason?: string;
+  currency?: string;
+}): Promise<{
+  success: boolean;
+  reference: string;
+  assetType: 'fiat' | 'crypto';
+  amount: number;
+  currency?: string;
+  cryptoCoin?: string;
+  customerId: string;
+  customerName: string;
+  merchantId: string;
+  description: string;
+}> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/send-to-hot-wallet`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Send to hot wallet failed'); }
   return res.json();
 }
 export async function getBankAccounts(customerId: string): Promise<BankAccount[]> {
@@ -863,6 +1281,188 @@ export async function merchantCryptoPayout(
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Merchant crypto payout failed');
   return data;
+}
+
+export interface MerchantBankAccount {
+  id: string;
+  merchant_id: string;
+  bank_name: string;
+  account_holder: string;
+  account_number: string;
+  routing_number?: string;
+  account_type?: string;
+  iban?: string;
+  swift_code?: string;
+  bank_address?: string;
+  currency: string;
+  is_default: number;
+  verified: number;
+  created_at: string;
+}
+
+export interface MerchantPayout {
+  id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  provider?: string;
+  provider_reference?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+  // Professional ledger fields — Sender (debit) / Receiver (credit) columns
+  sender_account_name?: string;
+  sender_merchant_id?: string;
+  sender_wallet_currency?: string;
+  sender_label?: string;
+  receiver_bank_name?: string;
+  receiver_account_holder?: string;
+  receiver_account_number_masked?: string;
+  receiver_routing?: string;
+  receiver_iban?: string;
+  receiver_swift?: string;
+  receiver_crypto_coin?: string;
+  receiver_crypto_network?: string;
+  receiver_crypto_address?: string;
+  receiver_type?: 'bank' | 'crypto' | 'internal';
+  receiver_label?: string;
+  // For crypto purchases
+  crypto_coin?: string;
+  crypto_network?: string;
+  exchange_rate?: number;
+  fiat_spent?: number;
+  crypto_amount?: number;
+}
+
+export async function getMerchantBankAccounts(merchantId: string): Promise<MerchantBankAccount[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/payout/merchant/${encodeURIComponent(merchantId)}/bank-accounts`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ ok: true, accounts: [] }));
+    return e.accounts || [];
+  }
+  const data = await res.json();
+  return data.accounts || [];
+}
+
+export async function getMerchantPayouts(merchantId: string): Promise<MerchantPayout[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/payout/merchant/${encodeURIComponent(merchantId)}/payouts`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ ok: true, payouts: [] }));
+    return e.payouts || [];
+  }
+  const data = await res.json();
+  return data.payouts || [];
+}
+
+export async function merchantBankPayout(
+  merchantId: string,
+  payload: {
+    amount: number;
+    currency?: string;
+    bank_account_id?: string;
+    bank_account?: {
+      bank_name: string;
+      account_holder: string;
+      account_number: string;
+      routing_number?: string;
+      account_type?: string;
+      iban?: string;
+      swift_code?: string;
+      currency?: string;
+    };
+  }
+) {
+  const res = await fetchWithAuth(`${BASE_URL}/api/payout/merchant/${encodeURIComponent(merchantId)}/payout/bank`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Merchant bank payout failed');
+  return data;
+}
+
+export async function approveMerchantPayout(
+  payoutId: string,
+  payload?: {
+    external_reference?: string;
+    approved_by?: string;
+    tx_proof?: string;
+    note?: string;
+  }
+) {
+  const res = await fetchWithAuth(`${BASE_URL}/api/payout/payouts/${encodeURIComponent(payoutId)}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Payout approval failed');
+  return data;
+}
+
+export async function rejectMerchantPayout(
+  payoutId: string,
+  payload?: {
+    rejected_by?: string;
+    reason?: string;
+    note?: string;
+  }
+) {
+  const res = await fetchWithAuth(`${BASE_URL}/api/payout/payouts/${encodeURIComponent(payoutId)}/reject`, {
+    method: 'POST',
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Payout rejection failed');
+  return data;
+}
+
+export async function downloadPayoutReceipt(
+  payoutId: string,
+  opts?: { format?: 'html' | 'txt'; forceDownload?: boolean }
+) {
+  const params = new URLSearchParams();
+  if (opts?.format) params.set('format', opts.format);
+  if (opts?.forceDownload) params.set('download', '1');
+  const qs = params.toString();
+  const baseUrl = `${BASE_URL}/api/payout/payouts/${encodeURIComponent(payoutId)}/receipt${qs ? `?${qs}` : ''}`;
+  const accessToken = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  try {
+    const urlWithToken = accessToken
+      ? baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(accessToken)
+      : baseUrl;
+    const res = await fetchWithAuth(baseUrl, { method: 'GET', headers: { Accept: 'text/html,text/plain,*/*' } });
+    const contentType = res.headers.get('content-type') || '';
+    const isText = contentType.includes('text/plain');
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const fn = `PAYOUT-${String(payoutId || '').slice(0, 8).toUpperCase()}-receipt.${isText ? 'txt' : 'html'}`;
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fn;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { document.body.removeChild(a); } catch (_) { /* ignore */ }
+      try { URL.revokeObjectURL(blobUrl); } catch (_) { /* ignore */ }
+    }, 10000);
+    try {
+      const features = 'noopener,noreferrer,width=860,height=1040,menubar=yes,location=yes,scrollbars=yes,status=yes,toolbar=yes';
+      window.open(blobUrl, '_blank', features);
+    } catch (_) {
+      window.open(urlWithToken, '_blank');
+    }
+    return { ok: true, url: urlWithToken, filename: fn };
+  } catch (e: any) {
+    if (accessToken) {
+      const features = 'noopener,noreferrer,width=860,height=1040,menubar=yes,location=yes,scrollbars=yes,status=yes,toolbar=yes';
+      try { window.open(urlWithToken, '_blank', features); return { ok: true, fallback: 'query-token', url: urlWithToken }; }
+      catch (_) { /* swallow */ }
+    }
+    throw e;
+  }
 }
 
 export async function createVirtualAccount(
@@ -1008,7 +1608,7 @@ export async function getMerchantTransactions(merchantId: string): Promise<Merch
 }
 
 export async function exportTransactionsToCSV(transactions: Transaction[]) {
-  // Wise-compatible batch payment CSV
+  // Batch payment CSV
   const headers = [
     'name', 'recipientEmail', 'paymentReference', 'referenceNumber', 'receiverType',
     'amount', 'sourceCurrency', 'targetCurrency',
@@ -1042,7 +1642,7 @@ export async function exportTransactionsToCSV(transactions: Transaction[]) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `wise_transactions_${new Date().toISOString().slice(0,10)}.csv`;
+  link.download = `transactions_${new Date().toISOString().slice(0,10)}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -1053,10 +1653,12 @@ export async function buyCryptoWithMerchant(
   fiatAmount: number,
   network?: string
 ) {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant/buy-crypto`, {
+  const res = await fetchWithAuth(`${BASE_URL}/api/merchant/${encodeURIComponent(merchantId)}/crypto/purchase`, {
     method: 'POST',
     body: JSON.stringify({
-      merchantId, cryptoCoin, fiatAmount,
+      amount_usd: fiatAmount,
+      asset: cryptoCoin,
+      source_currency: 'USD',
       ...(network ? { network } : {}),
     })
   });
@@ -1064,6 +1666,7 @@ export async function buyCryptoWithMerchant(
     const errorData = await res.json().catch(() => ({} as ApiErrorPayload));
     const err = new Error(errorData.error || 'Merchant crypto purchase failed');
     (err as any).hint = (errorData as any)?.hint;
+    (err as any).blocked = (errorData as any)?.blocked;
     throw err;
   }
   return res.json();
@@ -1100,7 +1703,7 @@ export interface TransakConfigResponse {
 
 export interface TransakWidgetSessionResponse {
   ok: boolean;
-  sessionId: string;
+  sessionId?: string;
   widgetUrl: string;
   expiresAt: string;
   note?: string;
@@ -1303,6 +1906,27 @@ export async function transakGetOrderStatus(orderId: string): Promise<TransakOrd
   return res.json();
 }
 
+export async function transakGetOrders(params: {
+  limit?: number;
+  skip?: number;
+  startDate?: string;
+  endDate?: string;
+  status?: string;
+  sortOrder?: 'asc' | 'desc';
+  walletAddress?: string;
+  partnerOrderId?: string;
+  productsAvailed?: 'BUY' | 'SELL';
+} = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') query.set(key, String(value));
+  });
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/transak/orders?${query.toString()}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Transak orders lookup failed');
+  return data;
+}
+
 export async function transakGetCountries(): Promise<TransakCountriesResponse> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/transak/countries`);
   if (!res.ok) {
@@ -1310,6 +1934,13 @@ export async function transakGetCountries(): Promise<TransakCountriesResponse> {
     return { ok: false, response: [], error: e.error || 'Transak countries lookup failed' };
   }
   return res.json();
+}
+
+export async function transakGetCryptoCurrencies() {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/transak/crypto-currencies`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Transak crypto currencies lookup failed');
+  return data;
 }
 
 export async function transakGetQuote(params: {
@@ -1471,4 +2102,3 @@ export async function syncOfflinePinSales(): Promise<{ synced: number; failed: n
 
   return { synced, failed };
 }
-

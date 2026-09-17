@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { walletsService } from './wallets.service';
+import { fundsSettlementService } from '../settlements/funds-settlement.service';
 
 export class WalletsController {
 
@@ -7,15 +8,24 @@ export class WalletsController {
   async topup(req: Request, res: Response) {
     try {
       const { customerId, amount, source, reference, currency } = req.body;
-      if (!customerId || !amount || amount <= 0) return res.status(400).json({ error: 'Invalid payload' });
-      await walletsService.topupWallet(customerId, amount, source, reference, currency || 'AED');
-      res.json({ success: true });
+      if (!customerId || typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ error: 'Invalid payload' });
+      }
+      const result = await fundsSettlementService.creditCustomerWallet({
+        customer_id: customerId,
+        amount,
+        currency: currency || 'USD',
+        source: 'admin_credit',
+        reference: reference || 'manual_credit',
+        initiated_by: 'admin'
+      });
+      res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   }
 
   async topupWithCard(req: Request, res: Response) {
     try {
-      let { customerId, walletCode, amount, cardNumber, panMasked, expiry, cvv, emvData, currency } = req.body;
+      let { customerId, walletCode, amount, cardNumber, panMasked, expiry, cvv, emvData, currency, protocolVersion, authCode } = req.body;
 
       // Accept walletCode (PSW-xxxx-xxxx) as an alternative to customerId
       if (!customerId && walletCode) {
@@ -34,13 +44,30 @@ export class WalletsController {
         return res.status(400).json({ error: 'customerId or walletCode and amount are required' });
       }
 
-      // For offline topups from Android using wallet code — no card needed
-      // Use direct wallet topup (no card authorization required)
+      // A cardless request is not proof of funds. Manual credits must use the
+      // explicit admin settlement endpoint instead of fabricating a top-up.
       if (!cardNumber && !panMasked) {
-        const result = await walletsService.topupWallet(
-          customerId, amount, 'pos_topup', undefined, currency || 'AED'
-        );
-        return res.json({ ...result, success: true });
+        return res.status(402).json({ error: 'Real card authorization is required' });
+      }
+
+      const protocol = String(protocolVersion || '').trim();
+      if (['101.1', '101.6', '201.3'].includes(protocol)) {
+        if (!authCode || !String(authCode).trim()) {
+          return res.status(400).json({ error: `Protocol ${protocol} requires a customer-provided Authorization Code` });
+        }
+
+        const { validateProtocol } = await import('../payments/cardAuth.service');
+        const validation = await validateProtocol({
+          protocol,
+          cardNumber: cardNumber || panMasked || '',
+          code: String(authCode).trim(),
+          cvv: cvv || undefined,
+          amount: Number(amount),
+          currency: currency || 'USD',
+        });
+        if (!validation.valid) {
+          return res.status(403).json({ error: validation.reason || 'Invalid customer authorization code' });
+        }
       }
 
       // For card-based topups — full authorization flow
@@ -68,7 +95,7 @@ export class WalletsController {
     try {
       const { customerId, amount, source, reference, currency } = req.body;
       if (!customerId || !amount || amount <= 0) return res.status(400).json({ error: 'Invalid payload' });
-      await walletsService.debitWallet(customerId, amount, source, reference, currency || 'AED');
+      await walletsService.debitWallet(customerId, amount, source, reference, currency || 'USD');
       res.json({ success: true });
     } catch (e: any) {
       res.status(e.message.includes('Insufficient') ? 400 : 500).json({ error: e.message });
@@ -107,6 +134,27 @@ export class WalletsController {
     } catch (e: any) {
       const isValidationError = e.message && (e.message.includes('required') || e.message.includes('at least') || e.message.includes('too long') || e.message.includes('integrity') || e.message.includes('verification'));
       res.status(isValidationError ? 400 : 500).json({ error: e.message || 'Failed to create customer' });
+    }
+  }
+
+  async updateCustomerKYC(req: Request, res: Response) {
+    try {
+      const { customerId } = req.params;
+      if (!customerId) return res.status(400).json({ error: 'customerId is required' });
+      const result = await walletsService.updateCustomerKYC(customerId, req.body || {});
+      res.json({ ok: true, customer: result });
+    } catch (e: any) {
+      res.status(e.message.includes('not found') ? 404 : 500).json({ error: e.message });
+    }
+  }
+
+  async getCustomerProfile(req: Request, res: Response) {
+    try {
+      const { customerId } = req.params;
+      if (!customerId) return res.status(400).json({ error: 'customerId is required' });
+      res.json(await walletsService.getCustomerProfile(customerId));
+    } catch (e: any) {
+      res.status(e.message.includes('not found') ? 404 : 500).json({ error: e.message });
     }
   }
 
@@ -185,6 +233,33 @@ export class WalletsController {
       res.json(await walletsService.buyCryptoWithWallet(customerId, cryptoCoin, fiatAmount, network, currency || 'USD'));
     } catch (e: any) {
       res.status(e.message.includes('Insufficient') ? 400 : 500).json({ error: e.message });
+    }
+  }
+
+  async buyCryptoDirectBinance(req: Request, res: Response) {
+    try {
+      const { customerId, cryptoCoin, fiatAmount, network, currency } = req.body;
+      if (!customerId || !cryptoCoin || !fiatAmount || fiatAmount <= 0)
+        return res.status(400).json({ error: 'Invalid payload — require customerId, cryptoCoin, fiatAmount > 0' });
+      const result = await walletsService.buyCryptoDirectBinance(
+        customerId, cryptoCoin, fiatAmount, network, currency || 'USD'
+      );
+      res.json(result);
+    } catch (e: any) {
+      const msg = String(e.message || 'Unknown error');
+      if (/Insufficient/i.test(msg)) return res.status(400).json({ error: msg });
+      if (/Binance Direct buy rejected/i.test(msg) || /Binance/i.test(msg)) return res.status(402).json({ error: msg });
+      res.status(500).json({ error: msg });
+    }
+  }
+
+  async getBinanceSpotBalances(_req: Request, res: Response) {
+    try {
+      const mod = await import('../../exchange/binance.service');
+      const data = await mod.getSpotBalances(true);
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e.message || 'Binance API unavailable') });
     }
   }
 
@@ -567,6 +642,28 @@ export class WalletsController {
     }
   }
 
+  // ── Customer asset → hot wallet sweep ───────────────────────────────────
+  async sendToHotWallet(req: Request, res: Response) {
+    try {
+      const { customerId, merchantId, assetType, amount, cryptoCoin, reason, currency } = req.body;
+      if (!customerId || !merchantId || !assetType || !amount || amount <= 0)
+        return res.status(400).json({ error: 'customerId, merchantId, assetType and amount are required' });
+      if (!['fiat', 'crypto'].includes(assetType))
+        return res.status(400).json({ error: 'assetType must be "fiat" or "crypto"' });
+      if (assetType === 'crypto' && !cryptoCoin)
+        return res.status(400).json({ error: 'cryptoCoin is required for crypto asset type' });
+
+      const result = await walletsService.sendCustomerAssetToHotWallet(
+        customerId, merchantId, assetType, Number(amount),
+        cryptoCoin, reason, currency || 'USD'
+      );
+      res.json(result);
+    } catch (e: any) {
+      const status = /Insufficient|not found|required/.test(e.message) ? 400 : 500;
+      res.status(status).json({ error: e.message });
+    }
+  }
+
   // Merchant: buy crypto using merchant wallet funds
   async buyCryptoWithMerchant(req: Request, res: Response) {
     try {
@@ -621,7 +718,8 @@ export class WalletsController {
       res.json({
         configured: transak.isConfigured(),
         mode: cfg.mode,
-        apiKey: cfg.apiKey,
+        // The partner API key is server-side only. The client receives
+        // widget metadata, never credentials.
         widgetUrl: cfg.widgetUrl,
         referrerDomain: cfg.referrerDomain,
         networks: ['TRC20', 'BEP20', 'ERC20', 'POLYGON', 'SOL', 'BTC'],
@@ -835,10 +933,56 @@ export class WalletsController {
           error: 'Transak not configured. Set TRANSAK_API_KEY + TRANSAK_API_SECRET.',
         });
       }
+
       const data = await transak.getCountries();
       res.json({ ok: true, response: data.response, mode: transak.getTransakConfig().mode });
     } catch (e: any) {
       res.status(500).json({ error: e.message || 'Transak countries fetch failed' });
+    }
+  }
+
+  async getTransakCryptoCurrencies(_req: Request, res: Response) {
+    try {
+      const transak = await import('../../exchange/transak.service');
+      if (!transak.isConfigured()) {
+        return res.status(503).json({ error: 'Transak not configured.' });
+      }
+      const data = await transak.getCryptoCurrencies();
+      return res.json({ ok: true, response: data.response, count: data.response.length });
+    } catch (e: any) {
+      return res.status(Number(e?.response?.status) || 500).json({
+        error: e?.response?.data?.message || e.message || 'Transak crypto currencies fetch failed',
+      });
+    }
+  }
+
+  async getTransakOrders(req: Request, res: Response) {
+    try {
+      const transak = await import('../../exchange/transak.service');
+      if (!transak.isConfigured()) {
+        return res.status(503).json({ error: 'Transak not configured.' });
+      }
+      const productsAvailed = String(req.query.productsAvailed || '').toUpperCase();
+      const result = await transak.getOrders({
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        skip: req.query.skip ? Number(req.query.skip) : undefined,
+        startDate: String(req.query.startDate || '') || undefined,
+        endDate: String(req.query.endDate || '') || undefined,
+        status: String(req.query.status || '') || undefined,
+        sortOrder: req.query.sortOrder === 'asc' || req.query.sortOrder === 'desc'
+          ? req.query.sortOrder
+          : undefined,
+        walletAddress: String(req.query.walletAddress || '') || undefined,
+        partnerOrderId: String(req.query.partnerOrderId || '') || undefined,
+        productsAvailed: productsAvailed === 'BUY' || productsAvailed === 'SELL'
+          ? productsAvailed
+          : undefined,
+      });
+      return res.json({ ok: true, ...result });
+    } catch (e: any) {
+      return res.status(Number(e?.response?.status) || 500).json({
+        error: e?.response?.data?.message || e.message || 'Transak orders fetch failed',
+      });
     }
   }
 
@@ -1017,9 +1161,10 @@ export class WalletsController {
 
       // Upsert into crypto_transactions: update status if row already exists for this orderId
       const existing = await db.query(
-        `SELECT id FROM crypto_transactions WHERE reference = ? LIMIT 1`,
+        `SELECT id, status FROM crypto_transactions WHERE reference = ? LIMIT 1`,
         [`transak:${orderId}`]
       );
+      const existingCompleted = existing.rows?.some((row: any) => row.status === 'completed') || false;
 
       if (existing.rows?.length) {
         await db.query(
@@ -1066,7 +1211,7 @@ export class WalletsController {
       }
 
       // ── Credit customer wallet if order COMPLETED ─────────────────────────
-      if (status === 'COMPLETED') {
+      if (status === 'COMPLETED' && !existingCompleted) {
         const customerId     = eventData?.partnerCustomerId;
         const cryptoAmount   = Number(eventData?.cryptoAmount  || 0);
         const cryptoCurrency = String(eventData?.cryptoCurrency || 'USDT').toUpperCase();
@@ -1099,6 +1244,88 @@ export class WalletsController {
       console.error('[Transak Webhook Error]', e.message);
       // Always return 200 to Transak so it stops retrying on server errors
       res.status(200).json({ ok: false, error: e.message });
+    }
+  }
+
+  // ── Hot Wallet management endpoints ───────────────────────────────────
+  async getHotWalletBalance(req: Request, res: Response) {
+    try {
+      const tron = await import('../../exchange/tronweb.service');
+      const bsc = await import('../../exchange/bscweb.service');
+      const poly = await import('../../exchange/polygonweb.service');
+
+      const [tronUSDT, tronTRX, bscUSDT, bscBNB, polyUSDT, polyMATIC] = await Promise.all([
+        tron.getHotWalletUsdtBalance().catch(() => 0),
+        tron.getHotWalletTrxBalance().catch(() => 0),
+        bsc.getHotWalletUsdtBalance().catch(() => 0),
+        bsc.getHotWalletBnbBalance().catch(() => 0),
+        poly.getHotWalletUsdtBalance().catch(() => 0),
+        poly.getHotWalletMaticBalance().catch(() => 0),
+      ]);
+      const tronAddr = tron.getHotWalletAddress();
+      const bscAddr = await bsc.getHotWalletAddress().catch(() => '');
+      const polyAddr = await poly.getHotWalletAddress().catch(() => '');
+
+      res.json({
+        ok: true,
+        tron: {
+          address: tronAddr,
+          USDT: Number(tronUSDT),
+          TRX: Number(tronTRX),
+        },
+        bsc: {
+          address: bscAddr,
+          USDT: Number(bscUSDT),
+          BNB: Number(bscBNB),
+        },
+        polygon: {
+          address: polyAddr,
+          USDT: Number(polyUSDT),
+          MATIC: Number(polyMATIC),
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message || 'Failed to fetch hot wallet balances' });
+    }
+  }
+
+  async autobuyTopupHotWalletUsdt(req: Request, res: Response) {
+    try {
+      const { merchantId, targetUsdt, minUsdt, network, maxWaitMs } = req.body;
+      if (!merchantId || !targetUsdt || Number(targetUsdt) <= 0) {
+        return res.status(400).json({ error: 'merchantId and targetUsdt (positive) are required' });
+      }
+      if (network && !['tron','bsc','polygon'].includes(String(network))) {
+        return res.status(400).json({ error: 'network must be tron | bsc | polygon' });
+      }
+      const tron = await import('../../exchange/tronweb.service');
+      const result = await tron.autobuyAndTopupHotWalletUsdt({
+        merchantId: String(merchantId),
+        targetUsdt: Number(targetUsdt),
+        minUsdt: minUsdt ? Number(minUsdt) : undefined,
+        network: (network as any) || 'tron',
+        maxWaitMs: maxWaitMs ? Number(maxWaitMs) : undefined,
+      });
+      res.status(200).json(result);
+    } catch (e: any) {
+      const msg = String(e?.message || String(e));
+      const topupCtx = (e as any)?.topup || (e as any)?.autoFund || null;
+      const badRequest = /required|Invalid payload|network must|merchantId and targetUsdt|has been refunded/i.test(msg);
+      res.status(badRequest ? 400 : 500).json({
+        ok: false,
+        error: msg,
+        rollback_applied: Boolean(topupCtx?.rollbackApplied),
+        usd_spent: topupCtx?.usdSpent,
+        usdt_bought: topupCtx?.usdtBought,
+        usdt_pre_balance: topupCtx?.preTopupUsdt,
+        binance_order_id: topupCtx?.binanceBuyOrderId,
+        binance_withdraw_id: topupCtx?.binanceWithdrawId,
+        hot_wallet: topupCtx?.hotWalletAddress,
+        network: topupCtx?.network,
+        hint: /MANUAL RECOVERY|manual_recovery_required/i.test(msg)
+          ? 'Step 2 (BTC→USDT) of the 2-step USDT conversion executed with BTC already bought. Visit your Binance SPOT wallet and sell BTC → USDT manually — USDT will be in your Binance SPOT wallet and withdrawable.'
+          : undefined,
+      });
     }
   }
 }

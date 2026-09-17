@@ -1,6 +1,8 @@
 import axios from "axios";
 import { db } from "../../config/db";
 import { v4 as uuidv4 } from "uuid";
+import { acquirerConfig } from '../../config/acquirer';
+import { createAcquirerClient } from './acquirer';
 
 export async function settleCardTransaction(
   merchantId: string,
@@ -12,27 +14,29 @@ export async function settleCardTransaction(
   if (amount <= 0) throw new Error("amount must be positive");
   if (!authRef) throw new Error("authRef required");
   const ccy = String(currency || 'USD').toUpperCase().trim();
-
-  // Processor capture endpoint
-  const captureUrl = process.env.CARD_PROCESSOR_CAPTURE_URL;
-  if (!captureUrl) throw new Error("CARD_PROCESSOR_CAPTURE_URL missing");
-
-  // Call processor to capture funds
-  const res = await axios.post(
-    captureUrl,
-    {
-      amount,
+  let captureId: string;
+  if (acquirerConfig.host) {
+    const acquirer = createAcquirerClient();
+    const capture = await acquirer.capture({
+      merchantAccount: acquirerConfig.merchantAccount || merchantId,
+      amountMinor: Math.round(amount * 100),
       currency: ccy,
-      authorizationReference: authRef
-    },
-    { timeout: 8000 }
-  );
-
-  if (!res.data?.success) {
-    throw new Error(res.data?.message || "Processor capture failed");
+      authRef,
+      protocol: '201.3',
+    });
+    if (!capture.success) throw new Error(capture.message || `Acquirer capture declined (RC=${capture.responseCode})`);
+    captureId = capture.captureRef || authRef;
+  } else {
+    const captureUrl = process.env.CARD_PROCESSOR_CAPTURE_URL;
+    if (!captureUrl) throw new Error("CARD_PROCESSOR_CAPTURE_URL missing");
+    const res = await axios.post(
+      captureUrl,
+      { amount, currency: ccy, authorizationReference: authRef },
+      { timeout: 8000 }
+    );
+    if (!res.data?.success) throw new Error(res.data?.message || "Processor capture failed");
+    captureId = res.data.captureId || res.data.id || uuidv4();
   }
-
-  const captureId = res.data.captureId || res.data.id || uuidv4();
 
   // Get or create merchant wallet for the specific currency
   const walletRes = await db.query(

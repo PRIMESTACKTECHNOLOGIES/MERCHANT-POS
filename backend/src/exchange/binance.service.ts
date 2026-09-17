@@ -5,6 +5,7 @@ interface BinanceConfig {
   apiKey: string;
   apiSecret: string;
   baseUrl: string;
+  mode: 'live' | 'sandbox' | 'blocked';
 }
 
 /** FATF Travel Rule Standard PII for originator (sender) — passed as JSON to Binance Local Entity endpoints. */
@@ -133,7 +134,10 @@ export const INDIA_WITHDRAW_QUESTIONNAIRE: Record<string, string> = {
 export function getBinanceConfig(): BinanceConfig {
   const apiKey = process.env.BINANCE_API_KEY?.trim() || '';
   const apiSecret = process.env.BINANCE_API_SECRET?.trim() || '';
-  const baseUrl = process.env.BINANCE_BASE_URL?.trim() || 'https://api.binance.com';
+  const modeFromEnv = String(process.env.BINANCE_MODE || '').toLowerCase().trim();
+  const defaultSandbox = modeFromEnv === 'sandbox';
+  const baseUrl = process.env.BINANCE_BASE_URL?.trim()
+    || (defaultSandbox ? 'https://testnet.binance.vision' : 'https://api.binance.com');
 
   function isPlaceholder(value: string) {
     return !value || value.includes('your_') || value.includes('REPLACE') || value.includes('example');
@@ -146,7 +150,8 @@ export function getBinanceConfig(): BinanceConfig {
     );
   }
 
-  return { apiKey, apiSecret, baseUrl };
+  const resolvedMode: 'live' | 'sandbox' = defaultSandbox ? 'sandbox' : 'live';
+  return { apiKey, apiSecret, baseUrl, mode: resolvedMode };
 }
 
 function signQuery(params: Record<string, any>, apiSecret: string) {
@@ -161,7 +166,7 @@ function signBody(body: URLSearchParams, apiSecret: string) {
   return body;
 }
 
-async function binanceRequest(path: string, params: Record<string, any> = {}) {
+async function binanceRequestPost(path: string, params: Record<string, any> = {}) {
   const { apiKey, apiSecret, baseUrl } = getBinanceConfig();
 
   const timestamp = Date.now();
@@ -174,49 +179,13 @@ async function binanceRequest(path: string, params: Record<string, any> = {}) {
   return res.data;
 }
 
-async function binanceSignedPost(path: string, fields: Record<string, any>, config?: BinanceConfig): Promise<any> {
-  const cfg = config || getBinanceConfig();
-
-  const body = new URLSearchParams();
-  const entries = Object.entries({
-    ...fields,
-    timestamp: fields.timestamp || Date.now(),
-  } as Record<string, any>);
-  for (const [k, v] of entries) {
-    if (v === undefined || v === null) continue;
-    if (typeof v === 'object') body.append(k, typeof v === 'string' ? v : JSON.stringify(v));
-    else body.append(k, String(v));
-  }
-
-  // Binance SAPI endpoints require HMAC signature on the QUERY STRING, not
-  // inside the POST body (exact Python sample pattern we were given).
-  // The same params serialized into the POST body are serialized again as
-  // the query string (no signature inside body), HMACed, and ?query+&signature
-  // appended to the URL.  Content-Type still x-www-form-urlencoded with the
-  // same payload in body (required for POST parsing of questionnaire).
-  const signature = crypto.createHmac('sha256', cfg.apiSecret).update(body.toString()).digest('hex');
-  const url = `${cfg.baseUrl}${path}?${body.toString()}&signature=${signature}`;
-
-  const res = await axios.post(url, body.toString(), {
-    headers: {
-      'X-MBX-APIKEY': cfg.apiKey,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    timeout: 20000,
-  });
-  if (res.data?.code && res.data.code !== '0') {
-    throw Object.assign(new Error(`Binance ${path} error ${res.data.code}: ${res.data.msg || ''}`), { response: { data: res.data }, data: res.data });
-  }
-  return res.data;
-}
-
-async function binanceSignedGet(path: string, query: Record<string, any> = {}, config?: BinanceConfig): Promise<any> {
-  const cfg = config || getBinanceConfig();
-  const params: Record<string, any> = { ...query, timestamp: query.timestamp || Date.now() };
-  const signed = signQuery(params, cfg.apiSecret);
-  const url = `${cfg.baseUrl}${path}?${signed}`;
+async function binanceRequestGet(path: string, params: Record<string, any> = {}) {
+  const { apiKey, apiSecret, baseUrl } = getBinanceConfig();
+  const timestamp = Date.now();
+  const signed = signQuery({ ...params, timestamp }, apiSecret);
+  const url = `${baseUrl}${path}?${signed}`;
   const res = await axios.get(url, {
-    headers: { 'X-MBX-APIKEY': cfg.apiKey },
+    headers: { 'X-MBX-APIKEY': apiKey },
     timeout: 15000,
   });
   if (res.data?.code && res.data.code !== '0') {
@@ -225,37 +194,208 @@ async function binanceSignedGet(path: string, query: Record<string, any> = {}, c
   return res.data;
 }
 
-// Market buy using quoteOrderQty (amount in quote asset, e.g., USDT)
+export interface BinanceSpotBalance {
+  asset: string;
+  free: string;
+  locked: string;
+  freeNum: number;
+  lockedNum: number;
+  total: number;
+}
+
+export async function getSpotBalances(onlyNonZero: boolean = true): Promise<{ balances: BinanceSpotBalance[]; accountType: string; canTrade: boolean; timestamp: number }> {
+  const data = await binanceRequestGet('/api/v3/account');
+  const allBalances: BinanceSpotBalance[] = (data.balances || []).map((b: any) => {
+    const free = parseFloat(b.free || '0');
+    const locked = parseFloat(b.locked || '0');
+    return {
+      asset: String(b.asset),
+      free: String(b.free),
+      locked: String(b.locked),
+      freeNum: free,
+      lockedNum: locked,
+      total: free + locked,
+    };
+  });
+  return {
+    balances: onlyNonZero ? allBalances.filter((b) => b.total > 0) : allBalances,
+    accountType: String(data.accountType || data.type || 'SPOT'),
+    canTrade: Boolean(data.canTrade ?? true),
+    timestamp: Date.now(),
+  };
+}
+
+export async function getLatestPrice(symbol: string): Promise<{ symbol: string; price: number; timestamp: number }> {
+  const { baseUrl } = getBinanceConfig();
+  const res = await axios.get(`${baseUrl}/api/v3/ticker/price?symbol=${encodeURIComponent(symbol.toUpperCase())}`, { timeout: 5000 });
+  const price = parseFloat(res.data?.price ?? '0');
+  if (!price || !Number.isFinite(price)) throw new Error(`Binance price unavailable for ${symbol}`);
+  return { symbol: symbol.toUpperCase(), price, timestamp: Date.now() };
+}
+
+export function isSymbolTradable(coin: string, quote: string = 'USDT'): boolean {
+  const pair = `${coin.toUpperCase()}${quote.toUpperCase()}`;
+  const invalidSameAsset = coin.toUpperCase() === quote.toUpperCase();
+  return !invalidSameAsset && coin.trim().length > 0 && quote.trim().length > 0;
+}
+
+// Market buy using quoteOrderQty (amount in quote asset, e.g., USDT).
+//
+// REAL SPOT EXECUTION — NO INTERNAL NUMBERS.
+//   • Non-USDT asset (BTC, ETH, SOL, TRX, etc.):
+//       → REAL Binance SPOT MARKET BUY using quoteOrderQty = amount_usd
+//       → Real BASE asset (e.g. BTC) lands in Binance SPOT wallet
+//       → Fills are real, executedQty is real, withdrawable via Binance withdrawal APIs
+//
+//   • USDT specifically (USDTUSDT pair is INVALID on Binance spot):
+//       → 2-STEP REAL SPOT CONVERSION:
+//           Step 1: USD → SPOT BUY BTC via quoteOrderQty  (real BTC in SPOT wallet)
+//           Step 2: BTC → SPOT SELL for USDT via quantity  (real USDT in SPOT wallet)
+//       → Result is real USDT that can be withdrawn to Tron/EVM chains
+//         via Binance /sapi/v1/localentity/withdraw/apply (Travel Rule compliant)
+//       → If Step 2 fails after Step 1 succeeds, BTC is left in SPOT wallet;
+//         caller can manually sell/retry. No funds lost.
 export async function buyAssetWithUsd(asset: string, amountUsd: number) {
   const normalizedAsset = (asset || '').toUpperCase();
   if (!normalizedAsset) throw new Error('Asset symbol is required');
+  if (amountUsd <= 0 || !Number.isFinite(amountUsd)) throw new Error('Amount must be a positive number');
 
-  const symbol = normalizedAsset === 'USDT' ? 'USDTUSDT' : `${normalizedAsset}USDT`;
+  const cfg = getBinanceConfig();
+  if (cfg.mode !== 'live' && cfg.mode !== 'sandbox') {
+    throw Object.assign(new Error(
+      `Binance config mode='${cfg.mode}' — LIVE credentials required. ` +
+      `Set BINANCE_API_KEY + BINANCE_API_SECRET in backend/.env and unset BINANCE_MODE=sandbox.`
+    ), { blocked: true, need_real_keys: true });
+  }
+
+  if (normalizedAsset === 'USDT') {
+    let step1Order: any = null;
+    let btcQty = 0;
+    try {
+      step1Order = await buyAssetWithUsd('BTC', amountUsd);
+      btcQty = Number(step1Order.executedQty ?? 0);
+      if (!btcQty || btcQty <= 0) throw new Error('2-step USDT via BTC failed at step 1 BTC buy: 0 quantity executed');
+      if (!step1Order?.ok) throw new Error('2-step USDT via BTC failed at step 1 BTC buy: order not-ok');
+
+      const step2 = await sellAssetForUsdt('BTC', btcQty);
+      const usdtGot = Number(step2.usdt_received ?? 0);
+      if (!usdtGot || usdtGot <= 0) {
+        throw Object.assign(
+          new Error(
+            `2-step USDT via BTC: Step 2 (BTC→USDT sell) returned 0 USDT. ` +
+            `BTC ${btcQty.toFixed(8)} was bought in Step 1 but remains in your Binance SPOT wallet — ` +
+            `sell BTC→USDT manually to recover.`
+          ),
+          {
+            step1_btc_bought: btcQty,
+            step1_order: step1Order,
+            step2_raw: step2,
+            manual_recovery_required: true,
+          }
+        );
+      }
+
+      const allFills = [...(step1Order.fills || []), ...(step2.fills || [])];
+      const firstOrderId = step1Order.order_id || step2.order_id;
+      return {
+        ok: true,
+        provider: 'binance',
+        asset: 'USDT',
+        amount_usd: Number(amountUsd),
+        executed_qty: usdtGot,
+        executedQty: usdtGot,
+        fills: allFills,
+        status: 'FILLED_2STEP_BTC_USDT',
+        order_id: firstOrderId ? String(firstOrderId) : `USDT-2STEP-${Date.now()}`,
+        mock: false,
+        is_spot_real: true,
+        usdt_withdrawable: true,
+        raw: {
+          step1_buy_btc: step1Order.raw,
+          step1_order_id: step1Order.order_id,
+          step1_btc_executed: btcQty,
+          step2_sell_btc_usdt: step2.raw,
+          step2_order_id: step2.order_id,
+          step2_usdt_received: usdtGot,
+          note:
+            '2-step USD→BTC→USDT (USDTUSDT pair invalid on Binance spot; ' +
+            'this alternative yields REAL USDT on Binance SPOT wallet with fills on both legs. ' +
+            'USDT is withdrawable to TRC20/BEP20/PolygonERC20 via Binance Travel Rule withdraw API.)',
+        },
+      };
+    } catch (e: any) {
+      const extra = step1Order
+        ? ` Step 1 (BTC buy) ${btcQty ? `executed ${btcQty.toFixed(8)} BTC — remains in Binance SPOT. Sell BTC→USDT manually to recover.` : 'may have executed; check Binance SPOT BTC balance.'}`
+        : ' No BTC buy executed yet.';
+      console.error(`[Binance 2-step USDT conversion failed]: ${e?.message || String(e)}.${extra}`);
+      throw Object.assign(
+        new Error(`Binance USDT 2-step conversion (USD→BTC→USDT) failed: ${e?.message || String(e)}.${extra}`),
+        { cause: e, step1_btc_bought: btcQty || 0, step1_order: step1Order, manual_recovery: !!btcQty }
+      );
+    }
+  }
+
+  if (!isSymbolTradable(normalizedAsset, 'USDT')) {
+    throw new Error(
+      `Binance spot pair ${normalizedAsset}USDT is not tradable (same-asset or empty). ` +
+      `For USDT purchases use asset='USDT' to trigger the 2-step USD→BTC→USDT flow.`
+    );
+  }
+
+  const symbol = `${normalizedAsset}USDT`;
   const params = {
     symbol,
     side: 'BUY',
     type: 'MARKET',
     quoteOrderQty: amountUsd.toString(),
+    newOrderRespType: 'FULL',
   } as Record<string, any>;
 
-  const order = await binanceRequest('/api/v3/order', params);
+  const order = await binanceRequestPost('/api/v3/order', params);
   if (order?.code) {
     throw new Error(`Binance order failed: ${order.msg || 'Unknown error'}`);
   }
 
-  const executedQty = parseFloat(order.executedQty || order.fills?.reduce((sum: number, fill: any) => sum + parseFloat(fill.qty || 0), 0) || '0');
+  const executedQty = parseFloat(
+    order.executedQty ||
+    order.fills?.reduce((sum: number, fill: any) => sum + parseFloat(fill.qty || 0), 0) ||
+    '0'
+  );
+  const quoteSpent = parseFloat(
+    order.cummulativeQuoteQty ||
+    order.fills?.reduce((sum: number, fill: any) => sum + parseFloat(fill.qty || 0) * parseFloat(fill.price || 0), 0) ||
+    '0'
+  );
+
+  if (executedQty <= 0) {
+    throw Object.assign(
+      new Error(
+        `Binance ${symbol} MARKET BUY: executedQty=0. quoteOrderQty=${amountUsd} USDT. ` +
+        `Check Binance SPOT order history — if order was rejected funds never left wallet. ` +
+        `If partially filled, fills are in order.fills but total executedQty rounds to 0.`
+      ),
+      { order, symbol, quoteOrderQty: amountUsd }
+    );
+  }
 
   return {
     ok: true,
     provider: 'binance',
     asset: normalizedAsset,
     amount_usd: Number(amountUsd),
+    quote_spent_usdt: quoteSpent,
     executed_qty: executedQty,
     executedQty,
     fills: order.fills || [],
     status: order.status || 'FILLED',
     order_id: order.orderId?.toString() || order.id?.toString() || undefined,
     mock: Boolean(order?.mock),
+    is_spot_real: true,
+    spot_symbol: symbol,
+    order_type: 'MARKET',
+    side: 'BUY',
+    quoteOrderQty: Number(amountUsd),
+    avg_fill_price: executedQty > 0 ? (quoteSpent / executedQty) : null,
     raw: order,
   };
 }
@@ -296,6 +436,51 @@ export async function withdrawAsset(
     id: resp?.id,
     withdrawId: resp?.id,
   };
+}
+
+async function binanceSignedPost(path: string, fields: Record<string, any>, config?: BinanceConfig): Promise<any> {
+  const cfg = config || getBinanceConfig();
+
+  const body = new URLSearchParams();
+  const entries = Object.entries({
+    ...fields,
+    timestamp: fields.timestamp || Date.now(),
+  } as Record<string, any>);
+  for (const [k, v] of entries) {
+    if (v === undefined || v === null) continue;
+    if (typeof v === 'object') body.append(k, typeof v === 'string' ? v : JSON.stringify(v));
+    else body.append(k, String(v));
+  }
+
+  const signature = crypto.createHmac('sha256', cfg.apiSecret).update(body.toString()).digest('hex');
+  const url = `${cfg.baseUrl}${path}?${body.toString()}&signature=${signature}`;
+
+  const res = await axios.post(url, body.toString(), {
+    headers: {
+      'X-MBX-APIKEY': cfg.apiKey,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    timeout: 20000,
+  });
+  if (res.data?.code && res.data.code !== '0') {
+    throw Object.assign(new Error(`Binance ${path} error ${res.data.code}: ${res.data.msg || ''}`), { response: { data: res.data }, data: res.data });
+  }
+  return res.data;
+}
+
+async function binanceSignedGet(path: string, query: Record<string, any> = {}, config?: BinanceConfig): Promise<any> {
+  const cfg = config || getBinanceConfig();
+  const params: Record<string, any> = { ...query, timestamp: query.timestamp || Date.now() };
+  const signed = signQuery(params, cfg.apiSecret);
+  const url = `${cfg.baseUrl}${path}?${signed}`;
+  const res = await axios.get(url, {
+    headers: { 'X-MBX-APIKEY': cfg.apiKey },
+    timeout: 15000,
+  });
+  if (res.data?.code && res.data.code !== '0') {
+    throw Object.assign(new Error(`Binance ${path} error ${res.data.code}: ${res.data.msg || ''}`), { response: { data: res.data }, data: res.data });
+  }
+  return res.data;
 }
 
 // ── Binance Local Entity / Travel Rule Broker API ──────────────────────────
@@ -407,7 +592,7 @@ export async function sellAssetForUsdt(asset: string, amountBase: number) {
     quantity: amountBase.toString(),
   } as Record<string, any>;
 
-  const order = await binanceRequest('/api/v3/order', params);
+  const order = await binanceRequestPost('/api/v3/order', params);
   if (order?.code) {
     throw new Error(`Binance sell order failed: ${order.msg || 'Unknown error'}`);
   }
@@ -439,5 +624,16 @@ export async function sellAssetForUsdt(asset: string, amountBase: number) {
   };
 }
 
-export default { buyAssetWithUsd, sellAssetForUsdt, withdrawAsset, getLocalEntityCountryList, getLocalEntityQuestionnaireRequirements, travelRuleWithdrawApply, brokerWithdrawApply };
+export default {
+  buyAssetWithUsd,
+  sellAssetForUsdt,
+  withdrawAsset,
+  getLocalEntityCountryList,
+  getLocalEntityQuestionnaireRequirements,
+  travelRuleWithdrawApply,
+  brokerWithdrawApply,
+  getSpotBalances,
+  getLatestPrice,
+  isSymbolTradable,
+};
 

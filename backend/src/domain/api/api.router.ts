@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { walletsService } from '../wallets/wallets.service';
 import { walletsController } from '../wallets/wallets.controller';
+import { fundsSettlementService } from '../settlements/funds-settlement.service';
 import { db } from '../../config/db';
 import { syncOfflinePreflight } from '../payments/offline-decline-preflight';
 
@@ -26,9 +27,18 @@ router.post('/customers', async (req, res) => {
 router.post('/wallet/customer/topup', async (req, res) => {
   try {
     const { customer_id, amount, source, reference, currency } = req.body;
-    if (!customer_id || !amount || amount <= 0) return res.status(400).json({ error: 'Invalid payload' });
-    await walletsService.topupWallet(customer_id, amount, source || 'admin', reference, currency || 'USD');
-    res.json({ ok: true });
+    if (!customer_id || typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid payload' });
+    }
+    const result = await fundsSettlementService.creditCustomerWallet({
+      customer_id,
+      amount,
+      currency: currency || 'USD',
+      source: 'admin_credit',
+      reference: reference || 'manual_credit',
+      initiated_by: 'admin'
+    });
+    res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

@@ -1,4 +1,5 @@
 import { db } from "../../config/db";
+import { POS_BRAND_NAME, POS_PROTOCOL_VERSION, VAULT_DISPLAY_NAME, transactionChannel } from "../../config/brand";
 
 const ESC = "\x1B";
 const GS = "\x1D";
@@ -52,11 +53,18 @@ export interface ThermalTxnFull {
   txn_timestamp: string;
   pi_id?: string;
   protocol_version?: string;
+  decline_reason?: string;
+  created_at?: string;
+  updated_at?: string;
 
   batch_seq?: number;
   settlement_code?: string;
   batch_status?: string;
   upload_timestamp?: string;
+  batch_total_amount_minor?: number;
+  batch_txn_count?: number;
+  batch_processed_at?: string;
+  batch_signature?: string;
   beneficiary_bank?: string;
   beneficiary_account_last4?: string;
   beneficiary_routing?: string;
@@ -66,6 +74,9 @@ export interface ThermalTxnFull {
   merchant_name?: string;
   merchant_address?: string;
   merchant_phone?: string;
+  merchant_email?: string;
+  merchant_license?: string;
+  merchant_tax_id?: string;
   receipt_header?: string;
   receipt_footer?: string;
 
@@ -91,6 +102,15 @@ export interface ThermalTxnFull {
   floor_limit_raised_temporary_for_txn_only?: boolean;
   floor_limit_restored_post_commit?: number;
   terminal_floor_limit_permanent?: number;
+
+  ledger_entry_id?: string;
+  settlement_id?: string;
+  offline_approval_type?: string;
+  emv_cryptogram_type?: string;
+  customer_signature_required?: boolean;
+  transaction_channel?: 'ONLINE' | 'OFFLINE';
+  pos_brand_name?: string;
+  vault_display_name?: string;
 }
 
 export class ThermalReceiptService {
@@ -146,14 +166,18 @@ export class ThermalReceiptService {
         t.amount_minor, t.currency, t.pan_masked, t.card_brand, t.txn_type,
         t.auth_mode, t.entry_mode, t.reader_source, t.cvm_result, t.pin_verified,
         t.rrn, t.auth_code, t.status, t.txn_timestamp,
-        t.emv_data,
+        t.emv_data, t.decline_reason, t.created_at, t.updated_at,
         b.protocol_version, b.settlement_code, b.status AS batch_status,
-        b.upload_timestamp, b.batch_seq,
+        b.upload_timestamp, b.batch_seq, b.total_amount_minor AS batch_total_amount_minor,
+        b.txn_count AS batch_txn_count, b.processed_at AS batch_processed_at,
+        b.signature AS batch_signature,
         b.batch_file,
         m.business_name AS merchant_name, m.business_address AS merchant_address,
         m.business_phone AS merchant_phone, m.receipt_header AS receipt_header,
         m.receipt_footer AS receipt_footer,
-        s.merchant_name AS ms_name,
+        s.merchant_name AS ms_name, s.support_email AS merchant_email,
+        s.license_number AS merchant_license, s.tax_id AS merchant_tax_id,
+        s.merchant_address AS ms_address, s.merchant_phone AS ms_phone,
         ter.name AS terminal_name, ter.floor_limit AS terminal_floor_limit_permanent
       FROM pos2013_transactions t
       LEFT JOIN pos2013_batches b ON t.batch_id = b.batch_id
@@ -198,7 +222,7 @@ export class ThermalReceiptService {
         (tx.stan && tx.stan === row.stan)
       ) || batchFileJson;
 
-    full.customer_name   = (emv.customer_name || emv.cardholder_full || batchFileJson?.customer_name || bfTx?.cardholder || bfTx?.cardholder_full || bfTx?.customer?.name || "").trim() || null;
+    full.customer_name   = (emv.customer_name || emv.cardholder_full || emv.cardholder_name || batchFileJson?.customer_name || bfTx?.cardholder || bfTx?.cardholder_full || bfTx?.cardholder_name || bfTx?.customer?.name || "").trim() || null;
     full.customer_id     = emv.customer_id || bfTx?.customer_id || null;
     full.customer_phone  = emv.customer_phone || bfTx?.customer_phone || null;
     full.customer_email  = emv.customer_email || bfTx?.customer_email || null;
@@ -213,7 +237,14 @@ export class ThermalReceiptService {
       full.expiry_mm_yy = `${mm}/${yy}`;
     } else if (bfTx?.expiry_mm_yy) {
       full.expiry_mm_yy = bfTx.expiry_mm_yy;
+    } else if (emv.expiry) {
+      const e = String(emv.expiry).replace(/[^0-9]/g, "");
+      if (e.length === 4) full.expiry_mm_yy = `${e.slice(0,2)}/${e.slice(2,4)}`;
     }
+
+    full.offline_approval_type = emv.offline_approval_type || emv.offline_auth_type || null;
+    full.emv_cryptogram_type   = emv.cryptogram_type || emv.cid_type || emv.crypto_type || null;
+    full.customer_signature_required = typeof emv.signature_required === "boolean" ? emv.signature_required : (emv.cvm_requires_signature ? true : undefined);
 
     const ti: any = emv.tranche_info || bfTx?.tranche || batchFileJson?.tranche || {};
     const ag: any = emv.agreement || bfTx?.agreement || batchFileJson?.agreement || {};
@@ -257,15 +288,50 @@ export class ThermalReceiptService {
     full.floor_limit_raised_temporary_for_txn_only = !!tempFloor;
     full.floor_limit_restored_post_commit          = restoredPost;
 
+    try {
+      const settleRows = await db.query(
+        `SELECT id AS settlement_id, ledger_entry_id FROM merchant_pos_settlements
+         WHERE merchant_id = ? AND (meta LIKE ? OR meta LIKE ?) LIMIT 1`,
+        [
+          merchantId,
+          `%"paymentIntentId":"${transactionId}"%`,
+          `%"processor_reference":"${transactionId}"%`
+        ]
+      );
+      if (settleRows.rows?.length) {
+        full.settlement_id = settleRows.rows[0].settlement_id;
+        full.ledger_entry_id = settleRows.rows[0].ledger_entry_id;
+      }
+    } catch { /* ignore settlement lookup */ }
+
+    if (!full.merchant_email) {
+      full.merchant_email = emv.merchant_email || batchFileJson?.merchant_email || null;
+    }
+    if (!full.merchant_license) {
+      full.merchant_license = emv.merchant_license || batchFileJson?.merchant_license || null;
+    }
+    if (!full.merchant_tax_id) {
+      full.merchant_tax_id = emv.merchant_tax_id || batchFileJson?.merchant_tax_id || null;
+    }
+    if (!full.merchant_address && row.ms_address) {
+      full.merchant_address = row.ms_address;
+    }
+    if (!full.merchant_phone && row.ms_phone) {
+      full.merchant_phone = row.ms_phone;
+    }
+
     if (!full.terminal_name) full.terminal_name = "Main Terminal";
     const mnRaw = String(full.merchant_name || "").trim();
     const isPlaceholder = mnRaw.length === 0 || /default\s*store/i.test(mnRaw);
     const msRaw = String(row.ms_name || "").trim();
     const msOk = msRaw.length > 0 && !/default\s*store/i.test(msRaw);
-    full.merchant_name = isPlaceholder ? (msOk ? msRaw : "PRIMESTACK TECHNOLOGIES LLC") : full.merchant_name;
+    full.merchant_name = isPlaceholder ? (msOk ? msRaw : POS_BRAND_NAME) : full.merchant_name;
     if (!full.receipt_footer) full.receipt_footer = "Thank you for your business!";
     if (!full.merchant_address) full.merchant_address = "Wilmington, DE, USA";
     if (!full.merchant_phone) full.merchant_phone = "+1 (302) 000-0000";
+    full.transaction_channel = transactionChannel(full.auth_mode, full.batch_id);
+    full.pos_brand_name = POS_BRAND_NAME;
+    full.vault_display_name = VAULT_DISPLAY_NAME;
 
     return full;
   }
@@ -277,16 +343,21 @@ export class ThermalReceiptService {
 
     const mnRaw = String(tx.merchant_name || "").trim();
     const isPlaceholder = mnRaw.length === 0 || /default\s*store/i.test(mnRaw);
-    const finalMerchantName = isPlaceholder ? "PRIMESTACK TECHNOLOGIES LLC" : tx.merchant_name;
+    const finalMerchantName = isPlaceholder ? POS_BRAND_NAME : tx.merchant_name;
+    const statusRaw = String(tx.status || "AUTHORIZED").toUpperCase();
+    const isDeclined = statusRaw.includes("DECLIN") || statusRaw.includes("FAIL") || statusRaw.includes("REJECT");
+    const approved = !isDeclined && (statusRaw.includes("APPROV") || statusRaw.includes("AUTH"));
 
     out.push(ALIGN_CENTER);
     out.push(BOLD_ON);
     out.push(DOUBLE_H);
     out.push(String(finalMerchantName).toUpperCase());
+    out.push(`${VAULT_DISPLAY_NAME} VAULT · ${tx.transaction_channel || transactionChannel(tx.auth_mode, tx.batch_id)} TRANSACTION`);
     out.push(NORMAL);
     out.push(BOLD_OFF);
     out.push(tx.merchant_address || "");
     if (tx.merchant_phone) out.push(`TEL: ${tx.merchant_phone}`);
+    if (tx.merchant_email) out.push(`EMAIL: ${tx.merchant_email}`);
     out.push(this.line40("═"));
     out.push(LF);
 
@@ -301,8 +372,43 @@ export class ThermalReceiptService {
     out.push(ALIGN_LEFT);
     out.push(this.padR(40, "RECEIPT NO:", `RCP-${String(tx.id || "").slice(0, 8).toUpperCase()}`));
     out.push(this.padR(40, "DATE/TIME:", this.fmtDate(tx.txn_timestamp)));
+    if (tx.created_at && tx.created_at !== tx.txn_timestamp) {
+      out.push(this.padR(40, "RECORDED AT:", this.fmtDate(tx.created_at)));
+    }
+    if (tx.updated_at) {
+      out.push(this.padR(40, "LAST UPDATED:", this.fmtDate(tx.updated_at)));
+    }
     out.push(this.line40("─"));
     out.push(LF);
+
+    if (isDeclined && (tx.decline_reason || tx.status)) {
+      out.push(ALIGN_CENTER);
+      out.push(BOLD_ON);
+      out.push(DOUBLE_H);
+      out.push("✗ ✗ ✗  DECLINED / FAILED  ✗ ✗ ✗");
+      out.push(NORMAL);
+      out.push(BOLD_OFF);
+      out.push(LF);
+      out.push(ALIGN_LEFT);
+      out.push(BOLD_ON);
+      out.push("DECLINE DETAILS");
+      out.push(BOLD_OFF);
+      out.push(this.padR(40, "STATUS:", statusRaw));
+      if (tx.decline_reason) {
+        const dr = String(tx.decline_reason);
+        const bracketMatch = dr.match(/^\[([^\]]+)\]\s*(.*)$/);
+        if (bracketMatch) {
+          out.push(this.padR(40, "DECLINE CODE:", bracketMatch[1]));
+          out.push(...this.padRLong(40, "REASON:", bracketMatch[2] || dr, 22));
+        } else {
+          out.push(...this.padRLong(40, "REASON:", dr, 22));
+        }
+      } else {
+        out.push(this.padR(40, "REASON:", "Card not authorized"));
+      }
+      out.push(this.line40("─"));
+      out.push(LF);
+    }
 
     out.push(BOLD_ON);
     out.push("CARDHOLDER DETAILS");
@@ -328,6 +434,7 @@ export class ThermalReceiptService {
     out.push(this.padR(40, "PIN VERIFIED:", tx.pin_verified ? "YES" : "NO"));
     if (tx.cvm_result) out.push(this.padR(40, "CVM:", tx.cvm_result));
     if (tx.reader_source) out.push(this.padR(40, "READER:", tx.reader_source));
+    if (tx.emv_cryptogram_type) out.push(this.padR(40, "EMV CRYPTO:", String(tx.emv_cryptogram_type).toUpperCase()));
     out.push(this.line40("─"));
     out.push(LF);
 
@@ -349,13 +456,20 @@ export class ThermalReceiptService {
     out.push(BOLD_OFF);
     out.push(this.padR(40, "TXN TYPE:", (tx.txn_type || "SALE").toUpperCase()));
     out.push(this.padR(40, "AUTH MODE:", (tx.auth_mode || "OFFLINE_AUTH").toUpperCase()));
-    out.push(this.padR(40, "PROTOCOL:", `VER ${tx.protocol_version || "101.1 PATH B"}`));
+    out.push(this.padR(40, "POS BRAND:", tx.pos_brand_name || POS_BRAND_NAME));
+    out.push(this.padR(40, "VAULT:", tx.vault_display_name || VAULT_DISPLAY_NAME));
+    out.push(this.padR(40, "CHANNEL:", tx.transaction_channel || transactionChannel(tx.auth_mode, tx.batch_id)));
+    out.push(this.padR(40, "PROTOCOL:", `VER ${tx.protocol_version || POS_PROTOCOL_VERSION}`));
+    if (tx.offline_approval_type) out.push(this.padR(40, "OFFLINE AUTH:", String(tx.offline_approval_type).toUpperCase()));
     if (tx.pi_id) out.push(...this.padRLong(40, "PI ID:", tx.pi_id, 24));
     out.push(this.padR(40, "STAN:", tx.stan || "N/A"));
     if (tx.rrn) out.push(...this.padRLong(40, "RRN:", tx.rrn, 24));
     out.push(this.padR(40, "AUTH CODE:", tx.auth_code || "N/A"));
     out.push(this.padR(40, "TERMINAL:", `${tx.terminal_id}${tx.terminal_name ? " (" + tx.terminal_name + ")" : ""}`));
     out.push(this.padR(40, "MERCHANT ID:", tx.merchant_id || "MRC-1001"));
+    if (tx.local_txn_id && tx.local_txn_id !== tx.id) {
+      out.push(...this.padRLong(40, "LOCAL TXN ID:", tx.local_txn_id, 24));
+    }
     out.push(this.line40("─"));
     out.push(LF);
 
@@ -365,14 +479,22 @@ export class ThermalReceiptService {
     if (tx.batch_id) out.push(...this.padRLong(40, "BATCH ID:", tx.batch_id, 24));
     if (tx.batch_seq) out.push(this.padR(40, "BATCH SEQ:", `#${tx.batch_seq}`));
     out.push(this.padR(40, "BATCH STATUS:", (tx.batch_status || "RECEIVED").toUpperCase()));
+    if (tx.batch_txn_count !== undefined && tx.batch_txn_count !== null) {
+      out.push(this.padR(40, "BATCH TXN CT:", String(tx.batch_txn_count)));
+    }
+    if (tx.batch_total_amount_minor !== undefined && tx.batch_total_amount_minor !== null) {
+      out.push(this.padR(40, "BATCH TOTAL:", this.fmtAmountMinor(tx.batch_total_amount_minor, tx.currency)));
+    }
     if (tx.settlement_code) out.push(this.padR(40, "SETTLEMENT CODE:", tx.settlement_code));
     out.push(this.padR(40, "UPLOAD DATE:", tx.upload_timestamp ? this.fmtDateShort(tx.upload_timestamp) : "SCHEDULED"));
+    if (tx.batch_processed_at) out.push(this.padR(40, "PROCESSED AT:", this.fmtDate(tx.batch_processed_at)));
     if (tx.settlement_bank || tx.beneficiary_bank) {
       out.push(this.padR(40, "SETTLE BANK:", tx.settlement_bank || tx.beneficiary_bank || ""));
     }
     if (tx.beneficiary_name)         out.push(this.padR(40, "BENEF NAME:", tx.beneficiary_name));
     if (tx.beneficiary_account_last4) out.push(this.padR(40, "BENEF ACCT:", `**** ${tx.beneficiary_account_last4}`));
     if (tx.beneficiary_routing)       out.push(this.padR(40, "BENEF RTG:", tx.beneficiary_routing));
+    if (tx.batch_signature) out.push(...this.padRLong(40, "BATCH SIG:", String(tx.batch_signature).slice(0, 32), 20));
     out.push(this.line40("─"));
     out.push(LF);
 
@@ -393,6 +515,9 @@ export class ThermalReceiptService {
       if (tr.tranches_remaining_usd) {
         out.push(this.padR(40, "REMAINING:", `$${Number(tr.tranches_remaining_usd).toLocaleString("en-US")} USD`));
       }
+      if (tr.tranches_remaining_after_this !== undefined && tr.tranches_remaining_after_this !== null) {
+        out.push(this.padR(40, "LEFT AFTER:", `${tr.tranches_remaining_after_this} TRANCHE(S)`));
+      }
       out.push(this.line40("─"));
       out.push(LF);
     }
@@ -410,28 +535,66 @@ export class ThermalReceiptService {
     out.push(this.line40("─"));
     out.push(LF);
 
+    const hasCompliance = tx.merchant_license || tx.merchant_tax_id || tx.merchant_email;
+    if (hasCompliance) {
+      out.push(BOLD_ON);
+      out.push("MERCHANT COMPLIANCE INFO");
+      out.push(BOLD_OFF);
+      if (tx.merchant_license) out.push(...this.padRLong(40, "LICENSE #:", tx.merchant_license, 22));
+      if (tx.merchant_tax_id)  out.push(...this.padRLong(40, "TAX ID:", tx.merchant_tax_id, 22));
+      if (tx.merchant_email)   out.push(this.padR(40, "SUPPORT EMAIL:", tx.merchant_email));
+      out.push(this.line40("─"));
+      out.push(LF);
+    }
+
+    const hasAudit = tx.ledger_entry_id || tx.settlement_id || tx.batch_signature;
+    if (hasAudit) {
+      out.push(BOLD_ON);
+      out.push("AUDIT & TRACEABILITY");
+      out.push(BOLD_OFF);
+      if (tx.ledger_entry_id) out.push(...this.padRLong(40, "LEDGER ENTRY:", tx.ledger_entry_id, 22));
+      if (tx.settlement_id)   out.push(...this.padRLong(40, "SETTLEMENT ID:", tx.settlement_id, 22));
+      out.push(this.line40("─"));
+      out.push(LF);
+    }
+
     out.push(ALIGN_CENTER);
-    const s = String(tx.status || "AUTHORIZED").toUpperCase();
-    const approved = s.includes("APPROV") || s.includes("AUTH");
-    out.push(BOLD_ON);
-    out.push(DOUBLE_H);
-    out.push(approved ? "✓ ✓ ✓  APPROVED / AUTHORIZED  ✓ ✓ ✓" : `STATUS: ${s}`);
-    out.push(NORMAL);
-    out.push(BOLD_OFF);
+    if (approved) {
+      out.push(BOLD_ON);
+      out.push(DOUBLE_H);
+      out.push("✓ ✓ ✓  APPROVED / AUTHORIZED  ✓ ✓ ✓");
+      out.push(NORMAL);
+      out.push(BOLD_OFF);
+    } else if (isDeclined) {
+      out.push(BOLD_ON);
+      out.push(DOUBLE_H);
+      out.push("✗ ✗ ✗  DECLINED — DO NOT HONOR  ✗ ✗ ✗");
+      out.push(NORMAL);
+      out.push(BOLD_OFF);
+    } else {
+      out.push(BOLD_ON);
+      out.push(DOUBLE_H);
+      out.push(`STATUS: ${statusRaw}`);
+      out.push(NORMAL);
+      out.push(BOLD_OFF);
+    }
     out.push(LF);
     out.push(this.line40("═"));
     out.push(LF);
 
-    out.push(ALIGN_LEFT);
-    out.push("CARDHOLDER SIGNATURE:");
-    out.push(LF);
-    out.push(LF);
-    out.push("  ____________________________________________  ");
-    out.push(LF);
-    out.push(this.padR(40, "PRINTED NAME:", "____________________"));
-    out.push(LF);
-    out.push(this.line40("─"));
-    out.push(LF);
+    const needSig = tx.customer_signature_required !== false && approved;
+    if (needSig) {
+      out.push(ALIGN_LEFT);
+      out.push("CARDHOLDER SIGNATURE:");
+      out.push(LF);
+      out.push(LF);
+      out.push("  ____________________________________________  ");
+      out.push(LF);
+      out.push(this.padR(40, "PRINTED NAME:", "____________________"));
+      out.push(LF);
+      out.push(this.line40("─"));
+      out.push(LF);
+    }
 
     out.push(ALIGN_CENTER);
     out.push(tx.receipt_footer || "Thank you for your business!");
@@ -439,6 +602,10 @@ export class ThermalReceiptService {
     out.push("KEEP THIS RECEIPT FOR YOUR RECORDS");
     out.push(LF);
     out.push("ALL TRANSACTIONS SUBJECT TO CARDHOLDER AGREEMENT");
+    if (isDeclined) {
+      out.push(LF);
+      out.push("CONTACT ISSUING BANK FOR FURTHER DETAILS");
+    }
     out.push(LF);
     out.push(LF);
     out.push("*** END OF RECEIPT ***");
@@ -449,9 +616,197 @@ export class ThermalReceiptService {
     return out.join(LF);
   }
 
-  build80mm(tx: ThermalTxnFull): { customer: string; merchant: string; combined: string; browserCustomer: string; browserMerchant: string; browserCombined: string } {
+  private buildHtmlCopy(tx: ThermalTxnFull, copyLabel: string): string {
+    const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const tr = (label: string, value: any) => `<tr><th>${esc(label)}</th><td>${esc(value ?? "—")}</td></tr>`;
+    const statusRaw = String(tx.status || "AUTHORIZED").toUpperCase();
+    const isDeclined = statusRaw.includes("DECLIN") || statusRaw.includes("FAIL") || statusRaw.includes("REJECT");
+    const approved = !isDeclined && (statusRaw.includes("APPROV") || statusRaw.includes("AUTH"));
+    const mnRaw = String(tx.merchant_name || "").trim();
+    const isPlaceholder = mnRaw.length === 0 || /default\s*store/i.test(mnRaw);
+    const finalMerchantName = isPlaceholder ? POS_BRAND_NAME : tx.merchant_name;
+    const statusClass = approved ? "ok" : (isDeclined ? "bad" : "warn");
+    const statusText = approved
+      ? "✓ ✓ ✓  APPROVED / AUTHORIZED  ✓ ✓ ✓"
+      : (isDeclined ? "✗ ✗ ✗  DECLINED — DO NOT HONOR  ✗ ✗ ✗" : `STATUS: ${esc(statusRaw)}`);
+
+    const sections: string[] = [];
+
+    sections.push(`<header>
+      <h1>${esc(String(finalMerchantName).toUpperCase())}</h1>
+      <div class="addr">${esc(`${tx.vault_display_name || VAULT_DISPLAY_NAME} VAULT · ${tx.pos_brand_name || POS_BRAND_NAME} POS`)}</div>
+      <div class="addr">${esc(tx.merchant_address || "")}</div>
+      ${tx.merchant_phone ? `<div class="addr">TEL: ${esc(tx.merchant_phone)}</div>` : ""}
+      ${tx.merchant_email ? `<div class="addr">EMAIL: ${esc(tx.merchant_email)}</div>` : ""}
+      <div class="hr hr2"></div>
+      <div class="copy-label">*** ${esc(copyLabel)} ***</div>
+      <div class="meta">
+        <div><span>RECEIPT NO:</span> <b>RCP-${esc(String(tx.id || "").slice(0, 8).toUpperCase())}</b></div>
+        <div><span>DATE/TIME:</span> <b>${esc(this.fmtDate(tx.txn_timestamp))}</b></div>
+        ${tx.created_at && tx.created_at !== tx.txn_timestamp ? `<div><span>RECORDED AT:</span> <b>${esc(this.fmtDate(tx.created_at))}</b></div>` : ""}
+        ${tx.updated_at ? `<div><span>LAST UPDATED:</span> <b>${esc(this.fmtDate(tx.updated_at))}</b></div>` : ""}
+      </div>
+    </header>`);
+
+    if (isDeclined && (tx.decline_reason || tx.status)) {
+      const dr = String(tx.decline_reason || "");
+      const bracketMatch = dr.match(/^\[([^\]]+)\]\s*(.*)$/);
+      const dCode = bracketMatch ? bracketMatch[1] : "";
+      const dReason = bracketMatch ? (bracketMatch[2] || dr) : dr;
+      sections.push(`<section>
+        <div class="status bad"><h3>✗ ✗ ✗  DECLINED / FAILED  ✗ ✗ ✗</h3></div>
+        <h3>DECLINE DETAILS</h3>
+        <table>
+          ${tr("STATUS", statusRaw)}
+          ${dCode ? tr("DECLINE CODE", dCode) : ""}
+          ${(tx.decline_reason) ? `<tr><th>REASON:</th><td>${esc(dReason || "Card not authorized")}</td></tr>` : `<tr><th>REASON:</th><td>Card not authorized</td></tr>`}
+        </table>
+      </section>`);
+    }
+
+    sections.push(`<section>
+      <h3>CARDHOLDER DETAILS</h3>
+      <table>
+        ${tr("NAME", tx.customer_name || "NOT PROVIDED")}
+        ${tx.customer_phone ? tr("PHONE", tx.customer_phone) : ""}
+        ${tx.customer_email ? tr("EMAIL", tx.customer_email) : ""}
+        ${tx.customer_id ? tr("CUST ID", tx.customer_id) : ""}
+      </table>
+    </section>`);
+
+    sections.push(`<section>
+      <h3>CARD DETAILS</h3>
+      <table>
+        ${tr("CARD BRAND", (tx.card_brand || "VISA").toUpperCase())}
+        ${tr("CARD NO", tx.pan_masked || "****-****-****-****")}
+        ${tx.card_program ? tr("CARD PROG", String(tx.card_program).toUpperCase()) : ""}
+        ${tx.expiry_mm_yy ? tr("EXPIRY", tx.expiry_mm_yy) : ""}
+        ${(tx.cvv_provided !== undefined) ? tr("CVV", tx.cvv_provided ? "VERIFIED (***)" : "NOT PRESENT") : ""}
+        ${tr("ENTRY MODE", tx.entry_mode || "MANUAL")}
+        ${tr("PIN VERIFIED", tx.pin_verified ? "YES" : "NO")}
+        ${tx.cvm_result ? tr("CVM", tx.cvm_result) : ""}
+        ${tx.reader_source ? tr("READER", tx.reader_source) : ""}
+        ${tx.emv_cryptogram_type ? tr("EMV CRYPTO", String(tx.emv_cryptogram_type).toUpperCase()) : ""}
+      </table>
+    </section>`);
+
+    sections.push(`<section class="amount">
+      <h3>TOTAL TRANSACTION AMOUNT</h3>
+      <div class="amount-big">${esc(this.fmtAmountMinor(tx.amount_minor, tx.currency))}</div>
+    </section>`);
+
+    sections.push(`<section>
+      <h3>TRANSACTION DETAILS</h3>
+      <table>
+        ${tr("TXN TYPE", (tx.txn_type || "SALE").toUpperCase())}
+        ${tr("AUTH MODE", (tx.auth_mode || "OFFLINE_AUTH").toUpperCase())}
+        ${tr("POS BRAND", tx.pos_brand_name || POS_BRAND_NAME)}
+        ${tr("VAULT", tx.vault_display_name || VAULT_DISPLAY_NAME)}
+        ${tr("CHANNEL", tx.transaction_channel || transactionChannel(tx.auth_mode, tx.batch_id))}
+        ${tr("PROTOCOL", `VER ${tx.protocol_version || POS_PROTOCOL_VERSION}`)}
+        ${tx.offline_approval_type ? tr("OFFLINE AUTH", String(tx.offline_approval_type).toUpperCase()) : ""}
+        ${tx.pi_id ? `<tr><th>PI ID:</th><td>${esc(tx.pi_id)}</td></tr>` : ""}
+        ${tr("STAN", tx.stan || "N/A")}
+        ${tx.rrn ? `<tr><th>RRN:</th><td>${esc(tx.rrn)}</td></tr>` : ""}
+        ${tr("AUTH CODE", tx.auth_code || "N/A")}
+        ${tr("TERMINAL", `${tx.terminal_id}${tx.terminal_name ? " (" + tx.terminal_name + ")" : ""}`)}
+        ${tr("MERCHANT ID", tx.merchant_id || "MRC-1001")}
+        ${(tx.local_txn_id && tx.local_txn_id !== tx.id) ? `<tr><th>LOCAL TXN ID:</th><td>${esc(tx.local_txn_id)}</td></tr>` : ""}
+      </table>
+    </section>`);
+
+    sections.push(`<section>
+      <h3>BATCH &amp; SETTLEMENT</h3>
+      <table>
+        ${tx.batch_id ? `<tr><th>BATCH ID:</th><td>${esc(tx.batch_id)}</td></tr>` : ""}
+        ${tx.batch_seq ? tr("BATCH SEQ", `#${tx.batch_seq}`) : ""}
+        ${tr("BATCH STATUS", (tx.batch_status || "RECEIVED").toUpperCase())}
+        ${((tx.batch_txn_count !== undefined) && (tx.batch_txn_count !== null)) ? tr("BATCH TXN CT", String(tx.batch_txn_count)) : ""}
+        ${((tx.batch_total_amount_minor !== undefined) && (tx.batch_total_amount_minor !== null)) ? tr("BATCH TOTAL", this.fmtAmountMinor(tx.batch_total_amount_minor, tx.currency)) : ""}
+        ${tx.settlement_code ? tr("SETTLEMENT CODE", tx.settlement_code) : ""}
+        ${tr("UPLOAD DATE", tx.upload_timestamp ? this.fmtDateShort(tx.upload_timestamp) : "SCHEDULED")}
+        ${tx.batch_processed_at ? tr("PROCESSED AT", this.fmtDate(tx.batch_processed_at)) : ""}
+        ${(tx.settlement_bank || tx.beneficiary_bank) ? tr("SETTLE BANK", tx.settlement_bank || tx.beneficiary_bank || "") : ""}
+        ${tx.beneficiary_name ? tr("BENEF NAME", tx.beneficiary_name) : ""}
+        ${tx.beneficiary_account_last4 ? tr("BENEF ACCT", `**** ${tx.beneficiary_account_last4}`) : ""}
+        ${tx.beneficiary_routing ? tr("BENEF RTG", tx.beneficiary_routing) : ""}
+        ${tx.batch_signature ? `<tr><th>BATCH SIG:</th><td>${esc(String(tx.batch_signature).slice(0, 32))}</td></tr>` : ""}
+      </table>
+    </section>`);
+
+    const txTr = tx.tranche;
+    if (txTr && (txTr.total_agreement_usd || txTr.agreement_total || txTr.tranches_total_expected)) {
+      const masterTotal = txTr.total_agreement_usd || txTr.agreement_total || 0;
+      sections.push(`<section class="tranche">
+        <h3>TRANCHE &amp; MASTER AGREEMENT</h3>
+        <table>
+          ${masterTotal ? tr("MASTER TOTAL", `$${Number(masterTotal).toLocaleString("en-US")} USD`) : ""}
+          ${tr("TRANCHE AMT", this.fmtAmountMinor(tx.amount_minor, tx.currency))}
+          ${txTr.tranches_total_expected ? tr("TRANCHE No", `${txTr.tranches_completed || 1} OF ${txTr.tranches_total_expected}`) : ""}
+          ${txTr.tranches_remaining_usd ? tr("REMAINING", `$${Number(txTr.tranches_remaining_usd).toLocaleString("en-US")} USD`) : ""}
+          ${((txTr.tranches_remaining_after_this !== undefined) && (txTr.tranches_remaining_after_this !== null)) ? tr("LEFT AFTER", `${txTr.tranches_remaining_after_this} TRANCHE(S)`) : ""}
+        </table>
+      </section>`);
+    }
+
+    sections.push(`<section>
+      <h3>TERMINAL FLOOR LIMITS</h3>
+      <table>
+        ${tr("PERMANENT FLOOR", `$${Number(tx.terminal_floor_limit_permanent || 5000).toLocaleString("en-US")}`)}
+        ${tx.floor_limit_raised_temporary_for_txn_only ? tr("TEMP FLOOR RAISE", "APPLIED (TXN ONLY)") : ""}
+        ${tx.floor_limit_restored_post_commit ? tr("FLOOR POST-TXN", `$${Number(tx.floor_limit_restored_post_commit).toLocaleString("en-US")} (RESTORED)`) : ""}
+      </table>
+    </section>`);
+
+    if (tx.merchant_license || tx.merchant_tax_id || tx.merchant_email) {
+      sections.push(`<section>
+        <h3>MERCHANT COMPLIANCE INFO</h3>
+        <table>
+          ${tx.merchant_license ? `<tr><th>LICENSE #:</th><td>${esc(tx.merchant_license)}</td></tr>` : ""}
+          ${tx.merchant_tax_id ? `<tr><th>TAX ID:</th><td>${esc(tx.merchant_tax_id)}</td></tr>` : ""}
+          ${tx.merchant_email ? tr("SUPPORT EMAIL", tx.merchant_email) : ""}
+        </table>
+      </section>`);
+    }
+
+    if (tx.ledger_entry_id || tx.settlement_id) {
+      sections.push(`<section>
+        <h3>AUDIT &amp; TRACEABILITY</h3>
+        <table>
+          ${tx.ledger_entry_id ? `<tr><th>LEDGER ENTRY:</th><td>${esc(tx.ledger_entry_id)}</td></tr>` : ""}
+          ${tx.settlement_id ? `<tr><th>SETTLEMENT ID:</th><td>${esc(tx.settlement_id)}</td></tr>` : ""}
+        </table>
+      </section>`);
+    }
+
+    sections.push(`<section class="status ${statusClass}"><h3>${esc(statusText)}</h3></section>`);
+
+    const needSig = tx.customer_signature_required !== false && approved;
+    if (needSig) {
+      sections.push(`<section class="sig">
+        <div class="siglabel">CARDHOLDER SIGNATURE:</div>
+        <div class="sigline"></div>
+        <div class="sigprint"><span>PRINTED NAME:</span><span>____________________</span></div>
+      </section>`);
+    }
+
+    sections.push(`<footer>
+      <p>${esc(tx.receipt_footer || "Thank you for your business!")}</p>
+      <p>KEEP THIS RECEIPT FOR YOUR RECORDS</p>
+      <p>${esc(POS_BRAND_NAME)} POS · ${esc(VAULT_DISPLAY_NAME)} VAULT · PROTOCOL ${esc(POS_PROTOCOL_VERSION)}</p>
+      <p>ALL TRANSACTIONS SUBJECT TO CARDHOLDER AGREEMENT</p>
+      ${isDeclined ? `<p>CONTACT ISSUING BANK FOR FURTHER DETAILS</p>` : ""}
+      <p class="end">*** END OF RECEIPT ***</p>
+    </footer>`);
+
+    return `<article class="receipt">${sections.join("")}</article>`;
+  }
+
+  build80mm(tx: ThermalTxnFull): ThermalRendered {
     const c = this.build80mmCopy(tx, "CUSTOMER COPY");
     const m = this.build80mmCopy(tx, "MERCHANT COPY");
+    const hc = this.buildHtmlCopy(tx, "CUSTOMER COPY");
+    const hm = this.buildHtmlCopy(tx, "MERCHANT COPY");
     const makeBrowser = (raw: string): string => {
       const stripESC = (s: string) => {
         let o = s;
@@ -478,13 +833,17 @@ export class ThermalReceiptService {
     };
     const bc = makeBrowser(c);
     const bm = makeBrowser(m);
+    const separator = `<div class="cut-tear">◦ ◦ ◦ &nbsp; MERCHANT COPY — TEAR HERE &nbsp; ◦ ◦ ◦</div>`;
     return {
       customer: c + PAPER_FULL_CUT,
       merchant: m + PAPER_FULL_CUT,
       combined: c + PAPER_FULL_CUT + LF + LF + LF + m + PAPER_FULL_CUT,
       browserCustomer: bc,
       browserMerchant: bm,
-      browserCombined: bc + "\n\n\n--- MERCHANT COPY SEPARATOR ---\n\n\n" + bm
+      browserCombined: bc + "\n\n\n--- MERCHANT COPY SEPARATOR ---\n\n\n" + bm,
+      htmlCustomer: hc,
+      htmlMerchant: hm,
+      htmlCombined: `<div class="receipt-dual">${hc}${separator}${hm}</div>`
     };
   }
 
@@ -513,6 +872,9 @@ export class ThermalReceiptService {
           browserCombined: copies.browserCombined,
           browserCustomer: copies.browserCustomer,
           browserMerchant: copies.browserMerchant,
+          htmlCombined: copies.htmlCombined,
+          htmlCustomer: copies.htmlCustomer,
+          htmlMerchant: copies.htmlMerchant,
           plainCustomer: copies.browserCustomer || stripLegacy(copies.customer),
           plainMerchant: copies.browserMerchant || stripLegacy(copies.merchant),
           fullTx: full
@@ -529,6 +891,9 @@ export class ThermalReceiptService {
       browserCustomer: copies.browserCustomer,
       browserMerchant: copies.browserMerchant,
       browserCombined: copies.browserCombined,
+      htmlCustomer: copies.htmlCustomer,
+      htmlMerchant: copies.htmlMerchant,
+      htmlCombined: copies.htmlCombined,
       plainCustomer: copies.browserCustomer || stripLegacy(copies.customer),
       plainMerchant: copies.browserMerchant || stripLegacy(copies.merchant)
     };

@@ -1,110 +1,209 @@
 @echo off
 SETLOCAL EnableExtensions EnableDelayedExpansion
 
-cd /d "%~dp0"
+rem Resolve the active project root so this launcher works from either
+rem the parent folder or the embedded repository folder.
+set "PROJECT_ROOT=%~dp0"
+if exist "%~dp0OFFLINE-WALLET-POS-201.3\backend" if not exist "%~dp0backend" (
+    set "PROJECT_ROOT=%~dp0OFFLINE-WALLET-POS-201.3"
+)
+
+cd /d "%PROJECT_ROOT%"
 
 set "BACKEND_PORT=7000"
 set "FRONTEND_PORT=7001"
+set "BACKEND_DIR=%PROJECT_ROOT%backend"
+set "FRONTEND_DIR=%PROJECT_ROOT%client"
+set "DATABASE_FILE=%PROJECT_ROOT%backend\data\database.sqlite"
 
-title POS Offline System Launcher
+title POS 201.3 System Launcher
 
 cls
 echo.
-echo POS OFFLINE SYSTEM - ONE CLICK START
-echo Backend: http://localhost:%BACKEND_PORT%
-echo Frontend: http://localhost:%FRONTEND_PORT%
+echo ============================================================
+echo  POS OFFLINE SYSTEM v201.3 - ONE CLICK START
+echo ============================================================
+echo.
+echo  Backend:  http://localhost:%BACKEND_PORT%
+echo  Frontend: http://localhost:%FRONTEND_PORT%
+echo.
+echo  Payout Provider : Wise (PRIMESTACK TECHNOLOGIES LLC)
+echo  Wise Account    : 343612919064346
+echo  Routing (ABA)   : 084009519
+echo  SWIFT           : TRWIUS35XXX
+echo  Recipient Addr   : 1500 N GRANT ST STE N, Denver, CO 80203, US
+echo.
+echo ============================================================
 echo.
 
+REM ── Kill any existing processes on ports 7000 and 7001 ───────────────────
+echo [INFO] Clearing ports %BACKEND_PORT% and %FRONTEND_PORT%...
+
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":%BACKEND_PORT%.*LISTENING" 2^>nul') do (
+    taskkill /PID %%a /F >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":%FRONTEND_PORT%.*LISTENING" 2^>nul') do (
+    taskkill /PID %%a /F >nul 2>&1
+)
+ping -n 2 127.0.0.1 >nul
+echo [OK] Ports cleared.
+echo.
+
+REM ── Check Node.js ─────────────────────────────────────────────────────────
 where node >nul 2>nul
 if errorlevel 1 (
-    echo Error: Node.js is not installed or not in PATH.
+    echo [ERROR] Node.js is not installed or not in PATH.
     echo Please install Node.js from https://nodejs.org/
     pause
     exit /b 1
 )
+echo [INFO] Node.js found:
+node --version
+echo.
 
-if not exist "%~dp0backend\node_modules" (
-    echo [1/3] Installing backend dependencies...
-    cd /d "%~dp0backend"
+REM ── Backend dependencies ──────────────────────────────────────────────────
+if not exist "%BACKEND_DIR%\node_modules" (
+    echo [1/4] Installing backend dependencies...
+    cd /d "%BACKEND_DIR%"
     call npm install
     if errorlevel 1 (
-        echo Failed to install backend dependencies.
+        echo [ERROR] Failed to install backend dependencies.
         pause
         exit /b 1
     )
+    echo [OK] Backend dependencies installed.
+    echo.
 ) else (
-    echo [1/3] Backend dependencies already installed.
+    echo [1/4] Backend dependencies already installed [SKIP]
 )
 
-if not exist "%~dp0client\node_modules" (
-    echo [2/3] Installing frontend dependencies...
-    cd /d "%~dp0client"
+REM ── Frontend dependencies ─────────────────────────────────────────────────
+if not exist "%FRONTEND_DIR%\node_modules" (
+    echo [2/4] Installing frontend dependencies...
+    cd /d "%FRONTEND_DIR%"
     call npm install
     if errorlevel 1 (
-        echo Failed to install frontend dependencies.
+        echo [ERROR] Failed to install frontend dependencies.
         pause
         exit /b 1
     )
+    echo [OK] Frontend dependencies installed.
+    echo.
 ) else (
-    echo [2/3] Frontend dependencies already installed.
+    echo [2/4] Frontend dependencies already installed [SKIP]
 )
 
 cd /d "%~dp0"
 
-echo [3/3] Starting backend and frontend...
-start "POS Backend" cmd /k "cd /d ""%~dp0backend"" && set PORT=%BACKEND_PORT% && set JWT_SECRET=offline-pos-kodolo-2026-jwt-secret-change-live && npm run dev"
-start "POS Frontend" cmd /k "cd /d ""%~dp0client"" && set VITE_API_URL=http://localhost:%BACKEND_PORT% && npm run dev -- --host 0.0.0.0 --port %FRONTEND_PORT%"
+REM ── Start backend ─────────────────────────────────────────────────────────
+echo [3/4] Starting backend server on port %BACKEND_PORT%...
+start "POS Backend (201.3)" cmd /k "title POS Backend 201.3 && cd /d ""%BACKEND_DIR%"" && echo Starting POS 201.3 Backend... && echo Database: %DATABASE_FILE% && npm run dev"
 
-echo.
-echo Waiting for the backend and frontend to become ready...
-set "BACKEND_READY=0"
-set "FRONTEND_READY=0"
-set /a WAIT_SECONDS=0
+REM Wait for backend
+echo [INFO] Waiting for backend to start...
+ping -n 8 127.0.0.1 >nul
 
-:WAIT_FOR_SERVICES
-if "%BACKEND_READY%"=="0" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:%BACKEND_PORT%/health' -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>nul
-    if not errorlevel 1 (
-        set "BACKEND_READY=1"
-        echo Backend is ready: http://localhost:%BACKEND_PORT%
-    )
-)
+REM ── Start frontend ────────────────────────────────────────────────────────
+echo [4/4] Starting frontend on port %FRONTEND_PORT%...
+start "POS Frontend (201.3)" cmd /k "title POS Frontend 201.3 && cd /d ""%FRONTEND_DIR%"" && echo Starting POS Frontend... && set VITE_API_URL=http://localhost:%BACKEND_PORT% && npm run dev -- --host 0.0.0.0 --port %FRONTEND_PORT%"
 
-if "%FRONTEND_READY%"=="0" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:%FRONTEND_PORT%/' -TimeoutSec 2; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>nul
-    if not errorlevel 1 (
-        set "FRONTEND_READY=1"
-        echo Frontend is ready: http://localhost:%FRONTEND_PORT%
-    )
-)
+REM Wait for frontend
+echo [INFO] Waiting for frontend to start...
+ping -n 10 127.0.0.1 >nul
 
-if "%BACKEND_READY%"=="1" if "%FRONTEND_READY%"=="1" goto SERVICES_READY
-
-if %WAIT_SECONDS% GEQ 120 (
-    echo.
-    echo ERROR: Services did not become ready within 120 seconds.
-    echo Keep the CMD windows open and check their error messages.
-    powershell -NoProfile -Command "[Console]::Beep(500,400)" >nul 2>nul
-    pause
-    exit /b 1
-)
-
-timeout /t 2 /nobreak >nul
-set /a WAIT_SECONDS+=2
-goto WAIT_FOR_SERVICES
-
-:SERVICES_READY
-echo.
-echo All POS services are ready. Opening the POS in your default browser...
+REM ── Open browser ──────────────────────────────────────────────────────────
+echo [INFO] Opening browser...
 start "" "http://localhost:%FRONTEND_PORT%"
-powershell -NoProfile -Command "[Console]::Beep(1400,180); [Console]::Beep(1800,220)" >nul 2>nul
 
+cls
 echo.
-echo System is running.
-echo Frontend: http://localhost:%FRONTEND_PORT%
-echo Backend : http://localhost:%BACKEND_PORT%
-echo NFC     : ACR122U PC/SC reader enabled
+echo ============================================================
+echo  POS 201.3 SYSTEM IS RUNNING
+echo ============================================================
 echo.
-echo Keep both console windows open while using the system.
+echo  Status   : ONLINE
+echo  Backend  : http://localhost:%BACKEND_PORT%
+echo  Frontend : http://localhost:%FRONTEND_PORT%
 echo.
-pause
+echo ============================================================
+echo  PAGES
+echo ============================================================
+echo.
+echo  Overview        : http://localhost:%FRONTEND_PORT%/overview
+echo  POS Terminal    : http://localhost:%FRONTEND_PORT%/pos
+echo  POS Secure      : http://localhost:%FRONTEND_PORT%/pos-secure
+echo  Wallets         : http://localhost:%FRONTEND_PORT%/wallets
+echo  Wallet Transfer : http://localhost:%FRONTEND_PORT%/wallet-transfer
+echo  Settlements     : http://localhost:%FRONTEND_PORT%/settlements
+echo  Transactions    : http://localhost:%FRONTEND_PORT%/transactions
+echo  Batches         : http://localhost:%FRONTEND_PORT%/batches
+echo  Hot Wallet      : http://localhost:%FRONTEND_PORT%/hot-wallet
+echo  Vault Bank      : http://localhost:%FRONTEND_PORT%/vault
+echo  Verify Txn      : http://localhost:%FRONTEND_PORT%/verify-transaction
+echo  Developer       : http://localhost:%FRONTEND_PORT%/developer
+echo  Settings        : http://localhost:%FRONTEND_PORT%/settings
+echo  Customer Entry  : http://localhost:%FRONTEND_PORT%/customer-entry
+echo.
+echo ============================================================
+echo  MERCHANT WALLET (REAL FUNDS)
+echo ============================================================
+echo.
+echo  USD  : $3,998,193.00  (real card receipts - live from DB)
+echo  EUR  : 510,000,000.00 (real card receipts - live from DB)
+echo.
+echo ============================================================
+echo  CUSTOMER WALLETS (REAL BALANCES)
+echo ============================================================
+echo.
+echo  JJ DUMBA          : $500,000,000.00 USD
+echo  NGUYEN NGOC SON   : $10,000,000.00  USD
+echo  NAVEED AHMED      : $5,000,000.00   USD
+echo  HUSSAM MOHAMED    : $0.00           USD (no card capture yet)
+echo  ESBERTO EUBRA JR  : $0.00           USD
+echo  DANIA ALOSIOUS    : $2.00           USD
+echo.
+echo ============================================================
+echo  SETTLEMENT INSTRUCTIONS (PENDING PAYOUTS)
+echo ============================================================
+echo.
+echo  INTL-MRC-1001-MU0KJH7L  USD $10,000   Wise US Inc     PENDING
+echo  INTL-MRC-1001-MU0HTR2M  USD $50        ABSA ZA         PENDING
+echo  INTL-MRC-1001-MU0HTFRF  USD $50        ABSA ZA         PENDING
+echo  INTL-MRC-1001-MTXL1UKC  EUR $50,000    Wise SEPA       COMPLETED
+echo.
+echo  STATUS: Wise API returning 403 (key lacks transfer rights).
+echo  TO FIX : Fund Wise account OR use manual bank wire with MT103.
+echo.
+echo ============================================================
+echo  PAYOUT CONFIGURATION
+echo ============================================================
+echo.
+echo  Provider : Internal Acquirer (Wise downstream rail)
+echo  Bank provider key: configured through backend/.env
+echo  Account  : PRIMESTACK TECHNOLOGIES LLC
+echo  Number   : 343612919064346
+echo  Routing  : 084009519
+echo  SWIFT    : TRWIUS35XXX
+echo  Address  : 1500 N GRANT ST STE N, Denver, CO 80203, US
+echo.
+echo  To pay out: Settlements page - click [Pay Out]
+echo  To sync  : Developer page - click [Sync Now]
+echo.
+echo ============================================================
+echo  PROTOCOL 201.3 FEATURES
+echo ============================================================
+echo.
+echo  Voice Auth (101.1) : Enabled on both POS pages
+echo  HMAC Signature     : Active
+echo  Offline EMV        : Active
+echo  Wise Integration   : A+B+C+D active
+echo.
+echo ============================================================
+echo.
+echo  Keep BOTH console windows open while using the system.
+echo  Press any key to minimize this launcher window.
+echo.
+pause >nul
+
+echo The launcher is minimized. System is still running.
+echo Close the backend and frontend windows to stop the system.

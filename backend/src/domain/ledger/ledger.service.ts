@@ -1,83 +1,22 @@
-export type TransactionState = 'PENDING' | 'AUTHORIZED' | 'CAPTURED' | 'SETTLED' | 'REVERSED' | 'FAILED';
+import { db } from '../../config/db';
+import { v4 as uuidv4 } from 'uuid';
 
-export type EntryType = 'credit' | 'debit';
+export type TransactionState = 'PENDING' | 'AUTHORIZED' | 'CAPTURED' | 'SETTLED' | 'REVERSED' | 'FAILED';
 
 export interface LedgerEntry {
   id: string;
   transactionId: string;
-  type: EntryType;
+  merchantId?: string;
+  type: 'credit' | 'debit';
   amount: number;
-  amountMinor: number;
   currency: string;
   status: TransactionState;
+  sourceType?: 'bank' | 'card' | 'crypto' | 'pos' | 'manual';
+  sourceReference?: string;
+  sourceNetwork?: string;
+  reference?: string;
   description: string;
   createdAt: string;
-  fxRateToFiat?: number;
-  fiatCurrency?: string;
-  walletRef?: string;
-}
-
-export interface FiatLedgerView {
-  amountMinor: number;
-  amountFloat: number;
-  currency: string;
-  entryCount: number;
-  breakdown: { currency: string; originalMinor: number; convertedMinor: number; entries: number }[];
-}
-
-const FIXED_SCALE = 8;
-const MINOR_UNIT = 100;
-
-function padScale(n: number, scale: number = FIXED_SCALE): bigint {
-  const s = Number(n).toFixed(scale);
-  const stripped = s.replace('.', '');
-  return BigInt(stripped.replace(/^(-?)0+(?!$)/, '$1') || '0');
-}
-
-function unpadScale(b: bigint, scale: number = FIXED_SCALE, asMinor: boolean = false): number {
-  const divisor = asMinor ? BigInt(Math.pow(10, scale - 2)) : BigInt(Math.pow(10, scale));
-  const sign = b < 0n ? '-' : '';
-  const abs = b < 0n ? -b : b;
-  const whole = abs / divisor;
-  const frac = abs % divisor;
-  const fracStr = frac.toString().padStart(scale, '0').slice(0, asMinor ? 2 : scale);
-  const result = Number(`${sign}${whole}.${fracStr}`);
-  return asMinor ? Math.round(result) : result;
-}
-
-const BASE_FX_RATES: Record<string, Record<string, number>> = {
-  USD: { USD: 1, AED: 0.272294, EUR: 1.0892, GBP: 1.2714, SAR: 0.266657, INR: 0.012003, JPY: 0.006552 },
-  AED: { AED: 1, USD: 3.6725, EUR: 3.9982, GBP: 4.6681, SAR: 0.9793, INR: 0.04407, JPY: 0.02405 },
-  EUR: { EUR: 1, USD: 0.9182, AED: 0.2501, GBP: 1.1669, SAR: 0.2447, INR: 0.01102, JPY: 0.00601 },
-  GBP: { GBP: 1, USD: 0.7865, AED: 0.2142, EUR: 0.8569, SAR: 0.2097, INR: 0.00944, JPY: 0.00515 },
-  SAR: { SAR: 1, USD: 3.7501, AED: 1.0211, EUR: 4.0864, GBP: 4.7684, INR: 0.0450, JPY: 0.02457 },
-  INR: { INR: 1, USD: 83.31, AED: 22.69, EUR: 90.74, GBP: 105.93, SAR: 22.22, JPY: 0.546 },
-  JPY: { JPY: 1, USD: 152.62, AED: 41.57, EUR: 166.39, GBP: 194.05, SAR: 40.69, INR: 1.830 },
-};
-
-export function getFxRate(sourceCurrency: string, targetFiatCurrency: string): number {
-  const src = String(sourceCurrency || 'USD').toUpperCase();
-  const tgt = String(targetFiatCurrency || 'USD').toUpperCase();
-  if (src === tgt) return 1;
-  const direct = BASE_FX_RATES[src]?.[tgt];
-  if (direct && isFinite(direct) && direct > 0) return direct;
-  const viaUsdSrc = BASE_FX_RATES[src]?.['USD'];
-  const viaUsdTgt = BASE_FX_RATES[tgt]?.['USD'];
-  if (viaUsdSrc && viaUsdTgt && viaUsdTgt > 0) {
-    const derived = viaUsdSrc / viaUsdTgt;
-    if (isFinite(derived) && derived > 0) return derived;
-  }
-  const usdToTgt = BASE_FX_RATES['USD']?.[tgt];
-  if (usdToTgt && isFinite(usdToTgt) && usdToTgt > 0) return usdToTgt;
-  console.warn(`[FX] Missing rate ${src}->${tgt}; falling back to 1.0`);
-  return 1;
-}
-
-export function setFxRateOverride(sourceCurrency: string, targetFiatCurrency: string, rate: number): void {
-  const src = String(sourceCurrency || 'USD').toUpperCase();
-  const tgt = String(targetFiatCurrency || 'USD').toUpperCase();
-  if (!BASE_FX_RATES[src]) BASE_FX_RATES[src] = {};
-  BASE_FX_RATES[src][tgt] = Number(rate);
 }
 
 const allowedTransitions: Record<TransactionState, TransactionState[]> = {
@@ -90,146 +29,534 @@ const allowedTransitions: Record<TransactionState, TransactionState[]> = {
 };
 
 export function validateTransition(current: TransactionState, next: TransactionState): void {
-  if (current === next) return;
+  if (current === next) {
+    return;
+  }
+
   if (!allowedTransitions[current]?.includes(next)) {
     throw new Error(`Invalid transition from ${current} to ${next}`);
   }
 }
 
-export interface CreateLedgerEntryOpts {
-  fxRateToFiat?: number;
-  fiatCurrency?: string;
-  walletRef?: string;
-}
-
 export function createLedgerEntry(
-  transactionId: string,
-  type: EntryType,
-  amount: number,
-  currency: string,
-  status: TransactionState,
+  transactionId: string, 
+  type: 'credit' | 'debit', 
+  amount: number, 
+  currency: string, 
+  status: TransactionState, 
   description: string,
-  opts?: CreateLedgerEntryOpts
+  merchantId?: string,
+  sourceType?: 'bank' | 'card' | 'crypto' | 'pos' | 'manual',
+  sourceReference?: string,
+  sourceNetwork?: string,
+  reference?: string
 ): LedgerEntry {
-  const fiatCcy = String(opts?.fiatCurrency || 'USD').toUpperCase();
-  const ccy = String(currency || 'USD').toUpperCase();
-  const rate = opts?.fxRateToFiat && isFinite(Number(opts.fxRateToFiat)) && Number(opts.fxRateToFiat) > 0
-    ? Number(opts.fxRateToFiat)
-    : getFxRate(ccy, fiatCcy);
-  const amtNum = Number(amount || 0);
   return {
     id: `ledger_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     transactionId,
+    merchantId,
     type,
-    amount: amtNum,
-    amountMinor: Math.round(amtNum * MINOR_UNIT),
-    currency: ccy,
+    amount,
+    currency,
     status,
+    sourceType,
+    sourceReference,
+    sourceNetwork,
+    reference,
     description,
     createdAt: new Date().toISOString(),
-    fxRateToFiat: rate,
-    fiatCurrency: fiatCcy,
-    walletRef: opts?.walletRef || undefined,
   };
 }
 
-export async function ensureLedgerFiatSchema(query: (text: string, params?: any[]) => Promise<any>): Promise<void> {
-  try { await query(`ALTER TABLE ledger_entries ADD COLUMN amount_minor INTEGER`); } catch { /* ignore */ }
-  try { await query(`ALTER TABLE ledger_entries ADD COLUMN fx_rate_to_fiat REAL`); } catch { /* ignore */ }
-  try { await query(`ALTER TABLE ledger_entries ADD COLUMN fiat_currency TEXT DEFAULT 'USD'`); } catch { /* ignore */ }
-  try { await query(`ALTER TABLE ledger_entries ADD COLUMN wallet_ref TEXT`); } catch { /* ignore */ }
-}
-
 export async function persistLedgerEntry(
-  entry: LedgerEntry,
+  entry: LedgerEntry, 
   query: (text: string, params?: any[]) => Promise<any> = async () => { throw new Error('No query function provided'); }
-): Promise<void> {
-  await ensureLedgerFiatSchema(query);
+) {
   await query(
-    `INSERT INTO ledger_entries
-       (id, transaction_id, type, amount, amount_minor, currency, status, description, created_at, fx_rate_to_fiat, fiat_currency, wallet_ref)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ledger_entries (id, transaction_id, merchant_id, type, amount, currency, status, source_type, source_reference, source_network, reference, description, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      entry.id,
-      entry.transactionId,
-      entry.type,
-      entry.amount,
-      entry.amountMinor ?? Math.round(Number(entry.amount || 0) * MINOR_UNIT),
-      entry.currency,
-      entry.status,
-      entry.description,
-      entry.createdAt,
-      entry.fxRateToFiat ?? null,
-      entry.fiatCurrency ?? 'USD',
-      entry.walletRef ?? null,
+      entry.id, 
+      entry.transactionId, 
+      entry.merchantId || null,
+      entry.type, 
+      entry.amount, 
+      entry.currency, 
+      entry.status, 
+      entry.sourceType || null,
+      entry.sourceReference || null,
+      entry.sourceNetwork || null,
+      entry.reference || null,
+      entry.description, 
+      entry.createdAt
     ]
   );
 }
 
-export function convertLedgerToFiatBalance(entries: LedgerEntry[], fiatCurrency: string = 'USD'): FiatLedgerView {
-  const tgt = String(fiatCurrency || 'USD').toUpperCase();
-  let totalMinor = 0n;
-  const bucket = new Map<string, { originalMinor: number; convertedMinor: number; entries: number }>();
+/**
+ * 🏦 UPGRADED LEDGER SERVICE
+ * Manages merchant settlement balances and fund movements
+ */
+export class LedgerService {
+  
+  /**
+   * Get merchant settled balance (sum of all SETTLED ledger entries)
+   */
+  async getSettledBalance(merchantId: string, currency: string = 'USD'): Promise<number> {
+    const result = await db.query(`
+      SELECT COALESCE(SUM(
+        CASE 
+          WHEN type = 'credit' THEN amount
+          WHEN type = 'debit' THEN -amount
+          ELSE 0
+        END
+      ), 0) as balance
+      FROM ledger_entries
+      WHERE merchant_id = ?
+        AND currency = ?
+        AND status = 'SETTLED'
+    `, [merchantId, currency]);
 
-  for (const entry of entries) {
-    const src = String(entry.currency || 'USD').toUpperCase();
-    const signedMinor = BigInt(Math.round(Number(entry.amountMinor ?? (Number(entry.amount || 0) * MINOR_UNIT))))
-      * (entry.type === 'credit' ? 1n : -1n);
+    return Number(result.rows[0]?.balance || 0);
+  }
+  
+  /**
+   * Get all ledger entries for a merchant
+   */
+  async getMerchantLedgerEntries(
+    merchantId: string, 
+    currency?: string,
+    limit: number = 100
+  ): Promise<LedgerEntry[]> {
+    let sql = `
+      SELECT * FROM ledger_entries
+      WHERE merchant_id = ?
+    `;
+    const params: any[] = [merchantId];
+    
+    if (currency) {
+      sql += ` AND currency = ?`;
+      params.push(currency);
+    }
+    
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit);
+    
+    const result = await db.query(sql, params);
+    return result.rows.map((row: any) => ({
+      id: row.id,
+      transactionId: row.transaction_id,
+      merchantId: row.merchant_id,
+      type: row.type,
+      amount: Number(row.amount),
+      currency: row.currency,
+      status: row.status,
+      sourceType: row.source_type,
+      sourceReference: row.source_reference,
+      sourceNetwork: row.source_network,
+      reference: row.reference,
+      description: row.description,
+      createdAt: row.created_at
+    }));
+  }
+  
+  /**
+   * Credit merchant balance (on settlement from POS/batch)
+   */
+  async creditMerchantBalance(
+    merchantId: string,
+    amount: number,
+    currency: string,
+    sourceType: 'bank' | 'card' | 'crypto' | 'pos' | 'manual',
+    sourceReference: string,
+    description: string,
+    sourceNetwork?: string
+  ): Promise<LedgerEntry> {
+    
+    const entry = createLedgerEntry(
+      uuidv4(), // transactionId
+      'credit',
+      amount,
+      currency,
+      'SETTLED', // Immediately settled
+      description,
+      merchantId,
+      sourceType,
+      sourceReference,
+      sourceNetwork,
+      `CREDIT-${Date.now()}`
+    );
+    
+    await persistLedgerEntry(entry, db.query.bind(db));
+    
+    console.log(`[LedgerService] ✅ Credited ${merchantId}: +$${amount} ${currency} (${sourceType}: ${sourceReference})`);
+    
+    return entry;
+  }
+  
+  /**
+   * Debit merchant balance (on payout)
+   */
+  async debitMerchantBalance(
+    merchantId: string,
+    amount: number,
+    currency: string,
+    reference: string,
+    description: string
+  ): Promise<LedgerEntry> {
+    
+    // Check balance first
+    const balance = await this.getSettledBalance(merchantId, currency);
+    if (balance < amount) {
+      throw new Error(`Insufficient balance: merchant ${merchantId} has $${balance} ${currency}, needs $${amount}`);
+    }
+    
+    const entry = createLedgerEntry(
+      uuidv4(), // transactionId
+      'debit',
+      amount,
+      currency,
+      'SETTLED',
+      description,
+      merchantId,
+      'manual', // Debit is manual (admin action)
+      reference,
+      undefined,
+      reference
+    );
+    
+    await persistLedgerEntry(entry, db.query.bind(db));
+    
+    console.log(`[LedgerService] ✅ Debited ${merchantId}: -$${amount} ${currency} (${reference})`);
+    
+    return entry;
+  }
+  
+  /**
+   * Authorize funds from external source (mark as authorised pending settlement)
+   */
+  async authorizeFromBank(
+    ledgerId: string,
+    bankRef: string,
+    amount: number,
+    currency: string
+  ): Promise<void> {
+    const result = await db.query(`
+      SELECT * FROM ledger_entries WHERE id = ?
+    `, [ledgerId]);
+    
+    if (!result.rows[0]) {
+      throw new Error('Ledger entry not found');
+    }
+    
+    const ledger = result.rows[0];
+    
+    if (ledger.status === 'SETTLED') {
+      throw new Error('Already settled');
+    }
+    
+    if (Number(ledger.amount) !== amount || ledger.currency !== currency) {
+      throw new Error(`Amount/currency mismatch: expected $${ledger.amount} ${ledger.currency}, got $${amount} ${currency}`);
+    }
+    
+    await db.query(`
+      UPDATE ledger_entries
+      SET status = 'AUTHORIZED',
+          source_type = 'bank',
+          source_reference = ?
+      WHERE id = ?
+    `, [bankRef, ledgerId]);
+    
+    console.log(`[LedgerService] ✅ Authorized from bank: ${ledgerId} - ${bankRef}`);
+  }
+  
+  /**
+   * Authorize funds from card transaction
+   */
+  async authorizeFromCard(
+    ledgerId: string,
+    rrn: string,
+    authCode: string,
+    amount: number,
+    currency: string
+  ): Promise<void> {
+    const result = await db.query(`
+      SELECT * FROM ledger_entries WHERE id = ?
+    `, [ledgerId]);
+    
+    if (!result.rows[0]) {
+      throw new Error('Ledger entry not found');
+    }
+    
+    const ledger = result.rows[0];
+    
+    if (ledger.status === 'SETTLED') {
+      throw new Error('Already settled');
+    }
+    
+    if (Number(ledger.amount) !== amount || ledger.currency !== currency) {
+      throw new Error('Amount/currency mismatch');
+    }
+    
+    await db.query(`
+      UPDATE ledger_entries
+      SET status = 'AUTHORIZED',
+          source_type = 'card',
+          source_reference = ?
+      WHERE id = ?
+    `, [`${rrn}|${authCode}`, ledgerId]);
+    
+    console.log(`[LedgerService] ✅ Authorized from card: ${ledgerId} - RRN: ${rrn}, Auth: ${authCode}`);
+  }
+  
+  /**
+   * Authorize funds from crypto transaction
+   */
+  async authorizeFromCrypto(
+    ledgerId: string,
+    txId: string,
+    network: string,
+    amount: number,
+    currency: string
+  ): Promise<void> {
+    const result = await db.query(`
+      SELECT * FROM ledger_entries WHERE id = ?
+    `, [ledgerId]);
+    
+    if (!result.rows[0]) {
+      throw new Error('Ledger entry not found');
+    }
+    
+    const ledger = result.rows[0];
+    
+    if (ledger.status === 'SETTLED') {
+      throw new Error('Already settled');
+    }
+    
+    if (Number(ledger.amount) !== amount || ledger.currency !== currency) {
+      throw new Error('Amount/currency mismatch');
+    }
+    
+    await db.query(`
+      UPDATE ledger_entries
+      SET status = 'AUTHORIZED',
+          source_type = 'crypto',
+          source_reference = ?,
+          source_network = ?
+      WHERE id = ?
+    `, [txId, network, ledgerId]);
+    
+    console.log(`[LedgerService] ✅ Authorized from crypto: ${ledgerId} - TX: ${txId} (${network})`);
+  }
+}
 
-    let rateToTgt: number;
-    if (entry.fiatCurrency && entry.fxRateToFiat && isFinite(Number(entry.fxRateToFiat)) && entry.fxRateToFiat > 0) {
-      const entryFiat = String(entry.fiatCurrency).toUpperCase();
-      if (entryFiat === tgt) {
-        rateToTgt = Number(entry.fxRateToFiat);
-      } else {
-        const cross = getFxRate(entryFiat, tgt);
-        rateToTgt = Number(entry.fxRateToFiat) * cross;
-      }
-    } else {
-      rateToTgt = getFxRate(src, tgt);
+export interface BalancedLedgerEntry {
+  account_code: string;
+  direction: 'debit' | 'credit';
+  amount: number;
+  currency: string;
+  description?: string;
+  merchant_id?: string;
+  source_type?: 'bank' | 'card' | 'crypto' | 'pos' | 'manual';
+  source_reference?: string;
+  source_network?: string;
+}
+
+export interface BalancedTransactionResult {
+  ledger_transaction_id: string;
+  entry_ids: string[];
+  type: string;
+  status: TransactionState;
+  amount: number;
+  currency: string;
+  reference?: string;
+}
+
+const allowedLedgerTxStatuses: Record<string, TransactionState[]> = {
+  PENDING: ['AUTHORIZED', 'SETTLED', 'PAID_OUT' as any, 'FAILED'],
+  AUTHORIZED: ['SETTLED', 'PAID_OUT' as any, 'REVERSED', 'FAILED'],
+  SETTLED: ['PAID_OUT' as any, 'REVERSED'],
+  PAID_OUT: ['REVERSED'],
+  REVERSED: [],
+  FAILED: [],
+};
+
+export class BalancedLedgerEngine {
+  async createBalancedTransaction(params: {
+    type: 'pos_sale' | 'card_auth' | 'card_capture' | 'chargeback' | 'payout' | 'settlement_sweep' | 'fee' | 'refund' | 'internal_transfer' | 'vault_reserve' | 'vault_release';
+    status?: TransactionState;
+    amount: number;
+    currency: string;
+    reference?: string;
+    merchant_id?: string;
+    linked_payout_id?: string;
+    linked_batch_id?: string;
+    metadata?: Record<string, any>;
+    entries: BalancedLedgerEntry[];
+  }): Promise<BalancedTransactionResult> {
+    const { type, status = 'PENDING', amount, currency, reference, merchant_id, linked_payout_id, linked_batch_id, metadata, entries } = params;
+
+    if (!entries || entries.length < 2) {
+      throw new Error('Balanced transaction requires at least 2 entries');
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Ledger transaction amount must be a positive number');
+    }
+    if (!/^[A-Z]{3}$/.test(String(currency || '').toUpperCase())) {
+      throw new Error('Ledger transaction currency must be a 3-letter ISO code');
     }
 
-    const rateScaled = padScale(rateToTgt, FIXED_SCALE);
-    const convertedScaled = signedMinor * rateScaled;
-    const convertedMinor = unpadScale(convertedScaled, FIXED_SCALE, true);
+    const debits = entries.filter(e => e.direction === 'debit').reduce((s, e) => s + Number(e.amount || 0), 0);
+    const credits = entries.filter(e => e.direction === 'credit').reduce((s, e) => s + Number(e.amount || 0), 0);
+    const eps = 0.0001;
+    if (Math.abs(debits - credits) > eps) {
+      throw new Error(`Ledger transaction not balanced: debits=${debits}, credits=${credits}, delta=${debits - credits}`);
+    }
+    if (Math.abs(debits - amount) > eps) {
+      throw new Error(`Ledger transaction amount mismatch: declared=${amount}, entries=${debits}`);
+    }
+    if (entries.some((entry) => String(entry.currency || currency).toUpperCase() !== String(currency).toUpperCase())) {
+      throw new Error('All ledger entries must use the transaction currency');
+    }
 
-    totalMinor += BigInt(convertedMinor);
+    const ledgerTxId = `ledgertx_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const now = new Date().toISOString();
+    const entryIds: string[] = [];
 
-    const b = bucket.get(src) || { originalMinor: 0, convertedMinor: 0, entries: 0 };
-    b.originalMinor += Number(signedMinor);
-    b.convertedMinor += Number(convertedMinor);
-    b.entries += 1;
-    bucket.set(src, b);
+    await db.query(`BEGIN IMMEDIATE`);
+    try {
+      await db.query(
+        `INSERT INTO ledger_transactions
+         (id, type, status, amount, currency, reference, merchant_id, linked_payout_id, linked_batch_id, metadata, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          ledgerTxId, type, status, amount, currency, reference || null,
+          merchant_id || null, linked_payout_id || null, linked_batch_id || null,
+          metadata ? JSON.stringify(metadata) : null, now, now,
+        ]
+      );
+
+      for (const entry of entries) {
+        const entryId = `ledger_${Date.now()}_${Math.random().toString(36).slice(2, 10)}_${Math.random().toString(36).slice(2, 6)}`;
+        entryIds.push(entryId);
+        const ccy = entry.currency || currency;
+        await db.query(
+          `INSERT INTO ledger_entries
+           (id, transaction_id, ledger_transaction_id, account_code, merchant_id, type, amount, currency, status,
+            source_type, source_reference, source_network, reference, description, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [
+            entryId,
+            ledgerTxId,
+            ledgerTxId,
+            entry.account_code,
+            entry.merchant_id || merchant_id || null,
+            entry.direction,
+            Number(entry.amount),
+            ccy,
+            status,
+            entry.source_type || null,
+            entry.source_reference || null,
+            entry.source_network || null,
+            reference || null,
+            entry.description || `${entry.direction} ${entry.account_code}`,
+            now,
+          ]
+        );
+      }
+
+      await db.query(`COMMIT`);
+
+      return {
+        ledger_transaction_id: ledgerTxId,
+        entry_ids: entryIds,
+        type,
+        status,
+        amount,
+        currency,
+        reference,
+      };
+    } catch (e) {
+      try { await db.query(`ROLLBACK`); } catch (_) { /* ignore */ }
+      throw e;
+    }
   }
 
-  const breakdown: FiatLedgerView['breakdown'] = [];
-  bucket.forEach((v, k) => {
-    breakdown.push({
-      currency: k,
-      originalMinor: v.originalMinor,
-      convertedMinor: v.convertedMinor,
-      entries: v.entries,
-    });
-  });
-  breakdown.sort((a, b) => Math.abs(b.convertedMinor) - Math.abs(a.convertedMinor));
+  async transitionLedgerTransaction(
+    ledgerTxId: string,
+    nextStatus: TransactionState
+  ): Promise<void> {
+    const sel = await db.query(
+      `SELECT type, status FROM ledger_transactions WHERE id = ? LIMIT 1`,
+      [ledgerTxId]
+    );
+    if (!sel.rows?.[0]) throw new Error(`Ledger transaction ${ledgerTxId} not found`);
+    const current = sel.rows[0].status as TransactionState;
+    if (current === nextStatus) return;
+    const allowed = (allowedLedgerTxStatuses[current as string] || []) as string[];
+    if (!allowed.includes(nextStatus as string)) {
+      throw new Error(`Invalid ledger_transaction transition: ${current} → ${nextStatus}`);
+    }
+    const now = new Date().toISOString();
+    await db.query(
+      `UPDATE ledger_transactions SET status = ?, updated_at = ? WHERE id = ?`,
+      [nextStatus, now, ledgerTxId]
+    );
+    await db.query(
+      `UPDATE ledger_entries SET status = ?, reference = COALESCE(reference, ?) WHERE ledger_transaction_id = ?`,
+      [nextStatus, ledgerTxId, ledgerTxId]
+    );
+  }
 
-  const totalFloat = Number(totalMinor) / MINOR_UNIT;
-  return {
-    amountMinor: Number(totalMinor),
-    amountFloat: totalFloat,
-    currency: tgt,
-    entryCount: entries.length,
-    breakdown,
-  };
+  async getAccountBalance(account_code: string, currency?: string, statuses: TransactionState[] = ['SETTLED', 'AUTHORIZED', 'CAPTURED', 'PAID_OUT' as any]): Promise<number> {
+    const placeholders = statuses.map(() => '?').join(',');
+    const params: any[] = [account_code, ...statuses];
+    let ccyFilter = '';
+    if (currency) {
+      ccyFilter = ' AND currency = ?';
+      params.push(currency);
+    }
+    const r = await db.query(
+      `SELECT COALESCE(SUM(CASE WHEN type = 'credit' THEN amount WHEN type = 'debit' THEN -amount ELSE 0 END), 0) AS balance
+       FROM ledger_entries
+       WHERE account_code = ? AND status IN (${placeholders})${ccyFilter}`,
+      params
+    );
+    return Number(r.rows?.[0]?.balance || 0);
+  }
+
+  async resolveVaultAccountCode(vaultAccountId: string): Promise<string> {
+    const r = await db.query(
+      `SELECT account_code FROM account_codes WHERE vault_account_id = ? LIMIT 1`,
+      [vaultAccountId]
+    );
+    if (r.rows?.[0]?.account_code) return r.rows[0].account_code;
+    return `VAULT_${vaultAccountId}`;
+  }
+
+  async resolveMerchantWalletCode(merchantId: string, currency: string): Promise<string> {
+    const key = `${merchantId}_${currency}`;
+    const r = await db.query(
+      `SELECT account_code FROM account_codes
+       WHERE (merchant_id = ? AND (currency = ? OR currency IS NULL))
+          OR account_code = ?
+       LIMIT 1`,
+      [merchantId, currency, `MRC_${merchantId.replace(/[^A-Z0-9]/g, '')}_WALLET_${currency}`]
+    );
+    if (r.rows?.[0]?.account_code) return r.rows[0].account_code;
+    const generated = `MRC_${merchantId.replace(/[^A-Z0-9]/g, '')}_WALLET_${currency}`;
+    try {
+      await db.query(
+        `INSERT INTO account_codes (account_code, account_type, display_name, merchant_id, currency)
+         VALUES (?,?,?,?,?)`,
+        [generated, 'merchant', `Merchant ${merchantId} Wallet (${currency})`, merchantId, currency]
+      );
+    } catch (_) { /* ignore race */ }
+    return generated;
+  }
 }
 
-export function formatFiatMinor(amountMinor: number, currency: string = 'USD'): string {
-  const neg = amountMinor < 0;
-  const abs = Math.abs(amountMinor);
-  const whole = Math.floor(abs / MINOR_UNIT);
-  const frac = abs % MINOR_UNIT;
-  const fracStr = frac.toString().padStart(2, '0');
-  const symbolMap: Record<string, string> = { USD: '$', AED: 'د.إ', EUR: '€', GBP: '£', SAR: '﷼', INR: '₹', JPY: '¥' };
-  const sym = symbolMap[currency?.toUpperCase()] || '';
-  return `${neg ? '-' : ''}${sym}${whole.toLocaleString('en-US')}.${fracStr}`;
-}
+export const balancedLedgerEngine = new BalancedLedgerEngine();
+
+// Export singleton instance
+export const ledgerService = new LedgerService();

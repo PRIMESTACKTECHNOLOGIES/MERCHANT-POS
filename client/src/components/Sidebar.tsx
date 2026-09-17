@@ -126,7 +126,7 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
         
         <div className="sidebar-pos-button" style={{ padding: '16px' }}>
           <NavLink 
-            to="/pos-secure" 
+            to="/payment-processor" 
             className="flex items-center justify-center gap-3 w-full py-4 px-6 bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-2xl font-bold shadow-lg shadow-blue-500/30 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 border border-white/10"
             onClick={() => onClose?.()}
           >
@@ -134,8 +134,8 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
               <Icons.POS />
             </div>
             <div className="flex flex-col items-start">
-              <span className="text-sm leading-tight">OPEN POS</span>
-              <span className="text-[10px] opacity-70 font-medium">Protocol 201.3 Secure</span>
+              <span className="text-sm leading-tight">PAYMENT PROCESSOR</span>
+              <span className="text-[10px] opacity-70 font-medium">101.1 · 101.6 · 201.3 · Normal</span>
             </div>
           </NavLink>
         </div>
@@ -169,7 +169,10 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
           <Icons.HotWallet />
           Hot Wallet
         </NavLink>
-
+        <NavLink to="/vault" className={linkClass} onClick={() => onClose?.()}>
+          <Icons.Wallet />
+          Processor Vault
+        </NavLink>
         <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '8px 16px' }}></div>
 
         <NavLink to="/settings" className={linkClass}>

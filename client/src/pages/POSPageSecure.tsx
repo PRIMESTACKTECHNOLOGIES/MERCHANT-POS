@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  processSecurePayment,
+  chargePayment,
   fetchSettings,
   readAcr122uCard,
   getAcr122uStatus,
@@ -13,13 +13,7 @@ import {
   checkBackendHealth,
   type Customer,
 } from '../lib/api';
-import { 
-  generateHmacSignature, 
-  generateNonce, 
-  generateLocalTxnId, 
-  generateStan,
-  generateBatchId 
-} from '../lib/crypto';
+import { generateLocalTxnId, generateStan } from '../lib/crypto';
 import { processEMVOffline, syncEMVTransactions } from '../lib/emv/emv-pos-bridge';
 import { useToast } from '../components/ui/Toast';
 import { CURRENCIES, getCurrency, getTerminalCurrency, setTerminalCurrency } from '../lib/currencies';
@@ -31,6 +25,7 @@ interface TransactionRecord {
   cardLast4: string;
   entryMode: 'MANUAL' | 'NFC';
   status: 'PENDING' | 'SYNCED' | 'FAILED';
+  channel?: 'ONLINE' | 'OFFLINE';
   settlementCode?: string;
   timestamp: number;
   error?: string;
@@ -74,6 +69,9 @@ export const POSPageSecure = () => {
     expiry: "", 
     cvv: "" 
   });
+  const [voiceAuth, setVoiceAuth] = useState(false);
+  const [voiceAuthCode, setVoiceAuthCode] = useState("");
+  const [posProtocol, setPosProtocol] = useState<'NORMAL' | '101.1' | '101.6' | '201.3'>('NORMAL');
   
   const { showToast } = useToast();
 
@@ -289,6 +287,7 @@ export const POSPageSecure = () => {
     sep();
     line(`Txn ID: ${txn.localTxnId}`);
     line(`STAN: ${txn.stan}`);
+    line(`Channel: ${txn.channel || (txn.status === "SYNCED" ? "ONLINE" : "OFFLINE")}`);
     sep();
     line(`Card: **** **** **** ${txn.cardLast4}`);
     line(`Entry: ${entryMode}`);
@@ -395,8 +394,12 @@ export const POSPageSecure = () => {
       return false;
     }
     
-    if (cardData.cvv.length < 3) {
-      showToast('CVV must be at least 3 digits', 'error');
+    if (posProtocol !== '101.1' && cardData.cvv.length < 3) {
+      showToast(`CVV must be at least 3 digits for ${posProtocol === 'NORMAL' ? 'normal card transactions' : posProtocol}`, 'error');
+      return false;
+    }
+    if (posProtocol !== 'NORMAL' && !voiceAuthCode.trim()) {
+      showToast(`Protocol ${posProtocol} requires the customer-provided Authorization Code`, 'error');
       return false;
     }
     
@@ -459,7 +462,10 @@ export const POSPageSecure = () => {
         cleanPan,
         cleanPan.length > 0 ? '*'.repeat(Math.max(0, cleanPan.length - 4)) + cleanPan.slice(-4) : undefined,
         cardData.expiry,
-        cardData.cvv
+        cardData.cvv,
+        undefined,
+        posProtocol,
+        posProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined
       );
       await loadCustomerContext(selectedCustomerId);
       showToast(`Wallet credited. Auth ${result?.authCode || 'N/A'}`, 'success');
@@ -470,6 +476,8 @@ export const POSPageSecure = () => {
       setLoading(false);
       setAmount('0');
       setCardData({ pan: '', expiry: '', cvv: '' });
+      setVoiceAuth(false);
+      setVoiceAuthCode("");
     }
   };
 
@@ -491,9 +499,6 @@ export const POSPageSecure = () => {
       // Generate required IDs
       const localTxnId = generateLocalTxnId();
       const stan = generateStan();
-      const batchId = generateBatchId();
-      const nonce = generateNonce();
-      const timestamp = Date.now();
       const amountMinor = Math.round(amountVal * Math.pow(10, getCurrency(currency).decimals));
 
       // Create transaction record
@@ -507,75 +512,56 @@ export const POSPageSecure = () => {
         timestamp: Date.now()
       };
 
-      // Generate HMAC signature
-      const signature = await generateHmacSignature(
-        "201.3",
-        merchantConfig.merchantId,
-        merchantConfig.terminalId,
-        batchId,
-        timestamp,
-        nonce,
-        1, // transaction count
-        merchantConfig.secretKey
-      );
-
-      // Prepare payment data
-      const paymentData = {
-        protocolVersion: "201.3",
-        merchantId: merchantConfig.merchantId,
-        terminalId: merchantConfig.terminalId,
-        batchId,
-        timestamp,
-        nonce,
-        signature,
-        transactions: [{
-          localTxnId,
-          stan,
-          amountMinor,
-          currency: currency,
-          // PAN, expiry and CVV are NEVER sent to the server — PCI compliance
-          // They are only used locally by the EMV engine
-          pan: cardData.pan.replace(/\s/g, ''),
-          expiry: cardData.expiry,
-          cvv: cardData.cvv,
-          txnType: "SALE",
-          entryMode: cardEntryMode,
-          txnTimestamp: timestamp
-        }]
-      };
-
       // Decide whether to process online or offline
       if (isOnline && !forceOffline) {
-        // Send to backend
-        const result = await processSecurePayment(paymentData);
+        // Online card payments must go through the configured processor. The
+        // backend credits the internal vault only after processor approval.
+        const result = await chargePayment(
+          amountMinor,
+          currency,
+          merchantConfig.merchantId,
+          {
+            pan: cardData.pan.replace(/\s/g, ''),
+            expiry: cardData.expiry,
+            cvv: posProtocol === '101.1' ? undefined : cardData.cvv,
+            customerId: selectedCustomerId || undefined,
+            terminalId: merchantConfig.terminalId,
+            stan,
+            entryMode: posProtocol === '201.3' ? 'OFFLINE_201_3' : posProtocol === '101.1' ? 'VOICE_AUTH' : posProtocol === '101.6' ? '101.6' : cardEntryMode,
+            authCode: posProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined,
+            protocolVersion: posProtocol,
+          }
+        );
 
-        if (result.success) {
-          // Update transaction with settlement code
+        if (result.status === 'APPROVED' || result.success === true) {
+          transaction.channel = 'ONLINE';
           transaction.status = 'SYNCED';
-          transaction.settlementCode = result.settlementCode;
+          transaction.settlementCode = result.settlementId || result.paymentIntentId || result.authCode;
           showToast(
-            `Payment Approved! Settlement: ${result.settlementCode}`,
+            `Payment Approved! ${transaction.settlementCode || 'Processor confirmed'}`,
             'success'
           );
           setLastTransaction(transaction);
           setShowReceipt(true);
         } else {
           transaction.status = 'FAILED';
-          transaction.error = result.error || 'Payment failed';
+          transaction.channel = 'ONLINE';
+          transaction.error = result.error || result.reason || 'Payment failed';
           showToast(transaction.error || 'Payment failed', 'error');
         }
       } else {
         // PROCESS OFFLINE using real EMV engine
         const emvResult = await processEMVOffline(
-          { pan: cardData.pan.replace(/\s/g, ''), expiry: cardData.expiry, cvv: cardData.cvv },
+          { pan: cardData.pan.replace(/\s/g, ''), expiry: cardData.expiry, cvv: voiceAuth ? '' : cardData.cvv },
           amountVal,
           currency,
           merchantConfig.terminalId
         );
 
         if (emvResult.approved) {
+          transaction.channel = 'OFFLINE';
           transaction.status = 'PENDING';
-          transaction.settlementCode = emvResult.authCode || `TC-${emvResult.stan}`;
+          transaction.settlementCode = voiceAuthCode.trim();
           showToast(`Offline Approved — STAN: ${emvResult.stan}`, 'success');
           saveOfflinePinSale({
             merchantId: merchantConfig.merchantId,
@@ -589,7 +575,7 @@ export const POSPageSecure = () => {
             cardBrand: cardData.pan.startsWith('4') ? 'visa' : cardData.pan.startsWith('5') ? 'mastercard' : 'unknown',
             pinVerified: false,
             stan,
-            authCode: emvResult.authCode,
+            authCode: voiceAuthCode.trim(),
             emvData: {
               cryptogram: emvResult.cryptogram,
               atc: emvResult.atc,
@@ -602,8 +588,9 @@ export const POSPageSecure = () => {
           setLastTransaction(transaction);
           setShowReceipt(true);
         } else if (emvResult.requiresOnline) {
+          transaction.channel = 'OFFLINE';
           transaction.status = 'PENDING';
-          transaction.settlementCode = `ARQC-${emvResult.stan}`;
+          transaction.settlementCode = voiceAuthCode.trim();
           transaction.error = 'Requires online auth — will sync when connected';
           showToast('Queued for online auth', 'warning');
           saveOfflinePinSale({
@@ -618,7 +605,7 @@ export const POSPageSecure = () => {
             cardBrand: cardData.pan.startsWith('4') ? 'visa' : cardData.pan.startsWith('5') ? 'mastercard' : 'unknown',
             pinVerified: false,
             stan,
-            authCode: emvResult.authCode,
+            authCode: voiceAuthCode.trim(),
             emvData: {
               cryptogram: emvResult.cryptogram,
               atc: emvResult.atc,
@@ -663,6 +650,8 @@ export const POSPageSecure = () => {
       setLoading(false);
       setAmount("0");
       setCardData({ pan: "", expiry: "", cvv: "" });
+      setVoiceAuth(false);
+      setVoiceAuthCode("");
     }
   };
 
@@ -686,8 +675,8 @@ export const POSPageSecure = () => {
       {/* Header */}
       <div className="bg-blue-600 text-white p-4 flex justify-between items-center shadow-md">
         <div>
-          <h2 className="text-xl font-bold">POS Terminal (Secure)</h2>
-          <p className="text-xs opacity-80">Merchant: {merchantConfig.merchantId} | Terminal: {merchantConfig.terminalId}</p>
+          <h2 className="text-xl font-bold">Payment Processor</h2>
+          <p className="text-xs opacity-80">All live card payments are collected by this processor · {merchantConfig.merchantId} · {merchantConfig.terminalId}</p>
         </div>
         <div className="flex items-center gap-4">
           {/* Status and Toggle */}
@@ -717,6 +706,11 @@ export const POSPageSecure = () => {
             <span>{nfcStatus.loading ? 'Checking NFC...' : nfcStatus.enabled ? (nfcStatus.connected ? 'NFC Ready' : 'NFC Available') : 'NFC Disabled'}</span>
           </div>
         </div>
+      </div>
+
+      <div className="mx-6 mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        <strong>Processor-only live collection:</strong> online transactions are sent to the internal processor charge endpoint.
+        Offline mode is available only for approved offline workflows and does not represent a live collection.
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -857,7 +851,7 @@ export const POSPageSecure = () => {
             <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
               <h3 className="font-bold text-gray-800">Enter Card Details</h3>
               <button 
-                onClick={() => setShowCardForm(false)} 
+                onClick={() => { setShowCardForm(false); setVoiceAuth(false); setVoiceAuthCode(""); }}
                 className="text-gray-400 hover:text-gray-600"
               >
                 ✕
@@ -919,13 +913,61 @@ export const POSPageSecure = () => {
                   maxLength={19}
                 />
               </div>
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Expiry (MM/YY)
-                  </label>
-                  <input 
-                    type="text" 
+              {/* ── Protocol Selector: 101.1 | 101.6 | 201.3 ── */}
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Auth Protocol</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {([['NORMAL','💳','Normal'],['101.1','📞','Voice Auth'],['101.6','💳','EMV Chip'],['201.3','🔒','Offline Batch']] as const).map(([proto, icon, label]) => (
+                    <button
+                      key={proto}
+                      type="button"
+                      onClick={() => {
+                        setPosProtocol(proto);
+                        setVoiceAuth(proto === '101.1');
+                        if (proto !== '101.1') setVoiceAuthCode('');
+                        if (proto !== '101.6') setCardData(prev => ({...prev, cvv: ''}));
+                      }}
+                      className={`flex flex-col items-center gap-0.5 py-2 px-1 rounded-xl border-2 text-xs font-bold transition-all
+                        ${posProtocol === proto
+                          ? proto === '201.3' ? 'border-purple-500 bg-purple-50 text-purple-800'
+                          : proto === '101.1' ? 'border-amber-400 bg-amber-50 text-amber-800'
+                          : proto === 'NORMAL' ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                          : 'border-blue-500 bg-blue-50 text-blue-800'
+                          : 'border-gray-200 bg-gray-50 text-gray-400 hover:border-gray-300'}`}
+                    >
+                      <span className="text-base">{icon}</span>
+                      <span className="font-mono">{proto}</span>
+                      <span className="font-normal text-[9px] opacity-70 leading-none">{label}</span>
+                    </button>
+                  ))}
+                </div>
+                {posProtocol === '101.1' && (
+                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                    📞 <strong>101.1 Voice Auth</strong> — Enter the verbal auth code from the issuer. CVV not required.
+                  </div>
+                )}
+                {posProtocol === 'NORMAL' && (
+                  <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-xs text-emerald-800">
+                    💳 <strong>Normal transaction</strong> — Enter the card number, expiry, and CVV for processor authorization.
+                  </div>
+                )}
+                {posProtocol === '101.6' && (
+                  <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
+                    💳 <strong>101.6 EMV Chip</strong> — Card present, chip read. CVV required.
+                  </div>
+                )}
+                {posProtocol === '201.3' && (
+                  <div className="mt-2 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 text-xs text-purple-800">
+                    🔒 <strong>201.3 Offline Batch</strong> — Enter CVV <em>and</em> the pre-auth code from an existing transaction. Wrong code = declined.
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Expiry (MM/YY)</label>
+                  <input
+                    type="text"
                     value={cardData.expiry}
                     onChange={(e) => {
                       let val = e.target.value.replace(/\D/g, '').substring(0, 4);
@@ -936,18 +978,41 @@ export const POSPageSecure = () => {
                     placeholder="MM/YY"
                   />
                 </div>
-                <div className="flex-1">
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    CVV
-                  </label>
-                  <input 
-                    type="password" 
-                    value={cardData.cvv}
-                    onChange={(e) => setCardData(prev => ({...prev, cvv: e.target.value.replace(/\D/g, '').substring(0, 4)}))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-center"
-                    placeholder="123"
-                  />
-                </div>
+                {/* CVV is required for normal, 101.6, and 201.3 transactions. */}
+                {posProtocol !== '101.1' && (
+                  <div>
+                    <label className={`block text-xs font-semibold uppercase mb-1 ${posProtocol === '201.3' ? 'text-purple-600' : 'text-gray-500'}`}>CVV</label>
+                    <input
+                      type="password"
+                      value={cardData.cvv}
+                      onChange={(e) => setCardData(prev => ({...prev, cvv: e.target.value.replace(/\D/g, '').substring(0, 4)}))}
+                      className={`w-full px-4 py-2 border-2 rounded-lg outline-none text-center ${posProtocol === '201.3' ? 'border-purple-300 focus:border-purple-500 bg-purple-50/30' : 'border-gray-300 focus:ring-2 focus:ring-blue-500'}`}
+                      placeholder="123"
+                      inputMode="numeric"
+                      autoComplete="cc-csc"
+                    />
+                  </div>
+                )}
+                {/* Auth Code — customer-provided for every explicit protocol */}
+                {posProtocol !== 'NORMAL' && (
+                  <div>
+                    <label className={`block text-xs font-semibold uppercase mb-1 ${posProtocol === '201.3' ? 'text-purple-600' : 'text-amber-600'}`}>
+                      Auth Code {posProtocol === '201.3' ? '*' : ''}
+                    </label>
+                    <input
+                      type="text"
+                      value={voiceAuthCode}
+                      onChange={(e) => setVoiceAuthCode(e.target.value.replace(/[^a-zA-Z0-9\-]/g, '').substring(0, 32))}
+                      className={`w-full px-4 py-2 border-2 rounded-lg outline-none text-center font-mono tracking-widest font-bold
+                        ${posProtocol === '201.3'
+                          ? 'border-purple-300 focus:border-purple-500 bg-purple-50 text-purple-900'
+                          : 'border-amber-300 focus:border-amber-500 bg-amber-50 text-amber-900'}`}
+                      placeholder="Enter customer auth code"
+                      autoFocus={posProtocol === '101.1'}
+                    />
+                    <p className="text-[10px] text-gray-600 mt-0.5">Provided by the customer; do not use a generated or previous code.</p>
+                  </div>
+                )}
               </div>
               <div className="flex gap-3 mt-2">
                 <button 
@@ -977,13 +1042,14 @@ export const POSPageSecure = () => {
             <div className="px-6 pt-6 pb-4 bg-gradient-to-b from-gray-900 to-gray-800 text-white">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-xs font-semibold tracking-widest uppercase text-white/70">POS 201.3</div>
+                  <div className="text-xs font-semibold tracking-widest uppercase text-white/70">PRIME · ICICI VAULT</div>
                   <div className="text-lg font-extrabold tracking-tight">Receipt</div>
                   <div className="text-[11px] text-white/90 mt-1 font-semibold">
                     {merchantReceiptInfo.companyName || "Company Name"}
                   </div>
                   <div className="text-[11px] text-white/70 mt-1">Merchant ID: {merchantConfig.merchantId}</div>
                   <div className="text-[11px] text-white/70">Terminal ID: {merchantConfig.terminalId}</div>
+                  <div className="text-[11px] text-white/70">Channel: {lastTransaction.channel || (lastTransaction.status === "SYNCED" ? "ONLINE" : "OFFLINE")}</div>
                 </div>
                 <div className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
                   lastTransaction.status === "SYNCED"
@@ -1062,7 +1128,11 @@ export const POSPageSecure = () => {
                   <div className="flex justify-between gap-3">
                     <span className="text-gray-500">Auth Mode</span>
                     <span className="font-medium text-gray-900">
-                      {lastTransaction.status === "SYNCED" ? "ONLINE_APPROVED" : lastTransaction.status === "FAILED" ? "DECLINED" : "OFFLINE_PENDING"}
+                      {lastTransaction.channel === "OFFLINE"
+                        ? "OFFLINE_PENDING"
+                        : lastTransaction.status === "SYNCED"
+                          ? "ONLINE_APPROVED"
+                          : "DECLINED"}
                     </span>
                   </div>
                 </div>
@@ -1107,8 +1177,22 @@ export const POSPageSecure = () => {
                   Print
                 </button>
               </div>
+              <button
+                onClick={() => {
+                  const blob = new Blob([buildReceiptText(lastTransaction)], { type: 'text/plain;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const anchor = document.createElement('a');
+                  anchor.href = url;
+                  anchor.download = `receipt-${lastTransaction.localTxnId}.txt`;
+                  anchor.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="mt-3 w-full py-2.5 text-sm font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100"
+              >
+                Download Thermal Receipt
+              </button>
               <div className="mt-3 text-center text-[11px] text-gray-500">
-                Powered by POS 201.3
+                PRIME POS · ICICI Vault
               </div>
             </div>
           </div>

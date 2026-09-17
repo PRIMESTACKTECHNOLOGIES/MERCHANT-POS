@@ -272,7 +272,7 @@ export const TransactionsPage = () => {
   };
 
   const exportTransactions = (txns: Transaction[], fileName: string) => {
-    // Wise-compatible batch payment CSV format
+    // Batch payment CSV format
     const headers = [
       "name",
       "recipientEmail",

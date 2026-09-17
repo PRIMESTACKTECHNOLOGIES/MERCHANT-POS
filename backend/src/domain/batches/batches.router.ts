@@ -9,6 +9,7 @@ router.get("/batches", batchesController.list);
 
 // Get all transactions
 router.get("/transactions", batchesController.getTransactions);
+router.patch("/transactions/:transactionId/auth-code", batchesController.setTransactionAuthCode.bind(batchesController));
 
 // Verify merchant credentials
 router.post("/verify", batchesController.verifyCredentials);

@@ -14,7 +14,7 @@ export class PaymentsController {
 
   async charge(req: Request, res: Response) {
     try {
-      const { amountMinor, currency, merchantId, pan, expiry, cvv, emv, terminalId, tlvRaw, stan, customerId } = req.body || {};
+      const { amountMinor, currency, merchantId, pan, expiry, cvv, emv, terminalId, tlvRaw, stan, customerId, authCode, entryMode } = req.body || {};
 
       if (!amountMinor || !currency) {
         return res.status(400).json({ error: "amountMinor and currency required" });
@@ -30,6 +30,53 @@ export class PaymentsController {
 
       if (expiry && !/^\d{2}\/\d{2}$/.test(expiry)) {
         return res.status(400).json({ error: "Invalid expiry format MM/YY" });
+      }
+
+      // ── Protocol validation — 101.1 / 101.6 / 201.3 ─────────────────────
+      // Every explicit protocol requires the customer-provided authorization
+      // code. Never continue with a generated, cached, or omitted code.
+      // Protocol detection — map all POS entryMode values to 101.1 / 101.6 / 201.3
+      // MANUAL_MOTO and MOTO with an authCode are treated as 201.3 offline batch
+      const rawMode = String(entryMode || '').toUpperCase();
+      const isProtocol201_3 = rawMode === 'OFFLINE_201_3' || rawMode === '201.3'
+        || rawMode === 'MANUAL_MOTO' || rawMode === 'MOTO';
+      const isProtocol101_1 = rawMode === 'VOICE_AUTH' || rawMode === '101.1';
+      const isProtocol101_6 = rawMode === '101.6' || rawMode === 'EMV' || rawMode === 'CHIP';
+      // Any mode with an authCode present is treated as needing validation
+      const hasAuthCode = !!(authCode && String(authCode).trim());
+      const requiresCustomerAuthCode = isProtocol201_3 || isProtocol101_1 || isProtocol101_6 || hasAuthCode;
+
+      if (requiresCustomerAuthCode && (!authCode || !String(authCode).trim())) {
+        const protocol = isProtocol201_3 ? '201.3' : isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : hasAuthCode ? '201.3' : '101.6';
+        return res.status(400).json({
+          success: false, status: 'DECLINED',
+          error: `Protocol ${protocol} requires a customer-provided Authorization Code.`,
+          reason: `[${protocol}_NO_AUTH_CODE] Customer authorization code is mandatory.`,
+        });
+      }
+
+      if (requiresCustomerAuthCode) {
+        const { validateProtocol } = await import('./cardAuth.service');
+        const proto = isProtocol201_3 ? '201.3' : isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : hasAuthCode ? '201.3' : '101.6';
+        const validation = await validateProtocol({
+          protocol:   proto,
+          cardNumber: pan || '',
+          code:       String(authCode).trim(),
+          cvv:        cvv || undefined,
+          amount:     isProtocol201_3 && amountMinor ? Number(amountMinor) / 100 : undefined,
+          currency:   currency || 'USD',
+          merchantId: merchantId || undefined,
+        });
+        if (!validation.valid) {
+          console.warn(`[Protocol ${proto}] Auth code rejected: ${validation.reason}`);
+          return res.status(403).json({
+            success: false, status: 'DECLINED',
+            error: validation.reason || 'Invalid authorization code',
+            reason: `[${proto}_INVALID_AUTH] ${validation.reason}`,
+            protocol: proto,
+          });
+        }
+        console.log(`[Protocol ${proto}] Auth code verified: ${String(authCode).trim().toUpperCase()}`);
       }
 
       console.log("Charge request received", { amountMinor, currency, merchantId, terminalId, stan });
@@ -56,6 +103,8 @@ export class PaymentsController {
         merchantId,
         stan,
         customerId,
+        authCode,
+        entryMode,
       });
 
       if (result?.status === "APPROVED" && customerId) {

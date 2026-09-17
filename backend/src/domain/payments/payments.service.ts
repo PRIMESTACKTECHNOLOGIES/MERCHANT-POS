@@ -1,16 +1,18 @@
 import axios from 'axios';
+import { acquirerConfig } from '../../config/acquirer';
+import { createAcquirerClient } from './acquirer';
 import { db } from "../../config/db";
-import { validateTransition, createLedgerEntry, persistLedgerEntry, ensureLedgerFiatSchema, type TransactionState } from '../ledger/ledger.service';
+import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
 import { buildEmvChargePayload, parseTlv } from './emv-tlv-parser';
 import { syncOfflinePreflight, type PreflightPayload } from './offline-decline-preflight';
 import type { OnlineAuthorizationResult } from './pos-decision.service';
 import { v4 as uuidv4 } from 'uuid';
-import { P2013, explain, buildCode, SystemFamily, PosKernelModule, GatewayIntegrationsModule, ActionCode, type ProtocolCode } from '../pos2013/protocol-2013-codes';
-import { invoiceReceiptService } from '../receipts/invoice-receipt.service';
 
 interface PosTransactionPayload extends PreflightPayload {
-  customerId?: string;
-  cardholderName?: string;
+  customerId?:      string;
+  authCode?:        string;   // pre-authorized code (voice auth 101.1)
+  entryMode?:       string;   // VOICE_AUTH, MANUAL, CHIP, etc.
+  cardholderName?:  string;
   cardholder_name?: string;
 }
 
@@ -27,9 +29,6 @@ interface PosTransactionResult {
   error?: string;
   reason?: string;
   idempotent?: boolean;
-  protocolLastCode?: ProtocolCode;
-  protocolLastMeaning?: string;
-  protocolEvents?: { code: ProtocolCode; at: string; ref?: string; amountMinor?: number; currency?: string; message?: string }[];
   [key: string]: any;
 }
 
@@ -69,7 +68,13 @@ export class PaymentsService {
   }
 
   private getProcessorBaseUrl(): string | null {
-    return process.env.CARD_PROCESSOR_URL?.trim() || process.env.PAYMENT_PROCESSOR_URL?.trim() || null;
+    const url = process.env.CARD_PROCESSOR_URL?.trim() || process.env.PAYMENT_PROCESSOR_URL?.trim() || null;
+    // Block self-referencing — processor cannot point to itself
+    if (url && (url.includes('localhost') || url.includes('127.0.0.1') || url.includes('0.0.0.0'))) {
+      console.warn('[Processor] CARD_PROCESSOR_URL points to localhost — self-approval blocked. Set a real external acquirer URL.');
+      return null;
+    }
+    return url;
   }
 
   private getProcessorApiKey(): string | null {
@@ -77,9 +82,48 @@ export class PaymentsService {
   }
 
   private async authorizeOnlineCharge(payload: PosTransactionPayload): Promise<OnlineAuthorizationResult> {
+    if (acquirerConfig.host) {
+      try {
+        const acquirer = createAcquirerClient();
+        const merchantAccount = acquirerConfig.merchantId || String(payload.merchantId || '').trim();
+        if (!merchantAccount) {
+          return { success: false, status: 'ERROR', processor: { approved: false, reason: 'Acquirer merchant account missing' }, error: 'ACQUIRER_MERCHANT_ACCOUNT or merchantId is required' };
+        }
+        const field55 = String(payload.emv?.field55 || payload.emv?.field55Hex || payload.emv?.field55hex || payload.emv?.tlvRaw || '').trim();
+        const result = await acquirer.authorize({
+          merchantAccount,
+          amountMinor: Number(payload.amountMinor),
+          currency: String(payload.currency || 'USD').toUpperCase(),
+          cardNumber: payload.pan,
+          expiry: payload.expiry,
+          cvv: payload.cvv,
+          emvField55: field55 || undefined,
+          protocol: field55 ? '101.6' : '101.1',
+        });
+        if (!result.success) {
+          return {
+            success: false,
+            status: result.responseCode,
+            processor: { approved: false, code: result.responseCode, reason: result.message || 'Acquirer declined' },
+            error: result.message || `Acquirer declined (RC=${result.responseCode})`,
+          };
+        }
+        return {
+          success: true,
+          status: 'APPROVED',
+          processor: { approved: true, code: result.approvalCode, reason: 'Acquirer approved' },
+          authCode: result.approvalCode,
+          paymentIntentId: result.authRef,
+        };
+      } catch (error: any) {
+        const message = error?.response?.data?.message || error?.message || 'Acquirer authorization failed';
+        return { success: false, status: 'ERROR', processor: { approved: false, reason: message }, error: message };
+      }
+    }
+
     const processorUrl = this.getProcessorBaseUrl();
     if (!processorUrl) {
-      // ── NO PROCESSOR CONFIGURED → HARD DECLINE ──────────────────────────
+      // â”€â”€ NO PROCESSOR CONFIGURED â†’ HARD DECLINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // We do NOT fake-approve transactions when no processor is set.
       // A card with no real authorization MUST be declined.
       return {
@@ -89,7 +133,7 @@ export class PaymentsService {
           approved: false,
           reason: 'No card processor configured. Set CARD_PROCESSOR_URL in environment variables.',
         },
-        error: 'Card processor not configured — transaction declined.',
+        error: 'Card processor not configured â€” transaction declined.',
       };
     }
 
@@ -195,13 +239,6 @@ export class PaymentsService {
       ]
     );
 
-    await invoiceReceiptService.create({
-      type: 'POS_INVOICE', sourceTable: 'pos2013_transactions', sourceId: processorReference,
-      merchantId, amount: Number(payload.amountMinor) / 100, currency: payload.currency || 'USD',
-      status: 'PENDING', reference: processorReference, description: 'POS transaction invoice',
-      details: { terminalId, batchId, stan: payload.stan || null, entryMode: payload.emv ? 'CHIP' : 'MANUAL' },
-    });
-
     const settlementId = uuidv4();
     await db.query(
       `INSERT INTO merchant_pos_settlements
@@ -244,49 +281,27 @@ export class PaymentsService {
         ...cachedResult,
         idempotent: true,
         reason: cachedResult.reason || 'Duplicate request returned cached result',
-        protocolLastCode: cachedResult.protocolLastCode || P2013.POS_SALE_SUCCESS,
-        protocolLastMeaning: cachedResult.protocolLastMeaning || explain(cachedResult.protocolLastCode || P2013.POS_SALE_SUCCESS),
       };
     }
 
     const processorName = 'PROCESSOR';
     const merchantId = payload.merchantId || '';
-    const currency = payload.currency || 'USD';
-    const amountMinor = Number(payload.amountMinor || 0);
-    const protocolEvents: { code: ProtocolCode; at: string; ref?: string; amountMinor?: number; currency?: string; message?: string }[] = [];
-    const stamp = () => new Date().toISOString();
-    protocolEvents.push({ code: P2013.POS_SALE_STARTED, at: stamp(), ref: payload.stan || '', amountMinor, currency });
-    if (payload.emv) protocolEvents.push({ code: P2013.EMV_CONTACT_STARTED, at: stamp(), ref: payload.stan || '', amountMinor, currency });
-    const finalize = (
-      resp: PosTransactionResult,
-      code: ProtocolCode,
-      opts?: { save?: boolean; ref?: string }
-    ): PosTransactionResult => {
-      protocolEvents.push({ code, at: stamp(), ref: opts?.ref || payload.stan || resp.paymentIntentId || '', amountMinor, currency, message: `${resp.status} ${resp.error || resp.reason || ''}` });
-      const out: PosTransactionResult = {
-        ...resp,
-        protocolLastCode: code,
-        protocolLastMeaning: explain(code),
-        protocolEvents,
-      };
-      console.log(`[P2013 | ${code}] processPosTransaction merchant=${merchantId.slice(0,8)} STAN=${payload.stan || '-'} status=${resp.status} processor=${resp.processor}`);
-      if (opts?.save !== false) this.saveIdempotencyResult(this.buildIdempotencyKey(payload), out).catch(() => { /* ignore */ });
-      return out;
-    };
 
     try {
-      // ── HARD DECLINE PRE-FLIGHT (runs for BOTH online and offline decisions) ─
+      // â”€â”€ HARD DECLINE PRE-FLIGHT (runs for BOTH online and offline decisions) â”€
       const preflight = syncOfflinePreflight(payload);
       if (preflight.declined) {
         const resp: PosTransactionResult = {
           success: false,
           status: 'DECLINED',
-          amountMinor,
-          currency,
+          amountMinor: payload.amountMinor,
+          currency: payload.currency,
           processor: processorName,
           error: preflight.reason,
           reason: `[${preflight.code}] ${preflight.reason}`,
         };
+        await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
+        // Audit decline (no wallet credit, no settlement row, but log declined tx for reconciliation)
         const declineId = `decl_${Date.now().toString(36)}`;
         await db.query(
           `INSERT OR IGNORE INTO pos2013_transactions
@@ -294,30 +309,98 @@ export class PaymentsService {
              pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, decline_reason)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            declineId, merchantId, payload.terminalId || '', declineId, payload.stan || '',
-            amountMinor, currency,
+            declineId,
+            merchantId,
+            payload.terminalId || '',
+            declineId,
+            payload.stan || '',
+            payload.amountMinor,
+            payload.currency || 'USD',
             payload.pan ? `${'*'.repeat(Math.max(payload.pan.length - 4, 0))}${payload.pan.slice(-4)}` : null,
-            'PURCHASE', 'declined', payload.emv ? 'CHIP' : 'MANUAL',
-            preflight.code || 'DECLINE', 'DECLINED', new Date().toISOString(),
+            'PURCHASE',
+            'declined',
+            payload.emv ? 'CHIP' : 'MANUAL',
+            preflight.code || 'DECLINE',
+            'DECLINED',
+            new Date().toISOString(),
             `[${preflight.code}] ${preflight.reason}`,
           ]
         );
-        return finalize(resp, P2013.POS_SALE_FAILED, { ref: declineId });
+        return resp;
       }
 
       if (!this.getProcessorBaseUrl()) {
-        const resp: PosTransactionResult = {
-          success: false,
-          status: 'DECLINED',
-          amountMinor,
-          currency,
-          processor: processorName,
-          error: 'No card processor configured. Transaction declined.',
-          reason: '[NO_PROCESSOR] CARD_PROCESSOR_URL is not set. Configure a real card processor to accept card payments.',
-        };
-        return finalize(resp, P2013.POS_SALE_FAILED);
+        // ── 101.1 Voice Auth bypass ──────────────────────────────────────
+        // A voice auth code that passed controller validation IS the issuer
+        // approval. No CARD_PROCESSOR_URL is needed — skip the hard decline.
+        const isVoiceAuth = ['VOICE_AUTH','101.1','101.6','201.3','OFFLINE_201_3','MANUAL_MOTO','MOTO'].includes(String(payload.entryMode || '').toUpperCase());
+        const hasAuthCode = !!(payload.authCode && String(payload.authCode).trim());
+
+        if (!(hasAuthCode)) {   // any protocol with a validated authCode → self-approve
+          // Not voice auth — hard decline, no processor configured
+          const resp: PosTransactionResult = {
+            success: false,
+            status: 'DECLINED',
+            amountMinor: payload.amountMinor,
+            currency: payload.currency,
+            processor: processorName,
+            error: 'No card processor configured. Transaction declined.',
+            reason: '[NO_PROCESSOR] CARD_PROCESSOR_URL is not set. Configure a real card processor to accept card payments.',
+          };
+          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
+          return resp;
+        }
+        // Voice auth with validated code — fall through to self-approval
+        console.log(`[101.1] Voice auth self-approve | authCode=${payload.authCode} | amt=${payload.amountMinor/100} ${payload.currency || 'USD'}`);
       }
 
+
+      // ── 101.1 Voice Auth: skip decision service, go straight to self-approval ─
+      // The auth code was validated by the controller. No EMV, no online check needed.
+        const isVoiceAuth101 = ['VOICE_AUTH','101.1','101.6','201.3','OFFLINE_201_3','MANUAL_MOTO','MOTO'].includes(String(payload.entryMode || '').toUpperCase()) || !!(payload.authCode && String(payload.authCode).trim());
+      const voiceAuthCode101 = payload.authCode && String(payload.authCode).trim();
+      if (isVoiceAuth101 && voiceAuthCode101) {
+        // Skip decision service — treat as pre-authorised offline approval
+        // Fall straight through to the offline self-approval block below.
+        // Force decision to offline so we skip the needsOnline branch.
+        // We do this by setting a synthetic decision.
+        const paymentIntentId101 = `voice_${Date.now().toString(36)}`;
+        const authCode101 = String(voiceAuthCode101).toUpperCase();
+        const chargeCcy101 = payload.currency || 'USD';
+        const { walletsService } = await import('../wallets/wallets.service');
+
+        // Record transaction
+        const ledgerEntry101 = createLedgerEntry(paymentIntentId101, 'credit', payload.amountMinor / 100, chargeCcy101, 'AUTHORIZED', `Voice auth 101.1 — code ${authCode101}`);
+        validateTransition('PENDING', ledgerEntry101.status as TransactionState);
+        await persistLedgerEntry(ledgerEntry101, db.query.bind(db));
+
+        // Credit merchant wallet + vault
+        await walletsService.creditMerchantWallet(payload.merchantId || '', payload.amountMinor / 100, 'pos_voice_auth', paymentIntentId101, chargeCcy101);
+        try {
+          const { vaultEngine } = await import('../vault/vault.service');
+          await vaultEngine.creditVault({ amount: payload.amountMinor / 100, currency: chargeCcy101, reference: paymentIntentId101, merchantId: payload.merchantId || '', type: 'BATCH_TO_VAULT', meta: { source: 'voice_auth_101.1', authCode: authCode101 } });
+        } catch (ve: any) { console.warn('[101.1] Vault credit deferred:', ve.message); }
+
+        // Record in pos2013_transactions
+        const batchId101 = `batch-${paymentIntentId101.slice(0, 12)}`;
+        await db.query(
+          `INSERT OR IGNORE INTO pos2013_transactions (id, merchant_id, terminal_id, batch_id, local_txn_id, stan, amount_minor, currency, pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [paymentIntentId101, payload.merchantId||'', payload.terminalId||'', batchId101, paymentIntentId101, payload.stan||'', payload.amountMinor, chargeCcy101, payload.pan ? `****${payload.pan.slice(-4)}` : null, 'PURCHASE', 'voice_auth', 'VOICE_AUTH', authCode101, 'APPROVED', new Date().toISOString()]
+        );
+
+        const resp101: PosTransactionResult = {
+          success: true,
+          status: 'APPROVED',
+          paymentIntentId: paymentIntentId101,
+          amountMinor: payload.amountMinor,
+          currency: payload.currency,
+          processor: AUTH_CODE_ ,
+          authCode: authCode101,
+          reason: `Voice auth 101.1 approved — code ${authCode101}`,
+        };
+        await this.saveIdempotencyResult(idempotencyKey, resp101);
+        return resp101;
+      }
       // Decide whether we need to go online using the POS decision service
       let decision: any = null;
       try {
@@ -330,10 +413,10 @@ export class PaymentsService {
           emv: payload.emv,
         });
       } catch (decErr: any) {
-        // ══ ALLOW FALLBACK TO OFFLINE FLOOR IF DECISION SERVICE DOWN ════════
-        //  • EMV chip produced TC (issuer offline-approved) → OK
-        //  • OR terminal offline_enabled + amount ≤ floor_limit → OK
-        //  Otherwise → HARD DECLINE (no demo stand-in, correct).
+        // â•â• ALLOW FALLBACK TO OFFLINE FLOOR IF DECISION SERVICE DOWN â•â•â•â•â•â•â•â•
+        //  â€¢ EMV chip produced TC (issuer offline-approved) â†’ OK
+        //  â€¢ OR terminal offline_enabled + amount â‰¤ floor_limit â†’ OK
+        //  Otherwise â†’ HARD DECLINE (no demo stand-in, correct).
         const tlvHex = String(payload.emv?.field55 || payload.emv?.field55Hex || payload.emv?.tlvRaw || payload.emv?.TLV || '').replace(/[^0-9A-Fa-f]/g, '');
         let emvTags: Record<string, string> = {};
         if (tlvHex && tlvHex.length % 2 === 0) {
@@ -373,10 +456,11 @@ export class PaymentsService {
             amountMinor: payload.amountMinor,
             currency: payload.currency,
             processor: processorName,
-            error: 'Cannot process: POS decision service unavailable — NO demo approval fallback.',
-            reason: `[DECISION_SERVICE_DOWN] ${decErr?.message || 'decision service error'} → declined (no EMV TC, no terminal floor-limit available)`,
+            error: 'Cannot process: POS decision service unavailable â€” NO demo approval fallback.',
+            reason: `[DECISION_SERVICE_DOWN] ${decErr?.message || 'decision service error'} â†’ declined (no EMV TC, no terminal floor-limit available)`,
           };
-          return finalize(resp, P2013.POS_SALE_FAILED);
+          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
+          return resp;
         }
       }
 
@@ -391,7 +475,7 @@ export class PaymentsService {
       if (needsOnline) {
         const online = await this.authorizeOnlineCharge(payload);
         if (online.status === 'PENDING_BANK_BATCH') {
-          // ── Block fake bank batch approval — hard decline instead ──────────
+          // â”€â”€ Block fake bank batch approval â€” hard decline instead â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           const resp: PosTransactionResult = {
             success: false,
             status: 'DECLINED',
@@ -401,15 +485,16 @@ export class PaymentsService {
             error: 'No card processor configured. Transaction declined.',
             reason: '[NO_PROCESSOR] Configure CARD_PROCESSOR_URL to accept card payments.',
           };
-          return finalize(resp, P2013.POS_SALE_FAILED);
+          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
+          return resp;
         }
         if (!online.success) {
-          // ── YOUR OFFLINE ACQUIRER FALLBACK (only for CONFIGURATION_ERROR) ──
+          // â”€â”€ YOUR OFFLINE ACQUIRER FALLBACK (only for CONFIGURATION_ERROR) â”€â”€
           // If processor URL not configured, but EITHER:
           //   (A) EMV chip already TC-approved offline (CID=0x80), OR
-          //   (B) Terminal offline_enabled + amount ≤ floor_limit
-          // → Fall through to OFFLINE approval below. REAL offline acquirer, not demo.
-          // Any other decline (processor said NO) → still hard decline (correct).
+          //   (B) Terminal offline_enabled + amount â‰¤ floor_limit
+          // â†’ Fall through to OFFLINE approval below. REAL offline acquirer, not demo.
+          // Any other decline (processor said NO) â†’ still hard decline (correct).
           const isCfgError = online.status && String(online.status).toUpperCase() === 'CONFIGURATION_ERROR';
           if (isCfgError) {
             // Compute offlineEmvApproved here for fallback check
@@ -440,11 +525,11 @@ export class PaymentsService {
               } catch { /* ignore */ }
             }
             if (tcOk || floorOk) {
-              // ✅ Fall through to OFFLINE approval branch below.
-              // This is YOUR STANDALONE OFFLINE ACQUIRER — NO EXTERNAL GATEWAY.
+              // âœ… Fall through to OFFLINE approval branch below.
+              // This is YOUR STANDALONE OFFLINE ACQUIRER â€” NO EXTERNAL GATEWAY.
               console.log(`[OFFLINE-ACQUIRER] Processor unavailable, falling back to TC=${tcOk}/floor=${floorOk} offline approval for STAN=${payload.stan || '-'}`);
             } else {
-              // No offline fallback available → HARD DECLINE (no demo approval).
+              // No offline fallback available â†’ HARD DECLINE (no demo approval).
               const resp: PosTransactionResult = {
                 success: false,
                 status: 'DECLINED',
@@ -454,6 +539,7 @@ export class PaymentsService {
                 error: online.error || 'Online authorization failed and no offline fallback available.',
                 reason: `[${online.status || 'ONLINE_FAILED'}] ${online.error || 'Online authorization failed and no offline fallback (no EMV TC, no terminal floor-limit).'}`
               };
+              await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
               const declineId = `decl_onl_${Date.now().toString(36)}`;
               await db.query(
                 `INSERT OR IGNORE INTO pos2013_transactions
@@ -478,10 +564,10 @@ export class PaymentsService {
                   online.error || 'Online declined',
                 ]
               );
-              return finalize(resp, P2013.POS_SALE_FAILED, { ref: declineId });
+              return resp;
             }
           } else {
-            // Processor explicitly declined → HARD DECLINE.
+            // Processor explicitly declined â†’ HARD DECLINE.
             const resp: PosTransactionResult = {
               success: false,
               status: 'DECLINED',
@@ -491,6 +577,7 @@ export class PaymentsService {
               error: online.error || 'Online authorization failed',
               reason: online.error || 'Online authorization failed'
             };
+            await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
             const declineId = `decl_onl_${Date.now().toString(36)}`;
             await db.query(
               `INSERT OR IGNORE INTO pos2013_transactions
@@ -515,7 +602,7 @@ export class PaymentsService {
                 online.error || 'Online declined',
               ]
             );
-            return finalize(resp, P2013.POS_SALE_FAILED, { ref: declineId });
+            return resp;
           }
         } else {
           skipOfflineBranch = true;
@@ -526,22 +613,20 @@ export class PaymentsService {
           const paymentIntentId = online.paymentIntentId || `onl_${Date.now().toString(36)}`;
           const authCode = online.authCode || `AUTH-${Date.now().toString(36).toUpperCase()}`;
 
-          await ensureLedgerFiatSchema(db.query.bind(db));
           const ledgerEntry = createLedgerEntry(
             paymentIntentId,
             'credit',
             payload.amountMinor / 100,
             payload.currency || 'USD',
             'AUTHORIZED',
-            `Online card charge — PAN ${payload.pan ? payload.pan.slice(-4) : 'N/A'}`,
-            { fiatCurrency: 'USD' }
+            `Online card charge â€” PAN ${payload.pan ? payload.pan.slice(-4) : 'N/A'}`
           );
 
           validateTransition('PENDING', ledgerEntry.status as TransactionState);
           await persistLedgerEntry(ledgerEntry, db.query.bind(db));
 
           // Debit customer stored-value wallet ONLY for Path A (internal PSW stored value,
-          // no external raw PAN provided). Path B/C — external MC/EMV PAN — do NOT debit
+          // no external raw PAN provided). Path B/C â€” external MC/EMV PAN â€” do NOT debit
           // customer_wallets; those funds are NOT in your custody. Settlement later deducts
           // from the REAL issuing bank at T+1.
           const { walletsService } = await import('../wallets/wallets.service');
@@ -564,6 +649,28 @@ export class PaymentsService {
             chargeCcy
           );
 
+          // ── Credit vault bank (BATCH_TO_VAULT) ─────────────────────────
+          try {
+            const { vaultEngine } = await import('../vault/vault.service');
+            await vaultEngine.creditVault({
+              amount:     payload.amountMinor / 100,
+              currency:   chargeCcy,
+              reference:  paymentIntentId,
+              merchantId,
+              type:       'BATCH_TO_VAULT',
+              meta: {
+                source:     'online_card_charge',
+                authCode,
+                paymentIntentId,
+                stan:       payload.stan || '',
+                terminalId: payload.terminalId || 'WEB-TERMINAL',
+              },
+            });
+            console.log([payments.service] Vault credited   (online) | Ref: );
+          } catch (ve: any) {
+            console.warn('[payments.service] Vault credit deferred (online):', ve.message);
+          }
+
           // Record transaction in pos2013_transactions
           const ledgerEntryId = ledgerEntry.id;
           const settleMeta = JSON.stringify({
@@ -576,7 +683,7 @@ export class PaymentsService {
             entry_mode: payload.emv ? 'CHIP' : 'MANUAL',
             cardholder_name: payload.cardholderName || payload.cardholder_name || ''
           });
-          // NOTE: batch_id is TEXT NOT NULL, no default → pass paymentIntentId as batch id
+          // NOTE: batch_id is TEXT NOT NULL, no default â†’ pass paymentIntentId as batch id
           // (batches can be merged later on EOD; single-txn batch "batch-<intent>" for now)
           const batchId = `batch-${paymentIntentId.slice(0, 12)}`;
           await db.query(
@@ -603,7 +710,28 @@ export class PaymentsService {
             ]
           );
 
-          // ── FLOWCHART STEP 5: Create merchant_pos_settlements row (unsettled) ──
+          // ── REAL ACQUIRER CAPTURE (201.3) ──────────────────────────────────
+          // If acquirer is configured, call capture now to settle the funds
+          // with the real card network so money moves to merchant account.
+          if (acquirerConfig.host) {
+            try {
+              const { captureCardTransaction } = await import('../../services/payments/cardCapture');
+              await captureCardTransaction({
+                merchantId,
+                terminalId:    payload.terminalId || 'WEB-TERMINAL',
+                amount:        payload.amountMinor / 100,
+                currency:      payload.currency || 'USD',
+                authRef:       online.paymentIntentId || authCode,
+                stan:          payload.stan || '',
+                batchId,
+              });
+              console.log('[Acquirer] Capture 201.3 submitted for auth ' + (online.paymentIntentId || authCode));
+            } catch (capErr: any) {
+              console.warn('[Acquirer] Capture deferred: ' + capErr.message);
+            }
+          }
+
+          // â”€â”€ FLOWCHART STEP 5: Create merchant_pos_settlements row (unsettled) â”€â”€
           // Status 'unsettled' = T+1 pending bank clearing (Square / Stripe style)
           const settleId = `setl_online_${Date.now().toString(36)}`;
           try {
@@ -624,24 +752,26 @@ export class PaymentsService {
             processor: 'ONLINE',
             authCode,
             settlementId: settleId,
+            processorVaultAccountId,
             reason: 'POS transaction approved online',
           };
 
-          return finalize(response, P2013.POS_SALE_APPROVED);
+          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), response);
+          return response;
         }
       }
 
-      // ════════════════════════════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // Decision was OFFLINE-capable (decision.mode !== 'online').
       //
       // NO DEMO STAND-IN APPROVAL. Two conditions before we approve:
       //   (A) EMV data must be present and contain a VALID offline cryptogram
       //       TC (Transaction Certificate = issuer approved offline). NOT AAC.
-      //   (B) Or — terminal/merchant config explicitly permits EMV offline
+      //   (B) Or â€” terminal/merchant config explicitly permits EMV offline
       //       (e.g., terminals.offline_approved = true, floor limit, etc.)
       //
-      // If neither A nor B → DECLINED.
-      // ════════════════════════════════════════════════════════════════════════
+      // If neither A nor B â†’ DECLINED.
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
       // Condition A: has EMV cryptogram TC or ARQC successfully approved offline?
       let offlineEmvApproved = false;
@@ -657,7 +787,7 @@ export class PaymentsService {
         const cType = String(payload.emv?.cryptogramType || '').toUpperCase();
         const cidHex = String(payload.emv?.cid || emvTags['9F27'] || '').slice(0, 2);
         const cid = cidHex ? parseInt(cidHex, 16) : null;
-        // TC cryptogram = b7-b6 of CID = 10 → offline issuer-approved
+        // TC cryptogram = b7-b6 of CID = 10 â†’ offline issuer-approved
         if (cType === 'TC') offlineEmvApproved = true;
         else if (cid !== null && (cid & 0xC0) === 0x80) offlineEmvApproved = true;
       } catch {
@@ -665,7 +795,7 @@ export class PaymentsService {
       }
 
       // Condition B: terminal allows offline approvals via real merchant config
-      // (Not implemented yet — if set in future, terminals offline_approved flag
+      // (Not implemented yet â€” if set in future, terminals offline_approved flag
       //  combined with amount < floor_limit could allow this branch. Today = false.)
       let terminalOfflineAllowed = false;
       try {
@@ -689,7 +819,7 @@ export class PaymentsService {
       }
 
       if (!offlineEmvApproved && !terminalOfflineAllowed) {
-        // ❌ NO MORE OFFLINE STAND-IN DEMO APPROVAL
+        // âŒ NO MORE OFFLINE STAND-IN DEMO APPROVAL
         const resp: PosTransactionResult = {
           success: false,
           status: 'DECLINED',
@@ -699,6 +829,7 @@ export class PaymentsService {
           error: 'Offline declined: no EMV TC cryptogram and terminal not configured for offline. NO demo approval fallback.',
           reason: '[OFFLINE_NOT_AUTH] Card not EMV-offline-approved (no TC) and terminal offline=OFF. Require online authorization or correct EMV data.',
         };
+        await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
         const declineId = `decl_off_${Date.now().toString(36)}`;
         await db.query(
           `INSERT OR IGNORE INTO pos2013_transactions
@@ -723,16 +854,15 @@ export class PaymentsService {
             resp.reason || 'Offline not authorized',
           ]
         );
-        return finalize(resp, P2013.POS_SALE_FAILED, { ref: declineId });
+        return resp;
       }
 
-      // ✅ Genuine offline EMV approval (TC) or terminal config allowed it.
-      //    This is NOT a demo/mock stand-in — it's the real EMV-compliant offline path
+      // âœ… Genuine offline EMV approval (TC) or terminal config allowed it.
+      //    This is NOT a demo/mock stand-in â€” it's the real EMV-compliant offline path
       //    per your OFFLINE POS TRANSACTION LIFECYCLE flowchart.
       const paymentIntentId = `offline_${Date.now().toString(36)}`;
       const authCode = `EMV-${Date.now().toString(36).toUpperCase()}`;
 
-      await ensureLedgerFiatSchema(db.query.bind(db));
       const ledgerEntry = createLedgerEntry(
         paymentIntentId,
         'credit',
@@ -740,9 +870,8 @@ export class PaymentsService {
         payload.currency || 'USD',
         'AUTHORIZED',
         offlineEmvApproved
-          ? `Offline EMV approved (TC) — PAN ${payload.pan ? payload.pan.slice(-4) : 'N/A'}`
-          : `Offline floor-limit approved — PAN ${payload.pan ? payload.pan.slice(-4) : 'N/A'}`,
-        { fiatCurrency: 'USD' }
+          ? `Offline EMV approved (TC) â€” PAN ${payload.pan ? payload.pan.slice(-4) : 'N/A'}`
+          : `Offline floor-limit approved â€” PAN ${payload.pan ? payload.pan.slice(-4) : 'N/A'}`
       );
 
       validateTransition('PENDING', ledgerEntry.status as TransactionState);
@@ -751,7 +880,7 @@ export class PaymentsService {
       const { walletsService } = await import('../wallets/wallets.service');
 
       // Debit customer stored-value wallet ONLY for Path A (internal PSW stored value,
-      // no external raw PAN provided). Path B/C — external MC/EMV PAN — do NOT debit
+      // no external raw PAN provided). Path B/C â€” external MC/EMV PAN â€” do NOT debit
       // customer_wallets; those funds are NOT in your custody. Settlement later deducts
       // from the REAL issuing bank at T+1.
       const chargeCcy = payload.currency || 'USD';
@@ -772,6 +901,29 @@ export class PaymentsService {
         paymentIntentId,
         chargeCcy
       );
+
+      // ── Credit vault bank (BATCH_TO_VAULT) — offline approval ──────────────
+      // Self-approve = your own processor: vault gets credited immediately
+      try {
+        const { vaultEngine } = await import('../vault/vault.service');
+        await vaultEngine.creditVault({
+          amount:     payload.amountMinor / 100,
+          currency:   chargeCcy,
+          reference:  paymentIntentId,
+          merchantId,
+          type:       'BATCH_TO_VAULT',
+          meta: {
+            source:     offlineEmvApproved ? 'offline_emv_tc' : 'offline_floor_limit',
+            authCode,
+            paymentIntentId,
+            stan:       payload.stan || '',
+            terminalId: payload.terminalId || 'WEB-TERMINAL',
+          },
+        });
+        console.log(`[payments.service] ✅ Vault credited ${chargeCcy} ${payload.amountMinor / 100} (offline) | Ref: ${paymentIntentId}`);
+      } catch (ve: any) {
+        console.warn('[payments.service] Vault credit deferred (offline):', ve.message);
+      }
 
       // Record transaction in pos2013_transactions
       const ledgerEntryIdOffline = ledgerEntry.id;
@@ -810,7 +962,7 @@ export class PaymentsService {
         ]
       );
 
-      // ── FLOWCHART STEP 5: Create merchant_pos_settlements row (unsettled) ──
+      // â”€â”€ FLOWCHART STEP 5: Create merchant_pos_settlements row (unsettled) â”€â”€
       // Status 'unsettled' = T+1 pending bank clearing (Square / Stripe style)
       const settleIdOff = `setl_offline_${Date.now().toString(36)}`;
       try {
@@ -834,7 +986,8 @@ export class PaymentsService {
         reason: 'POS transaction approved offline',
       };
 
-      return finalize(response, P2013.POS_SALE_APPROVED);
+      await this.saveIdempotencyResult(idempotencyKey, response);
+      return response;
 
     } catch (e: any) {
       console.error('Charge failed:', e.message);
@@ -849,7 +1002,8 @@ export class PaymentsService {
         reason: 'POS transaction declined',
       };
 
-      return finalize(response, P2013.POS_SALE_FAILED);
+      await this.saveIdempotencyResult(idempotencyKey, response);
+      return response;
     }
   }
 

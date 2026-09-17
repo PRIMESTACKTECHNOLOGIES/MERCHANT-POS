@@ -891,7 +891,7 @@ export const SettingsPage = () => {
           />
           <Input 
             label="Bank Name / Depository"
-            placeholder="Column Bank N.A. / Wise US Inc / Maybank Berhad"
+            placeholder="Replacement bank provider"
             value={settings.banking.bankName} 
             onChange={(e) => setSettings({...settings, banking: {...settings.banking, bankName: e.target.value}})} 
           />
@@ -909,7 +909,7 @@ export const SettingsPage = () => {
           />
           <Input 
             label="SWIFT / BIC Code (International wires)"
-            placeholder="TRWIUS35XXX (Wise USA) / MBBEMYKLXXX (Maybank MY)"
+            placeholder="Provider SWIFT / BIC"
             value={settings.banking.swiftCode} 
             onChange={(e) => setSettings({...settings, banking: {...settings.banking, swiftCode: e.target.value}})} 
           />

@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { fetchBatches } from "../lib/api";
+import { fetchBatches, fetchBatchDetails, updateOfflineTransactionAuthCode } from "../lib/api";
 import type { Batch } from "../lib/api";
 import { useToast } from "../components/ui/Toast";
 
@@ -13,6 +13,7 @@ interface BatchTransaction {
   status: "APPROVED" | "DECLINED" | "DUPLICATE" | "OFFLINE_APPROVED" | "STORED";
   cardLast4: string;
   cardType: string;
+  authCode: string;
 }
 
 interface BatchUI extends Batch {
@@ -222,6 +223,8 @@ const StatusBadge = ({ status }: { status: string }) => {
 
 const BatchDetailDrawer = ({ batch, isOpen, onClose, onReprocess }: { batch: BatchUI | null, isOpen: boolean, onClose: () => void, onReprocess: (batchId: string) => void }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'transactions' | 'metadata'>('overview');
+  const [authCodes, setAuthCodes] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -233,6 +236,19 @@ const BatchDetailDrawer = ({ batch, isOpen, onClose, onReprocess }: { batch: Bat
   }, [isOpen]);
 
   if (!batch) return null;
+
+  const saveAuthCode = async (transactionId: string) => {
+    setSavingId(transactionId);
+    try {
+      await updateOfflineTransactionAuthCode(transactionId, authCodes[transactionId] || "");
+      const transaction = batch.transactions.find((item) => item.id === transactionId);
+      if (transaction) transaction.authCode = authCodes[transactionId].toUpperCase();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Authorization code rejected");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   return (
     <>
@@ -406,6 +422,7 @@ const BatchDetailDrawer = ({ batch, isOpen, onClose, onReprocess }: { batch: Bat
                       <th className="px-4 py-3 bg-gray-50">Time</th>
                       <th className="px-4 py-3 bg-gray-50">Card</th>
                       <th className="px-4 py-3 bg-gray-50">Amount</th>
+                      <th className="px-4 py-3 bg-gray-50">Authorization code</th>
                       <th className="px-4 py-3 bg-gray-50">Status</th>
                     </tr>
                   </thead>
@@ -418,6 +435,25 @@ const BatchDetailDrawer = ({ batch, isOpen, onClose, onReprocess }: { batch: Bat
                           •••• {tx.cardLast4}
                         </td>
                         <td className="px-4 py-3 text-gray-900">${tx.amount.toFixed(2)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={authCodes[tx.id] ?? tx.authCode}
+                              onChange={(event) => setAuthCodes((current) => ({ ...current, [tx.id]: event.target.value.toUpperCase() }))}
+                              placeholder="Enter code"
+                              maxLength={12}
+                              className="w-28 rounded border border-gray-200 px-2 py-1 font-mono text-xs focus:border-blue-500 focus:outline-none"
+                            />
+                            <button
+                              onClick={() => void saveAuthCode(tx.id)}
+                              disabled={savingId === tx.id}
+                              className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              {savingId === tx.id ? "Saving..." : "Save"}
+                            </button>
+                          </div>
+                          <p className="mt-1 text-[10px] text-gray-400">Must match the issued batch code</p>
+                        </td>
                         <td className="px-4 py-3">
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                             tx.status === 'APPROVED' || tx.status === 'OFFLINE_APPROVED' ? 'bg-green-100 text-green-700' :
@@ -774,6 +810,7 @@ export const BatchesPage = () => {
                 <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Terminal</th>
                 <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Upload Time</th>
                 <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Txns</th>
+                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Authorization code</th>
                 <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Breakdown</th>
                 <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Status</th>
                 <th scope="col" className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50">Action</th>
@@ -795,7 +832,7 @@ export const BatchesPage = () => {
                 ))
               ) : filteredBatches.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
                     <div className="flex flex-col items-center justify-center">
                       <svg className="w-12 h-12 text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                       <p className="text-lg font-medium text-gray-900">No batches found</p>
@@ -807,7 +844,24 @@ export const BatchesPage = () => {
                 paginatedBatches.map((batch) => (
                   <tr 
                     key={batch.id} 
-                    onClick={() => setSelectedBatch(batch)}
+                    onClick={() => {
+                      setSelectedBatch(batch);
+                      void fetchBatchDetails(batch.id)
+                        .then((details) => {
+                          const transactions: BatchTransaction[] = details.transactions.map((tx: any) => ({
+                            id: String(tx.id),
+                            time: String(tx.txn_timestamp || tx.created_at || ""),
+                            amount: Number(tx.amount_minor || 0) / 100,
+                            currency: String(tx.currency || "USD"),
+                            status: String(tx.status || "STORED") as BatchTransaction["status"],
+                            cardLast4: String(tx.pan_masked || "0000").slice(-4),
+                            cardType: String(tx.card_brand || "Card"),
+                            authCode: String(tx.auth_code || ""),
+                          }));
+                          setSelectedBatch((current) => current?.id === batch.id ? { ...current, transactions } : current);
+                        })
+                        .catch((error) => showToast(error instanceof Error ? error.message : "Failed to load batch transactions", "error"));
+                    }}
                     className="hover:bg-blue-50/30 hover:shadow-sm transition-all cursor-pointer group even:bg-gray-50/30 border-b border-transparent hover:border-blue-100"
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -824,6 +878,12 @@ export const BatchesPage = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900 font-bold">{batch.transactionCount}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="font-mono text-sm font-bold text-blue-700">
+                        {(batch as any).settlementCode || "Not issued"}
+                      </div>
+                      <div className="text-[10px] text-gray-400">Required for authorization</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center space-x-3 text-xs">

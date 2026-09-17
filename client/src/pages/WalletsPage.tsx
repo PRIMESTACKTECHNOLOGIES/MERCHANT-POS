@@ -1,23 +1,30 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { io, type Socket } from 'socket.io-client';
 import CryptoHoldingsCard from '../components/wallets/CryptoHoldingsCard';
 import type { CryptoBalance } from '../components/wallets/CryptoHoldingsCard';
-import BuyCryptoModal from '../components/wallets/BuyCryptoModal';
 import './WalletsPage.css';
 import {
-  getCustomers, createCustomer,
+  getCustomers, createCustomer, updateCustomerKYC,
   fetchSettings,
   getWalletBalance, getWalletTransactions, topupWallet, topupWalletWithCard, debitWallet,
   walletTransfer,
+  sendToHotWallet,
   getBankAccounts, addBankAccount, bankPayout, getBankPayouts,
   getCryptoWallets, getCryptoPrice, buyCryptoWithWallet, sellCrypto, getCryptoTransactions, withdrawCrypto,
   getMerchantBalance, getMerchantTransactions, buyCryptoWithMerchant, merchantToCustomerTransfer,
   merchantCryptoPayout, createVirtualAccount, listVirtualAccounts,
+  getMerchantBankAccounts, getMerchantPayouts, merchantBankPayout,
+  approveMerchantPayout, rejectMerchantPayout,
+  downloadPayoutReceipt,
+  getHotWalletBalance, autobuyTopupHotWalletUsdt,
+  type HotWalletBalance, type HotWalletAutobuyResult,
   transakSendUserOtp, transakVerifyUserOtp, transakGetUserLimits, transakGetUserDetails, transakRefreshUserAccessToken, transakLogoutUser, transakOnboardUser, transakVerifyWalletAddress,
   checkBackendHealth,
   type Customer, type WalletBalance, type WalletTransaction,
   type BankAccount, type BankPayout,
   type CryptoWallet, type CryptoTransaction, type MerchantWallet, type MerchantWalletTransaction, type BankTransferTransaction,
+  type MerchantBankAccount, type MerchantPayout,
 } from "../lib/api";
 import { resolveApiBaseUrl } from "../lib/backendUrl";
 import { useNotifications } from "../contexts/NotificationContext";
@@ -32,7 +39,8 @@ type Modal =
   | 'create-customer' | 'topup' | 'debit' | 'transfer'
   | 'add-bank' | 'bank-payout'
   | 'buy-crypto' | 'sell-crypto' | 'withdraw-crypto' | 'merchant-buy'
-  | 'merchant-to-customer' | 'hot-wallet-payout' | 'virtual-account' | null;
+  | 'merchant-to-customer' | 'hot-wallet-payout' | 'virtual-account' | 'send-to-hot-wallet'
+  | 'merchant-bank-payout' | 'merchant-approve-payout' | 'merchant-reject-payout' | null;
 
 const COINS = ['BTC','ETH','USDT','SOL','DOGE','BNB','XRP','ADA','AVAX','LINK','MATIC'];
 const COIN_ICONS: Record<string,string> = {
@@ -118,6 +126,7 @@ const cleanCardNumber = (value: string) => value.replace(/\D/g, '');
 
 export const WalletsPage = () => {
   const { addNotification } = useNotifications();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('wallet');
   const [modal, setModal] = useState<Modal>(null);
   const [busy, setBusy] = useState(false);
@@ -136,12 +145,17 @@ export const WalletsPage = () => {
   const [cryptoTxns, setCryptoTxns] = useState<CryptoTransaction[]>([]);
   const [merchantWallet, setMerchantWallet] = useState<MerchantWallet | null>(null);
   const [merchantTxns, setMerchantTxns] = useState<MerchantWalletTransaction[]>([]);
+  const [merchantBankAccounts, setMerchantBankAccounts] = useState<MerchantBankAccount[]>([]);
+  const [merchantPayouts, setMerchantPayouts] = useState<MerchantPayout[]>([]);
+  const [selMerchantBank, setSelMerchantBank] = useState<string>('');
+  const [selPayout, setSelPayout] = useState<MerchantPayout | null>(null);
   const [virtualAccounts, setVirtualAccounts] = useState<BankTransferTransaction[]>([]);
   const [merchantLoading, setMerchantLoading] = useState(false);
   const [selCoin, setSelCoin] = useState('BTC');
   const [selectedNetwork, setSelectedNetwork] = useState('bitcoin');
   const [coinPrice, setCoinPrice] = useState(0);
-  const [f, setF] = useState<Record<string,string>>({});
+  const DEFAULT_MERCHANT_ID = 'MRC-1001';
+  const [f, setF] = useState<Record<string,string>>({ merchantId: DEFAULT_MERCHANT_ID });
   const [coinPriceMap, setCoinPriceMap] = useState<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     COINS.forEach(c => { map[c] = 0; });
@@ -300,23 +314,30 @@ export const WalletsPage = () => {
     }).catch(() => setLoadingCust(false));
     // also fetch settings to get merchant id for merchant buys
     fetchSettings().then(s => {
-      if (s?.merchant_id) {
-        const merchantId = s.merchant_id;
-        setF(p => ({ ...p, merchantId }));
-        void refreshMerchantWallet(merchantId);
-      }
-    }).catch(() => {});
+      const merchantId = s?.merchant_id || DEFAULT_MERCHANT_ID;
+      setF(p => ({ ...p, merchantId }));
+      void refreshMerchantWallet(merchantId);
+    }).catch(() => {
+      setF(p => ({ ...p, merchantId: DEFAULT_MERCHANT_ID }));
+      void refreshMerchantWallet(DEFAULT_MERCHANT_ID).catch(()=>{});
+    });
   }, []);
 
   useEffect(() => {
+    const effectiveMerchantId = f.merchantId?.trim() || DEFAULT_MERCHANT_ID;
     if (!f.merchantId) {
-      setMerchantWallet(null);
-      setMerchantTxns([]);
-      setVirtualAccounts([]);
-      return;
+      setF(p => ({ ...p, merchantId: effectiveMerchantId }));
     }
-    void refreshMerchantWallet(f.merchantId);
-    listVirtualAccounts(f.merchantId).then(result => setVirtualAccounts(result.transactions || [])).catch(() => setVirtualAccounts([]));
+    void refreshMerchantWallet(effectiveMerchantId);
+    listVirtualAccounts(effectiveMerchantId).then(result => setVirtualAccounts(result.transactions || [])).catch(() => setVirtualAccounts([]));
+    getMerchantBankAccounts(effectiveMerchantId).then(accounts => {
+      setMerchantBankAccounts(accounts);
+      if (accounts.length > 0) {
+        const def = accounts.find(a => Number(a.is_default) === 1) || accounts[0];
+        setSelMerchantBank(def.id);
+      }
+    }).catch(() => { setMerchantBankAccounts([]); });
+    getMerchantPayouts(effectiveMerchantId).then(payouts => setMerchantPayouts(payouts)).catch(() => setMerchantPayouts([]));
   }, [f.merchantId]);
 
   useEffect(() => {
@@ -383,6 +404,38 @@ export const WalletsPage = () => {
   };
 
   const closeAll = () => { setModal(null); setF({}); };
+
+  // ── Send customer asset to hot wallet ─────────────────────────────────────
+  const handleSendToHotWallet = () => act(async () => {
+    const snapF = { ...f };
+    const snapSelId = selId;
+    const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || DEFAULT_MERCHANT_ID;
+
+    if (!snapSelId) throw new Error('No customer selected');
+    if (!snapF.sthAssetType) throw new Error('Select asset type (Fiat or Crypto)');
+    const amt = parseFloat(snapF.sthAmount || '');
+    if (!amt || amt <= 0) throw new Error('Enter a valid amount');
+    if (snapF.sthAssetType === 'crypto' && !snapF.sthCoin) throw new Error('Select a coin');
+
+    const result = await sendToHotWallet({
+      customerId: snapSelId,
+      merchantId,
+      assetType: snapF.sthAssetType as 'fiat' | 'crypto',
+      amount: amt,
+      cryptoCoin: snapF.sthAssetType === 'crypto' ? snapF.sthCoin : undefined,
+      reason: snapF.sthReason || undefined,
+      currency: balance.currency || 'USD',
+    });
+
+    if (snapF.sthAssetType === 'fiat') await refreshWallet();
+    else await refreshCrypto();
+
+    addNotification(
+      '✅ Sweep Complete',
+      `${snapF.sthAssetType === 'crypto' ? `${amt} ${snapF.sthCoin}` : `$${amt.toFixed(2)} USD`} swept from ${result.customerName} → hot wallet.\nRef: ${result.reference}`,
+      'success'
+    );
+  }, '');
   const act = async (fn: ()=>Promise<any>, msg: string, detail?: (result: any) => string | null) => {
     setBusy(true);
     try {
@@ -404,35 +457,32 @@ export const WalletsPage = () => {
     <FormInput key={`inp-${name}`} f={f} setF={setF} name={name} placeholder={ph} type={type} required={req} />;
 
   // Handlers
+  // Handlers
   const handleCreateCustomer = () => act(async () => {
-    // â”€â”€ Snapshot ALL state into local constants BEFORE any await.
-    //    This defends against stale closures if any UI path calls setF({}) mid-flight.
     const snapF = { ...f };
-
-    const formName = (snapF.name || '').trim();
+    const formName  = (snapF.name  || '').trim();
     const formEmail = (snapF.email || '').trim();
     const formPhone = (snapF.phone || '').trim();
-
     if (!formName) throw new Error('Name required');
     if (formName.length < 2) throw new Error('Name must be at least 2 characters');
     const c = await createCustomer(formName, formEmail || undefined, formPhone || undefined);
     if (!c || !c.id) throw new Error('Server returned an invalid customer record');
     const savedName = (c.name || '').trim() || formName;
-    const safeCustomer = {
-      ...c,
-      name: savedName,
-      email: c.email ?? (formEmail || undefined),
-      phone: c.phone ?? (formPhone || undefined)
-    };
+    const safeCustomer = { ...c, name: savedName, email: c.email ?? (formEmail || undefined), phone: c.phone ?? (formPhone || undefined) };
+    // Submit KYC fields if any were provided
+    const kycKeys = ['id_type','id_number','id_expiry','id_country','date_of_birth','nationality','address_line1','address_line2','city','country','postal_code','occupation','kyc_status','risk_level','notes'];
+    const kycPayload: Record<string, string> = {};
+    for (const key of kycKeys) { const val = (snapF as any)[key]; if (val && String(val).trim()) kycPayload[key] = String(val).trim(); }
+    if (Object.keys(kycPayload).length > 0) { try { await updateCustomerKYC(c.id, kycPayload); } catch { /* non-fatal */ } }
     setCustomers(p => [...p, safeCustomer]);
     setSelId(safeCustomer.id);
     try {
       await getWalletBalance(safeCustomer.id);
-      const walletId = safeCustomer.wallet_id || safeCustomer.id;
-      const walletCode = safeCustomer.wallet_code ? ` Â· Code: ${safeCustomer.wallet_code}` : '';
-      addNotification('Wallet Created', `${savedName}'s wallet ready â€” ID: ${walletId}${walletCode}`, 'success');
+      const walletId   = safeCustomer.wallet_id   || safeCustomer.id;
+      const walletCode = safeCustomer.wallet_code ? ` · Code: ${safeCustomer.wallet_code}` : '';
+      addNotification('Wallet Created', `${savedName}'s wallet ready — ID: ${walletId}${walletCode}`, 'success');
     } catch {
-      addNotification('Wallet Created', `${savedName}'s wallet created â€” ID: ${safeCustomer.id}`, 'success');
+      addNotification('Wallet Created', `${savedName}'s wallet created — ID: ${safeCustomer.id}`, 'success');
     }
   }, `Customer created`);
 
@@ -444,7 +494,7 @@ export const WalletsPage = () => {
 
     if (!snapSelId) throw new Error('No customer selected');
     const amt = parseFloat(snapF.amount);
-    if (!amt || amt <= 0) throw new Error('Enter a valid USD top-up amount');
+    if (!amt || amt <= 0) throw new Error('Enter a valid top-up amount');
     const pan = cleanCardNumber(snapF.topupPan || '');
     const expiry = snapF.topupExpiry || '';
     const cvv = (snapF.topupCvv || '').trim();
@@ -555,21 +605,27 @@ export const WalletsPage = () => {
       snapF.merchantId?.trim() ||
       snapMerchantWallet?.merchant_id?.trim() ||
       snapMerchantWallet?.id?.trim() ||
-      'MRC-1001';
+      DEFAULT_MERCHANT_ID;
 
-    if (!merchantId) throw new Error('Merchant ID not configured');
     if (!isOnline) throw new Error('Online connection required for merchant buys');
 
     const amt = parseFloat(snapF.amount);
     if (!amt || amt <= 0) throw new Error('Enter a valid USD amount to spend');
 
     const result = await buyCryptoWithMerchant(merchantId, snapSelCoin, amt, snapSelectedNetwork);
-    if (result.mode !== 'live' || result.is_mock === true || result.mock === true) {
-      throw new Error('Live exchange purchase required. Simulation responses are disabled.');
+    if (result.ok === false || result.mode !== 'live' || result.is_mock === true || result.mock === true) {
+      throw new Error(result.error || 'Live exchange purchase required. Simulation responses are disabled.');
     }
 
     await refreshMerchantWallet(merchantId);
-    addNotification('Real purchase executed', `Merchant bought ${result.cryptoAmount ?? '-'} ${snapSelCoin} on ${snapSelectedNetwork} for $${amt} via ${result.providerMode ?? 'exchange'}. Order ID: ${result.exchangeOrderId ?? '-'}`, 'success');
+    const received = Number(result.asset_received || 0);
+    const orderId = result.exchange_order?.orderId || result.exchange_order?.clientOrderId || result.exchange_order?.order_id || '-';
+    const provider = result.provider_used || 'exchange';
+    addNotification(
+      'Real purchase executed',
+      `Merchant bought ${received > 0 ? received.toFixed(8) : '-'} ${snapSelCoin} on ${snapSelectedNetwork} for $${amt.toFixed(2)} via ${provider}. Order ID: ${orderId}. Avg price: ${result.avg_price_per_unit ? '$' + Number(result.avg_price_per_unit).toLocaleString() : '-'}`,
+      'success'
+    );
     closeAll();
   }, 'Merchant crypto buy');
 
@@ -580,13 +636,13 @@ export const WalletsPage = () => {
     const merchantId =
       snapF.merchantId?.trim() ||
       snapMerchantWallet?.merchant_id?.trim() ||
-      snapMerchantWallet?.id?.trim() || '';
-    if (!merchantId) throw new Error('Merchant ID not configured');
+      snapMerchantWallet?.id?.trim() ||
+      DEFAULT_MERCHANT_ID;
     const targetCustomerId = snapF.targetCustomerId?.trim();
     if (!targetCustomerId) throw new Error('Please select a customer');
     const amt = parseFloat(snapF.amount);
     if (!amt || amt <= 0) throw new Error('Enter a valid amount');
-    const result = await merchantToCustomerTransfer(merchantId, targetCustomerId, amt, snapF.note || undefined, 'USD');
+    const result = await merchantToCustomerTransfer(merchantId, targetCustomerId, amt, snapF.note || undefined, snapF.transferCurrency || balance.currency || 'USD');
     await refreshMerchantWallet(merchantId);
     if (targetCustomerId === selId) await refreshWallet();
     addNotification('Transfer Complete', `$${amt.toFixed(2)} sent to ${result.customerName}. Ref: ${result.reference}`, 'success');
@@ -595,12 +651,11 @@ export const WalletsPage = () => {
 
   const handleHotWalletPayout = () => act(async () => {
     const snapF = { ...f };
-    const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
+    const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || DEFAULT_MERCHANT_ID;
     const amount = Number(snapF.amount || 0);
     const address = snapF.address?.trim() || '';
     
     // Validate required fields
-    if (!merchantId) throw new Error('Merchant ID not configured');
     if (!isOnline) throw new Error('Hot-wallet delivery requires an online connection');
     if (!amount || amount <= 0) throw new Error('Enter a valid USD amount');
     if (!address) throw new Error('Enter the destination wallet address');
@@ -641,12 +696,123 @@ export const WalletsPage = () => {
     return result;
   }, 'Hot-wallet delivery recorded');
 
+  const handleMerchantBankPayout = () => act(async () => {
+    const snapF = { ...f };
+    const snapMerchantWallet = merchantWallet;
+    const snapSelMerchantBank = selMerchantBank;
+    const snapMerchantBankAccounts = merchantBankAccounts;
+
+    const merchantId =
+      snapF.merchantId?.trim() ||
+      snapMerchantWallet?.merchant_id?.trim() ||
+      snapMerchantWallet?.id?.trim() ||
+      DEFAULT_MERCHANT_ID;
+
+    if (!isOnline) throw new Error('Online connection required for bank payouts');
+
+    const amt = parseFloat(snapF.amount || '0');
+    if (!amt || amt <= 0) throw new Error('Enter a valid payout amount');
+
+    const currency = (snapF.currency || 'USD').toUpperCase();
+
+    let bank_account_id: string | undefined = snapSelMerchantBank || snapF.selectedBankId || undefined;
+    let bank_account: any = undefined;
+
+    if (snapF.useAdhocBank === 'true') {
+      if (!snapF.adhocBankName?.trim()) throw new Error('Enter the receiving bank name');
+      if (!snapF.adhocAccountHolder?.trim()) throw new Error('Enter the account holder name');
+      if (!snapF.adhocAccountNumber?.trim()) throw new Error('Enter the account number / IBAN');
+      bank_account = {
+        bank_name: snapF.adhocBankName.trim(),
+        account_holder: snapF.adhocAccountHolder.trim(),
+        account_number: snapF.adhocAccountNumber.trim(),
+        ...(snapF.adhocRouting?.trim() ? { routing_number: snapF.adhocRouting.trim() } : {}),
+        ...(snapF.adhocSwift?.trim() ? { swift_code: snapF.adhocSwift.trim() } : {}),
+        ...(snapF.adhocIban?.trim() ? { iban: snapF.adhocIban.trim() } : {}),
+        currency,
+      };
+      bank_account_id = undefined;
+    } else {
+      if (!bank_account_id && snapMerchantBankAccounts.length > 0) {
+        const def = snapMerchantBankAccounts.find((b: any) => Number(b.is_default) === 1 && String(b.currency || '').toUpperCase() === currency)
+          || snapMerchantBankAccounts.find((b: any) => Number(b.is_default) === 1)
+          || snapMerchantBankAccounts[0];
+        if (def) bank_account_id = def.id;
+      }
+      if (!bank_account_id && snapMerchantBankAccounts.length === 0) {
+        throw new Error('No bank accounts saved for merchant. Either save an account in Settings or enable "Ad-hoc" bank details.');
+      }
+    }
+
+    const payload: any = { amount: amt, currency };
+    if (bank_account) payload.bank_account = bank_account;
+    if (bank_account_id) payload.bank_account_id = bank_account_id;
+
+    const result = await merchantBankPayout(merchantId, payload);
+    await refreshMerchantWallet(merchantId);
+    try {
+      const payouts = await getMerchantPayouts(merchantId);
+      setMerchantPayouts(payouts);
+    } catch { /* ignore */ }
+
+    const status = String(result.status || 'pending').toUpperCase();
+    const providerRef = result.provider_reference || result.providerRef || '-';
+    addNotification(
+      'Withdrawal requested — wallet debited',
+      `${currency} ${amt.toFixed(2)} is being moved to ${bank_account ? bank_account.bank_name : (snapMerchantBankAccounts.find(b => b.id === bank_account_id)?.bank_name || 'your saved bank account')}.\nOnce funds arrive in your bank, click "Confirm Received" on the payout history row.\nStatus: ${status}. Withdrawal ref: ${providerRef}`,
+      'success'
+    );
+    closeAll();
+    return result;
+  }, 'Bank payout submitted');
+
+  const handleApprovePayout = () => act(async () => {
+    const snapSelPayout = selPayout;
+    if (!snapSelPayout) throw new Error('No payout selected');
+    const wireRef = (f.wire_reference || '').trim();
+    const wireNote = (f.wire_note || '').trim();
+    const result = await approveMerchantPayout(snapSelPayout.id, {
+      external_reference: wireRef,
+      tx_proof: wireNote,
+    });
+    // refresh
+    const mId = snapSelPayout.merchant_id || f.merchantId || merchantWallet?.merchant_id || '';
+    if (mId) {
+      setMerchantPayouts(await getMerchantPayouts(mId).catch(() => []));
+      refreshMerchantWallet(mId).catch(() => {});
+    }
+    addNotification(
+      'Withdrawal closed',
+      `You confirmed ${snapSelPayout.currency} ${Number(snapSelPayout.amount).toFixed(2)} arrived in your saved bank account.\nBank reference: ${result.provider_reference || wireRef || '-'}`,
+      'success'
+    );
+    closeAll();
+  }, 'Merchant bank arrival confirmed');
+
+  const handleRejectPayout = () => act(async () => {
+    const snapSelPayout = selPayout;
+    if (!snapSelPayout) throw new Error('No payout selected');
+    const reason = (f.reject_reason || '').trim() || 'Merchant cancelled (withdrawal not deposited yet)';
+    const result = await rejectMerchantPayout(snapSelPayout.id, { reason });
+    const mId = snapSelPayout.merchant_id || f.merchantId || merchantWallet?.merchant_id || '';
+    if (mId) {
+      setMerchantPayouts(await getMerchantPayouts(mId).catch(() => []));
+      refreshMerchantWallet(mId).catch(() => {});
+    }
+    addNotification(
+      'Withdrawal cancelled — balance returned',
+      result.merchant_wallet_refunded
+        ? `Returned ${snapSelPayout.currency} ${Number(result.refunded_amount || 0).toFixed(2)} back to your merchant wallet balance.`
+        : `Withdrawal ${snapSelPayout.id} cancelled.`,
+      'warning'
+    );
+    closeAll();
+  }, 'Withdrawal cancelled');
 
   const handleCreateVirtualAccount = () => act(async () => {
     try {
       const snapF = { ...f };
-      const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
-      if (!merchantId) throw new Error('Merchant ID not configured');
+      const merchantId = snapF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || DEFAULT_MERCHANT_ID;
       if (!isOnline) throw new Error('Virtual-account creation requires an online connection');
       if (!snapF.transakAccessToken && !snapF.transakAuthRelianceEmail) throw new Error('Verify the merchant email with OTP or Auth Reliance first');
       if (!snapF.fiatCurrency || !snapF.paymentMethod) throw new Error('Select the merchant fiat currency and payment method');
@@ -978,6 +1144,22 @@ export const WalletsPage = () => {
             </button>
             <button onClick={() => {
                 const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
+                setF({ merchantId, sthAssetType: 'fiat' });
+                setModal('send-to-hot-wallet');
+              }}
+              className="rounded-xl border border-red-400/30 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/25">
+              ⬆️ Send to Hot Wallet
+            </button>
+            <button onClick={() => {
+                const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
+                setF({ merchantId, currency: merchantWallet?.currency || 'USD' });
+                setModal('merchant-bank-payout');
+              }}
+              className="rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/25">
+              🏦 Merchant Bank Payout
+            </button>
+            <button onClick={() => {
+                const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
                 setF({ merchantId });
                 setModal('virtual-account');
               }}
@@ -1015,13 +1197,23 @@ export const WalletsPage = () => {
             : customers.length === 0
             ? <p className="text-sm text-gray-400 text-center py-4">No customers yet</p>
             : customers.map(c => (
-              <button key={c.id} onClick={() => setSelId(c.id)}
-                className={`w-full text-left p-3 rounded-lg mb-1 text-sm transition-all ${selId===c.id?'bg-blue-50 border border-blue-200 text-blue-700':'hover:bg-gray-50 text-gray-700'}`}>
-                <div className="font-semibold">{c.name?.trim() || <span className="text-red-500 italic">(Unnamed Customer)</span>}</div>
-                {c.wallet_code && <div className="text-xs font-mono text-blue-500">{c.wallet_code}</div>}
-                {c.email && <div className="text-xs text-gray-400">{c.email}</div>}
-                {c.phone && <div className="text-xs text-gray-400">ðŸ“ž {c.phone}</div>}
-              </button>
+              <div key={c.id} className={`rounded-lg mb-1 text-sm transition-all ${selId===c.id?'bg-blue-50 border border-blue-200':'border border-transparent hover:bg-gray-50'}`}>
+                <button onClick={() => setSelId(c.id)}
+                  className="w-full text-left p-3">
+                  <div className={`font-semibold ${selId===c.id?'text-blue-700':'text-gray-700'}`}>{c.name?.trim() || <span className="text-red-500 italic">(Unnamed Customer)</span>}</div>
+                  {c.wallet_code && <div className="text-xs font-mono text-blue-500">{c.wallet_code}</div>}
+                  {c.email && <div className="text-xs text-gray-400">{c.email}</div>}
+                  {c.phone && <div className="text-xs text-gray-400">📞 {c.phone}</div>}
+                </button>
+                {selId===c.id && (
+                  <div className="px-3 pb-2">
+                    <button
+                      onClick={() => navigate(`/customer-wallet-profile/${c.id}`)}
+                      className="text-xs text-emerald-600 hover:text-emerald-800 font-semibold underline"
+                    >View Full Profile →</button>
+                  </div>
+                )}
+              </div>
             ))
           }
         </div>
@@ -1076,6 +1268,220 @@ export const WalletsPage = () => {
                 </div>
               </div>
             </div>
+
+
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-600 text-base text-white">💸</div>
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.25em] text-rose-700">Merchant Payout History</div>
+                      <h3 className="mt-0.5 text-base font-bold text-slate-900">Bank payouts & transfers</h3>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button type="button" onClick={async () => {
+                    const mId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
+                    if (!mId) return;
+                    try {
+                      const payouts = await getMerchantPayouts(mId);
+                      setMerchantPayouts(payouts);
+                      addNotification('Refreshed', `Loaded ${payouts.length} payout records.`, 'success');
+                    } catch { /* ignore */ }
+                  }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">↻ Refresh</button>
+                </div>
+              </div>
+              <div className="p-5">
+                {merchantPayouts.length === 0
+                  ? <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-5 py-8 text-center">
+                      <div className="text-sm font-semibold text-slate-700">No merchant payouts yet</div>
+                      <div className="mt-1 text-xs text-slate-500">Use <span className="font-semibold">🏦 Merchant Bank Payout</span> above to send settled funds to a bank account.</div>
+                    </div>
+                  : <div className="overflow-hidden rounded-xl border border-slate-200">
+                      <div className="max-h-[540px] overflow-y-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="sticky top-0 bg-gradient-to-br from-slate-50 to-slate-100/70 text-[11px] uppercase tracking-[0.18em] text-slate-600 z-10 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
+                            <tr>
+                              <th className="px-4 py-3 font-bold">Date</th>
+                              <th className="px-4 py-3 font-bold">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-rose-100 text-rose-600 text-[10px] font-black">↑</span>
+                                  Sender (Debit)
+                                </div>
+                              </th>
+                              <th className="px-4 py-3 font-bold">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-emerald-100 text-emerald-600 text-[10px] font-black">↓</span>
+                                  Receiver (Credit)
+                                </div>
+                              </th>
+                              <th className="px-4 py-3 font-bold text-right">Amount</th>
+                              <th className="px-4 py-3 font-bold">Status</th>
+                              <th className="px-4 py-3 font-bold">Reference</th>
+                              <th className="px-4 py-3 font-bold text-right whitespace-nowrap">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {merchantPayouts.map(p => {
+                              const statusRaw = String(p.status || 'unknown').toUpperCase();
+                              const statusClass: Record<string, string> = {
+                                COMPLETED: 'bg-green-100 text-green-800',
+                                SENT: 'bg-green-100 text-green-800',
+                                OUTGOING_PAYMENT_SENT: 'bg-green-100 text-green-800',
+                                CONVERTED: 'bg-green-100 text-green-800',
+                                PENDING: 'bg-amber-100 text-amber-800',
+                                PENDING_APPROVAL: 'bg-amber-100 text-amber-800',
+                                PENDING_BANK_CONFIRMATION: 'bg-purple-100 text-purple-800',
+                                PENDING_MANUAL_TRANSFER:  'bg-purple-100 text-purple-800',
+                                SUBMITTED: 'bg-blue-100 text-blue-800',
+                                PROCESSING: 'bg-blue-100 text-blue-800',
+                                INCOMING_PAYMENT_WAITING: 'bg-blue-100 text-blue-800',
+                                FAILED: 'bg-red-100 text-red-800',
+                                CANCELLED: 'bg-red-100 text-red-800',
+                                REJECTED: 'bg-red-100 text-red-800',
+                              };
+                              const canApprove = new Set(['PENDING','PENDING_APPROVAL','PENDING_BANK_CONFIRMATION','PENDING_MANUAL_TRANSFER','SUBMITTED','PROCESSING','INCOMING_PAYMENT_WAITING']).has(statusRaw);
+                              const canReject = new Set(['PENDING','PENDING_APPROVAL','PENDING_BANK_CONFIRMATION','PENDING_MANUAL_TRANSFER','SUBMITTED','PROCESSING','INCOMING_PAYMENT_WAITING','FAILED']).has(statusRaw);
+
+                              // ── Sender (debit side) ──────────────────────────────────────
+                              const senderMerchantId = p.sender_merchant_id || f.merchantId?.trim() || merchantWallet?.merchant_id || 'MRC-1001';
+                              const senderName = p.sender_account_name || p.sender_label || `Merchant ${senderMerchantId}`;
+                              const senderCurrency = p.sender_wallet_currency || p.currency || 'USD';
+                              const isCryptoReceiver = (p.receiver_type === 'crypto') || (!!p.receiver_crypto_address || !!p.crypto_coin);
+                              const isBankReceiver = (p.receiver_type === 'bank') || (!isCryptoReceiver && (!!p.receiver_bank_name || !!p.receiver_account_holder || !!p.receiver_account_number_masked));
+                              const receiverType = isCryptoReceiver ? 'crypto' : isBankReceiver ? 'bank' : (p.receiver_type || 'bank');
+
+                              let receiverTitle = '—';
+                              let receiverSub = '';
+                              let receiverBadge: { label: string; cls: string } | null = null;
+                              if (receiverType === 'crypto') {
+                                const coin = p.receiver_crypto_coin || p.crypto_coin || 'CRYPTO';
+                                const network = p.receiver_crypto_network || p.crypto_network || '';
+                                const addr = p.receiver_crypto_address || '';
+                                receiverBadge = { label: `${coin}${network ? ' · ' + network.toUpperCase() : ''}`, cls: 'bg-orange-100 text-orange-700' };
+                                receiverTitle = addr ? `${addr.slice(0, 10)}…${addr.slice(-8)}` : `${coin} ${network || ''} wallet`;
+                                receiverSub = coin ? `Crypto receive · ${coin}${p.crypto_amount ? ' ' + Number(p.crypto_amount).toLocaleString(undefined,{maximumFractionDigits:8}) : ''}` : 'On-chain receive';
+                              } else {
+                                receiverBadge = { label: 'Bank Transfer', cls: 'bg-indigo-100 text-indigo-700' };
+                                const bankName = p.receiver_bank_name || 'Saved bank account';
+                                const holder = p.receiver_account_holder || p.receiver_label || '';
+                                const acct = p.receiver_account_number_masked ? `• ${p.receiver_account_number_masked}` : (p.receiver_iban ? `IBAN ${p.receiver_iban.slice(0,6)}…${p.receiver_iban.slice(-4)}` : '');
+                                receiverTitle = bankName;
+                                receiverSub = [holder, acct].filter(Boolean).join(' · ');
+                              }
+
+                              return (
+                                <tr key={p.id} className="hover:bg-slate-50/80 align-top transition-colors">
+                                  <td className="px-4 py-3 text-xs font-medium text-slate-600 whitespace-nowrap align-top">
+                                    <div className="font-semibold">{p.created_at ? new Date(p.created_at).toLocaleDateString() : '-'}</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">{p.created_at ? new Date(p.created_at).toLocaleTimeString() : ''}</div>
+                                  </td>
+                                  <td className="px-4 py-3 align-top">
+                                    <div className="flex items-start gap-2.5">
+                                      <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-sm">
+                                        <span className="text-[13px] font-black">↑</span>
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <div className="text-sm font-bold text-slate-900">{senderName}</div>
+                                          <span className="rounded-md bg-rose-50 text-rose-700 border border-rose-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">Debit</span>
+                                        </div>
+                                        <div className="text-[11px] font-mono text-slate-500 mt-0.5">{senderMerchantId} · Wallet {senderCurrency}</div>
+                                        <div className="text-[10px] text-slate-400 mt-0.5">Merchant settlement balance</div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 align-top">
+                                    <div className="flex items-start gap-2.5">
+                                      <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-sm">
+                                        <span className="text-[13px] font-black">↓</span>
+                                      </div>
+                                      <div className="min-w-0 max-w-[240px]">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <div className="text-sm font-bold text-slate-900 truncate">{receiverTitle}</div>
+                                          {receiverBadge && (
+                                            <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${receiverBadge.cls}`}>{receiverBadge.label}</span>
+                                          )}
+                                          <span className="rounded-md bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">Credit</span>
+                                        </div>
+                                        {receiverSub && <div className="text-[11px] text-slate-500 mt-0.5 break-words">{receiverSub}</div>}
+                                        {p.crypto_amount ? (
+                                          <div className="mt-0.5 text-[10px] font-semibold text-orange-700">
+                                            {Number(p.crypto_amount).toLocaleString(undefined,{maximumFractionDigits:8})} {p.crypto_coin || ''}{p.exchange_rate ? ` @ $${Number(p.exchange_rate).toLocaleString()}/${p.crypto_coin||''}` : ''}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-right whitespace-nowrap align-top">
+                                    <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-0.5">{p.currency || 'USD'}</div>
+                                    <div className="text-base font-extrabold tabular-nums text-slate-900">
+                                      {Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 align-top">
+                                    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${statusClass[statusRaw] || 'bg-slate-100 text-slate-700'}`}>
+                                      <span className={`h-1.5 w-1.5 rounded-full ${/(FAIL|CANCEL|REJECT)/.test(statusRaw)?'bg-red-500':/(PENDING|WAIT|PROCESS)/.test(statusRaw)?'bg-amber-500 animate-pulse':'bg-green-500'}`} />
+                                      {statusRaw.replace(/_/g, ' ')}
+                                    </span>
+                                    {p.provider ? <div className="mt-1 text-[10px] font-semibold text-slate-500">{p.provider}</div> : null}
+                                  </td>
+                                  <td className="px-4 py-3 font-mono text-[11px] text-slate-500 break-all max-w-[160px] align-top">
+                                    <div>{p.provider_reference || p.id?.slice(0, 16) || '-'}</div>
+                                    {p.error_message ? <div className="text-red-600 mt-1 leading-snug">{p.error_message}</div> : null}
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right align-top">
+                                    <div className="flex flex-col sm:flex-row sm:justify-end gap-1.5">
+                                      <button type="button" onClick={() => downloadPayoutReceipt(p.id)} title="Open full payout transaction slip (printable)" className="inline-flex items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-indigo-700 shadow-sm transition hover:bg-indigo-100">
+                                        Receipt
+                                      </button>
+                                      {canApprove ? (
+                                        <button type="button" onClick={() => {
+                                          setSelPayout(p);
+                                          setF({ wire_reference: '', wire_note: '' });
+                                          setModal('merchant-approve-payout');
+                                        }} className="inline-flex items-center justify-center rounded-xl border border-green-500/30 bg-green-600 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-sm transition hover:bg-green-700">
+                                          ✅ Confirm Received
+                                        </button>
+                                      ) : null}
+                                      {canReject ? (
+                                        <button type="button" onClick={() => {
+                                          setSelPayout(p);
+                                          setF({ reject_reason: '' });
+                                          setModal('merchant-reject-payout');
+                                        }} className="inline-flex items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-700 transition hover:bg-rose-100">
+                                          ✕ Cancel
+                                        </button>
+                                      ) : null}
+                                      {!canApprove && !canReject ? (
+                                        <span className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold px-2 py-1">Finalized</span>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="border-t border-slate-100 bg-gradient-to-br from-slate-50/70 to-slate-100/50 px-5 py-3.5 text-[11px] text-slate-600 flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-rose-50 text-rose-600 text-[10px] font-black shrink-0">↑</span>
+                          <span><strong className="text-rose-700">Sender (Debit)</strong> · Merchant settlement wallet debited immediately when payout is created — your gold-sale / POS-batch proceeds are reserved out the door.</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-emerald-50 text-emerald-600 text-[10px] font-black shrink-0">↓</span>
+                          <span><strong className="text-emerald-700">Receiver (Credit)</strong> · Saved bank account or on-chain crypto wallet receiving the funds. For banks: once the deposit physically arrives in your bank statement, click <strong>✅ Confirm Received</strong> with the wire reference to close the payout.</span>
+                        </div>
+                        <div><span className="inline-block rounded-full bg-purple-100 text-purple-800 px-2 py-0.5 font-bold mr-2">PENDING BANK ARRIVAL</span> Your merchant wallet has already been debited. This row stays in PENDING until you confirm the funds physically arrived at the receiving bank from your saved bank statement deposit/transfer reference.</div>
+                        <div><span className="inline-block rounded-full bg-green-100 text-green-800 px-2 py-0.5 font-bold mr-2">COMPLETED</span> You confirmed funds arrived at the receiver. Payout finalized, ledger closed, receipt is printable.</div>
+                        <div><span className="inline-block rounded-full bg-rose-100 text-rose-800 px-2 py-0.5 font-bold mr-2">CANCEL / REJECT</span> Reverse this withdrawal request — the debited amount is credited BACK to your merchant wallet automatically (only valid if you have NOT already received the funds in your bank).</div>
+                      </div>
+                    </div>}
+              </div>
+            </section>
 
             <section className="overflow-hidden rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 via-white to-sky-50 shadow-sm">
               <div className="flex flex-col gap-4 border-b border-cyan-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -1231,7 +1637,7 @@ export const WalletsPage = () => {
                     {[
                       {label:'Customer Card', sub:'Debit / Credit', icon:'ðŸ’³', amt:null, color:'from-sky-500/20 to-sky-500/5', border:'border-sky-400/30'},
                       {label:'Top-Up Engine', sub:'Auth â†’ Ledger', icon:'âš¡', amt:null, color:'from-violet-500/20 to-violet-500/5', border:'border-violet-400/30'},
-                      {label:'Fiat Wallet', sub:'USD Balance', icon:'ðŸ¦', amt:balance.balance, color:'from-emerald-500/20 to-emerald-500/5', border:'border-emerald-400/30'},
+                      {label:'Fiat Wallet', sub:`${balance.currency || 'USD'} Balance`, icon:'🏦', amt:balance.balance, color:'from-emerald-500/20 to-emerald-500/5', border:'border-emerald-400/30'},
                       {label:'Spot Engine', sub:'Internal Swap', icon:'ðŸ”', amt:null, color:'from-amber-500/20 to-amber-500/5', border:'border-amber-400/30'},
                       {label:'Crypto Vault', sub:'Cold-internal', icon:'ðŸª™', amt:cryptoWallets.reduce((s:number,w)=>s+Number(w.balance)*(coinPriceMap[w.crypto_coin]||0),0), color:'from-orange-500/20 to-orange-500/5', border:'border-orange-400/30'},
                     ].map((node, i, arr) => (
@@ -1531,7 +1937,109 @@ export const WalletsPage = () => {
       </div>
 
       {/* â•â• MODALS â•â• */}
-      {modal==='create-customer' && <ModalShell onClose={closeAll} busy={busy} title="New Customer" onConfirm={handleCreateCustomer} confirmLabel="Create">{inp('name','Full Name','text',true)}{inp('email','Email (optional)','email')}{inp('phone','Phone (optional)','tel')}</ModalShell>}
+      {/* ══ NEW CUSTOMER MODAL — full KYC ══ */}
+      {modal==='create-customer' && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={closeAll}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">New Customer</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Fill basic details now — complete KYC anytime from the profile page</p>
+              </div>
+              <button onClick={closeAll} className="text-gray-400 hover:text-gray-600 text-xl" type="button">✕</button>
+            </div>
+            <div className="overflow-y-auto px-6 py-4 space-y-5">
+
+              {/* ── Basic info ── */}
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Basic Info <span className="text-red-400">*required</span></p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="sm:col-span-3">{inp('name','Full Name *','text',true)}</div>
+                  {inp('email','Email','email')}
+                  {inp('phone','Phone','tel')}
+                </div>
+              </div>
+
+              {/* ── Identity document ── */}
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Identity Document</p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Doc Type</label>
+                    <select value={f.id_type||''} onChange={e=>setF(p=>({...p,id_type:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-blue-500 bg-white">
+                      <option value="">— select —</option>
+                      {['PASSPORT','NATIONAL_ID','DRIVING_LICENSE','RESIDENT_ID','OTHER'].map(t=><option key={t} value={t}>{t.replace('_',' ')}</option>)}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">{inp('id_number','Document Number')}</div>
+                  {inp('id_expiry','Expiry (YYYY-MM-DD)')}
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  {inp('id_country','Issuing Country (e.g. ZA)')}
+                  {inp('date_of_birth','Date of Birth (YYYY-MM-DD)')}
+                  {inp('nationality','Nationality (e.g. ZA)')}
+                  {inp('occupation','Occupation')}
+                </div>
+              </div>
+
+              {/* ── Address ── */}
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Address</p>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    {inp('address_line1','Address Line 1')}
+                    {inp('address_line2','Address Line 2')}
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {inp('city','City')}
+                    {inp('postal_code','Postal Code')}
+                    {inp('country','Country')}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── KYC status ── */}
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">KYC Status</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">KYC Status</label>
+                    <select value={f.kyc_status||'PENDING'} onChange={e=>setF(p=>({...p,kyc_status:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-blue-500 bg-white">
+                      {['PENDING','VERIFIED','REJECTED'].map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Risk Level</label>
+                    <select value={f.risk_level||'LOW'} onChange={e=>setF(p=>({...p,risk_level:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-blue-500 bg-white">
+                      {['LOW','MEDIUM','HIGH'].map(r=><option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Notes ── */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Notes</label>
+                <textarea rows={2} placeholder="Internal notes..."
+                  value={f.notes||''} onChange={e=>setF(p=>({...p,notes:e.target.value}))}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm outline-none transition resize-none" />
+              </div>
+
+            </div>
+            <div className="px-6 pb-5 flex gap-3 shrink-0 border-t border-gray-100 pt-4">
+              <button onClick={closeAll} disabled={busy} type="button"
+                className="flex-1 py-3 rounded-xl border border-gray-200 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+              <button onClick={handleCreateCustomer} disabled={busy} type="button"
+                className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50">
+                {busy ? '⏳ Creating...' : 'Create Customer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {modal==='topup' && <ModalShell onClose={closeAll} busy={busy} title="Top Up Wallet (Card Required)" onConfirm={handleTopup} confirmLabel="Top Up" confirmColor="bg-green-600 hover:bg-green-700">
         <p className="text-sm text-gray-500">Balance: <strong>{balance.currency} {Number(balance.balance).toFixed(2)}</strong></p>
         <div className="mt-2">
@@ -1776,6 +2284,49 @@ export const WalletsPage = () => {
           })()}
         </ModalShell>
       )}
+      {modal==='merchant-approve-payout' && (
+        <ModalShell onClose={closeAll} busy={busy} title="Confirm Funds Received in Your Bank" onConfirm={handleApprovePayout} confirmLabel="✅ Confirm Received in Bank" confirmColor="bg-green-600 hover:bg-green-700">
+          {selPayout ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+                <div className="text-xs uppercase tracking-[0.2em] text-green-700 font-bold">Final confirmation</div>
+                <div className="mt-2 font-semibold">
+                  You (the merchant) have already received <span className="text-green-800 font-extrabold">{selPayout.currency || 'USD'} {Number(selPayout.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> into the saved bank account you entered in Settings. Use this form to close the bookkeeping loop and mark the withdrawal COMPLETED.
+                </div>
+                <div className="mt-2 text-xs text-green-800/80">
+                  ⚠ After confirmation, this withdrawal is FINAL. Database status will be set to <strong>COMPLETED</strong>.
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-sm space-y-1.5">
+                <div className="flex justify-between"><span className="text-slate-500 font-medium">Withdrawal ID</span><span className="font-mono text-slate-900 text-xs">{selPayout.id}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500 font-medium">Amount</span><span className="font-extrabold text-slate-900">{selPayout.currency || 'USD'} {Number(selPayout.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500 font-medium">Current status</span><span className="uppercase font-bold tracking-wide text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full text-[10px]">{String(selPayout.status || '').replace(/_/g, ' ')}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500 font-medium">Provider</span><span className="font-semibold text-slate-900">{selPayout.provider || 'manual'}</span></div>
+              </div>
+              <FormInput f={f} setF={setF} name="wire_reference" placeholder="Your bank deposit/transfer reference number (from your bank statement)" required />
+              <FormInput f={f} setF={setF} name="wire_note" placeholder="Optional note / merchant memo (e.g. deposited at branch #12, cash pickup ref)" />
+            </div>
+          ) : <div>No payout selected.</div>}
+        </ModalShell>
+      )}
+      {modal==='merchant-reject-payout' && (
+        <ModalShell onClose={closeAll} busy={busy} title="Cancel Withdrawal & Return to Wallet" onConfirm={handleRejectPayout} confirmLabel="✕ Cancel & Return to My Wallet" confirmColor="bg-rose-600 hover:bg-rose-700">
+          {selPayout ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+                <div className="text-xs uppercase tracking-[0.2em] text-rose-700 font-bold">Reverse withdrawal</div>
+                <div className="mt-2 font-semibold">
+                  Cancel the pending withdrawal <span className="font-mono text-xs">{selPayout.id}</span>. System will automatically RETURN <span className="font-extrabold text-rose-800">{selPayout.currency || 'USD'} {Number(selPayout.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> back into your merchant wallet balance.
+                </div>
+                <div className="mt-2 text-xs text-rose-800/80">
+                  ⚠ Only use this if the money has NOT yet arrived in your saved bank account. If funds are already in your bank, use the Confirm Received button instead.
+                </div>
+              </div>
+              <FormInput f={f} setF={setF} name="reject_reason" placeholder="Reason (e.g. changed bank, wrong account, cancelled)" required />
+            </div>
+          ) : <div>No payout selected.</div>}
+        </ModalShell>
+      )}
       {modal==='merchant-buy' && (
         <ModalShell onClose={closeAll} busy={busy} title="Merchant Buy Crypto" onConfirm={handleMerchantBuy} confirmLabel="Buy" confirmColor="bg-green-600 hover:bg-green-700">
           <p className="text-sm text-gray-500">Merchant: <strong>{f.merchantId||'(not set)'}</strong></p>
@@ -1792,6 +2343,75 @@ export const WalletsPage = () => {
             <div className="text-xl font-extrabold text-green-600">{(parseFloat(f.amount)/coinPrice).toFixed(8)} {selCoin}</div>
             <div className="mt-1 text-xs text-gray-500">Network: {selectedNetwork} Â· Spot rate: ${coinPrice.toLocaleString()} / {selCoin}</div>
           </div>}
+        </ModalShell>
+      )}
+      {modal==='merchant-bank-payout' && (
+        <ModalShell onClose={closeAll} busy={busy} title="Withdraw to Your Bank Account" onConfirm={handleMerchantBankPayout} confirmLabel="Request Withdrawal" confirmColor="bg-rose-600 hover:bg-rose-700">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            You are withdrawing <strong>your own gold-sale proceeds</strong> from your merchant wallet to the saved bank account you entered in Settings. Your merchant wallet balance will be debited <strong>immediately</strong>. Once the funds physically arrive in your bank (any method — deposit/cash/wire/ACH), return to payout history and click <strong>"Confirm Received"</strong> to close the bookkeeping loop. No API key required.
+          </div>
+          <p className="text-sm text-gray-500">Merchant: <strong>{f.merchantId || '(not set)'}</strong></p>
+          {merchantWallet && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 mt-3">
+              <div><strong>Available:</strong> {merchantWallet.currency} {Number(merchantWallet.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+          )}
+
+          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mt-3">Currency</label>
+          <select value={f.currency || 'USD'} onChange={e => setF(p => ({ ...p, currency: e.target.value }))}
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm">
+            {['USD','EUR','GBP','ZAR','NGN','KES','AED','INR'].map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
+          {inp('amount','Payout amount','number',true)}
+
+          {merchantWallet && f.amount && parseFloat(f.amount) > 0 && (
+            <div className={`rounded-xl border p-3 text-sm ${parseFloat(f.amount) > Number(merchantWallet.balance || 0) ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+              {parseFloat(f.amount) > Number(merchantWallet.balance || 0)
+                ? <div>⚠ Insufficient balance. Have {Number(merchantWallet.balance || 0).toFixed(2)}, need {parseFloat(f.amount).toFixed(2)}.</div>
+                : <div>✓ Net payout: {(f.currency || 'USD')} {parseFloat(f.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 mt-3">
+            <input id="adhocBankToggle" type="checkbox" checked={f.useAdhocBank === 'true'}
+              onChange={e => setF(p => ({ ...p, useAdhocBank: e.target.checked ? 'true' : 'false' }))}
+              className="w-4 h-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500" />
+            <label htmlFor="adhocBankToggle" className="text-sm font-medium text-gray-700 cursor-pointer">Use ad-hoc bank details (not saved)</label>
+          </div>
+
+          {f.useAdhocBank !== 'true' && (
+            <>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mt-3">Saved Bank Account</label>
+              {merchantBankAccounts.length === 0
+                ? <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 mt-1">
+                    No saved accounts. Enable "Ad-hoc" above or configure a bank account in Settings → Banking.
+                  </div>
+                : <select value={selMerchantBank} onChange={e => setSelMerchantBank(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm mt-1">
+                    {merchantBankAccounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.bank_name} · {acc.account_holder} · ***{String(acc.account_number || '').slice(-4)} · {acc.currency}
+                        {Number(acc.is_default) === 1 ? ' (Default)' : ''}
+                        {Number(acc.verified) === 0 ? ' · UNVERIFIED' : ''}
+                      </option>
+                    ))}
+                  </select>}
+            </>
+          )}
+
+          {f.useAdhocBank === 'true' && (
+            <div className="space-y-3 mt-4 border-t border-gray-100 pt-3">
+              <FormInput f={f} setF={setF} name="adhocBankName" placeholder="Bank name (e.g. Standard Bank, Barclays, Chase)" required />
+              <FormInput f={f} setF={setF} name="adhocAccountHolder" placeholder="Account holder name (exact match to bank)" required />
+              <FormInput f={f} setF={setF} name="adhocAccountNumber" placeholder="Account number or IBAN" required />
+              <div className="grid grid-cols-2 gap-2">
+                <FormInput f={f} setF={setF} name="adhocRouting" placeholder="Routing / Sort (optional)" />
+                <FormInput f={f} setF={setF} name="adhocSwift" placeholder="SWIFT / BIC (optional)" />
+              </div>
+              <FormInput f={f} setF={setF} name="adhocIban" placeholder="IBAN (optional - if separate)" />
+            </div>
+          )}
         </ModalShell>
       )}
       {modal==='hot-wallet-payout' && (
@@ -2392,8 +3012,140 @@ export const WalletsPage = () => {
         </ModalShell>
       )}
 
+      {/* ── Send Customer Asset to Hot Wallet ──────────────────────────── */}
+      {modal==='send-to-hot-wallet' && sel && (
+        <ModalShell
+          onClose={closeAll} busy={busy}
+          title="Send to Hot Wallet"
+          onConfirm={handleSendToHotWallet}
+          confirmLabel="🔥 Sweep to Hot Wallet"
+          confirmColor="bg-gradient-to-br from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500"
+        >
+          {/* Warning */}
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+            🔥 This moves the customer's assets into the merchant hot wallet. The debit is <strong>final and irreversible</strong>.
+          </div>
+
+          {/* Customer + merchant */}
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm space-y-1">
+            <div className="flex justify-between"><span className="text-slate-500">Customer</span><span className="font-semibold text-slate-800">{sel.name}</span></div>
+            <div className="flex justify-between"><span className="text-slate-500">Merchant</span><span className="font-mono text-xs text-slate-700">{f.merchantId || merchantWallet?.merchant_id || '—'}</span></div>
+          </div>
+
+          {/* Asset type */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Asset Type</label>
+            <div className="flex gap-2">
+              {(['fiat', 'crypto'] as const).map(t => (
+                <button key={t} type="button"
+                  onClick={() => setF(p => ({ ...p, sthAssetType: t, sthCoin: '', sthAmount: '' }))}
+                  className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-bold transition ${
+                    f.sthAssetType === t
+                      ? t === 'fiat' ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-orange-500 bg-orange-50 text-orange-800'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                  }`}>
+                  {t === 'fiat' ? '💵 Fiat (USD)' : '🪙 Crypto'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Fiat balance */}
+          {f.sthAssetType === 'fiat' && (
+            <div className="rounded-xl bg-emerald-900 text-white p-4 flex items-center justify-between">
+              <span className="text-sm text-emerald-300 uppercase tracking-wider">Available</span>
+              <span className="text-2xl font-extrabold tabular-nums">
+                {balance.currency} {Number(balance.balance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+
+          {/* Crypto coin selector */}
+          {f.sthAssetType === 'crypto' && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Coin</label>
+                <select value={f.sthCoin || ''} onChange={e => setF(p => ({ ...p, sthCoin: e.target.value, sthAmount: '' }))}
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-400/20">
+                  <option value="">Select coin...</option>
+                  {cryptoWallets.filter(w => Number(w.balance) > 0).map(w => (
+                    <option key={w.id} value={w.crypto_coin}>
+                      {w.crypto_coin} — Balance: {Number(w.balance).toFixed(6)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {f.sthCoin && (
+                <div className="rounded-xl bg-orange-900 text-white p-4 flex items-center justify-between">
+                  <span className="text-sm text-orange-300 uppercase tracking-wider">Available</span>
+                  <span className="text-2xl font-extrabold tabular-nums">
+                    {Number(cryptoWallets.find(w => w.crypto_coin === f.sthCoin)?.balance || 0).toFixed(6)} {f.sthCoin}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Amount */}
+          {f.sthAssetType && (
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                Amount {f.sthAssetType === 'fiat' ? '(USD)' : f.sthCoin ? `(${f.sthCoin})` : ''}
+              </label>
+              <div className="relative">
+                <input type="number" min="0.000001" step="any"
+                  value={f.sthAmount || ''}
+                  onChange={e => setF(p => ({ ...p, sthAmount: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-full px-4 py-3.5 rounded-xl border border-slate-200 text-xl font-extrabold focus:outline-none focus:ring-2 focus:ring-red-400/20"
+                />
+                <button type="button"
+                  onClick={() => {
+                    if (f.sthAssetType === 'fiat') setF(p => ({ ...p, sthAmount: String(balance.balance) }));
+                    else { const bal = cryptoWallets.find(w => w.crypto_coin === f.sthCoin)?.balance || 0; setF(p => ({ ...p, sthAmount: String(bal) })); }
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-600 transition">
+                  MAX
+                </button>
+              </div>
+              <div className="flex gap-2 mt-2">
+                {[25, 50, 75, 100].map(pct => {
+                  const max = f.sthAssetType === 'fiat'
+                    ? Number(balance.balance)
+                    : Number(cryptoWallets.find(w => w.crypto_coin === f.sthCoin)?.balance || 0);
+                  return (
+                    <button key={pct} type="button"
+                      onClick={() => setF(p => ({ ...p, sthAmount: String(Number((max * pct / 100).toFixed(8))) }))}
+                      disabled={max <= 0}
+                      className="flex-1 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">
+                      {pct}%
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Reason */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Reason <span className="text-slate-400 font-normal">(optional)</span></label>
+            <input type="text" value={f.sthReason || ''}
+              onChange={e => setF(p => ({ ...p, sthReason: e.target.value }))}
+              placeholder="e.g. Settlement, Fee collection, Manual sweep..."
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/20"
+            />
+          </div>
+
+          {/* Summary */}
+          {f.sthAssetType && f.sthAmount && parseFloat(f.sthAmount) > 0 && (
+            <div className="rounded-xl bg-gradient-to-r from-red-50 to-orange-50 border border-red-200 p-3 text-sm text-red-900">
+              Sweeping <strong>{f.sthAssetType === 'fiat' ? `$${parseFloat(f.sthAmount).toFixed(2)} USD` : `${f.sthAmount} ${f.sthCoin}`}</strong> from <strong>{sel.name}</strong> → 🔥 hot wallet
+            </div>
+          )}
+        </ModalShell>
+      )}
+
       <TransakWidgetModal
-        open={transakOpen}
         onClose={() => setTransakOpen(false)}
         flow={transakFlow}
         defaultCryptoCurrency={transakPresets.defaultCryptoCurrency}

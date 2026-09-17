@@ -584,7 +584,15 @@ export async function processUnprocessedTransactions(merchantId: string): Promis
   const settlementCode = `SETTLE-${Date.now()}`;
   const now = new Date().toISOString();
 
-  // 3. Credit merchant wallet (virtual USD)
+  // ── BLOCKED: Do NOT auto-credit merchant wallet from batch settlement ──────
+  // The merchant wallet is credited directly from real card captures (BATCH_TO_VAULT).
+  // Auto-crediting from dashboard batch sync creates fake balances.
+  // Only real processor captures (pos_voice_auth, pos_card_charge, card_capture) count.
+  console.log(`[Dashboard] Batch sync: ${transactions.length} txns, ${totalUSD} USD — wallet credit BLOCKED (use real card captures only)`);
+
+  // Skip the wallet credit entirely
+  if (false) {
+  // 3. Credit merchant wallet (virtual USD) — DISABLED
   const walletRes = await db.query(
     'SELECT * FROM merchant_wallets WHERE merchant_id = ? AND currency = ?',
     [merchantId, 'USD']
@@ -637,6 +645,8 @@ export async function processUnprocessedTransactions(merchantId: string): Promis
       [settlementCode, id]
     );
   }
+  } // end if(false) — wallet credit disabled
+
 
   // 6. Mark all related batches PROCESSED
   const batchIds = [...new Set(transactions.map((t: any) => t.batch_id).filter(Boolean))];
@@ -655,19 +665,21 @@ export async function processUnprocessedTransactions(merchantId: string): Promis
     [now, now, merchantId]
   );
 
-  const walletAfter = (await db.query(
-    'SELECT balance FROM merchant_wallets WHERE id = ?', [wallet.id]
+  // Return without crediting wallet — real funds only from processor captures
+  const currentWalletBal = (await db.query(
+    'SELECT balance FROM merchant_wallets WHERE merchant_id = ? AND currency = ?',
+    [merchantId, 'USD']
   )).rows[0] as any;
 
   return {
     success: true,
     merchantId,
     transactionsProcessed: transactions.length,
-    totalAmountCredited: totalUSD,
+    totalAmountCredited: 0, // not credited — only real processor captures count
     currency: 'USD',
     settlementCode,
-    walletBalanceAfter: Number(walletAfter?.balance || totalUSD),
-    cryptoCredited: totalUSD,
-    message: `${transactions.length} transactions totalling $${totalUSD.toFixed(2)} credited to merchant wallet and USDT balance.`,
+    walletBalanceAfter: Number(currentWalletBal?.balance || 0),
+    cryptoCredited: 0,
+    message: `${transactions.length} transactions recorded. Wallet credit BLOCKED — only real card captures credited (pos_voice_auth / card_capture).`,
   };
 }

@@ -484,7 +484,12 @@ export class BatchesService {
         txnAmount,
         txnCurrency,
         'AUTHORIZED',
-        `Offline batch transaction ${localTxnId}`
+        `Offline batch transaction ${localTxnId}`,
+        merchantId,
+        'pos',
+        localTxnId,
+        undefined,
+        batchId
       );
       validateTransition('PENDING', ledgerEntry.status as TransactionState);
       await persistLedgerEntry(ledgerEntry, db.query.bind(db));
@@ -1035,6 +1040,38 @@ export class BatchesService {
       console.error("getTransactions error:", e);
       return [];
     }
+
+  }
+
+  async setTransactionAuthCode(transactionId: string, authCode: string) {
+    const normalizedId = String(transactionId || '').trim();
+    const normalizedCode = String(authCode || '').trim().toUpperCase();
+    if (!normalizedId) throw new Error('Transaction ID is required');
+    if (!/^[A-Z0-9]{4,12}$/.test(normalizedCode) || normalizedCode === '0000') {
+      throw new Error('Authorization code must be 4-12 letters or numbers and cannot be 0000');
+    }
+
+    const transaction = await db.query(
+      `SELECT t.id, t.batch_id, b.settlement_code
+       FROM pos2013_transactions t
+       LEFT JOIN pos2013_batches b ON b.batch_id = t.batch_id
+       WHERE t.id = ?
+       LIMIT 1`,
+      [normalizedId],
+    );
+    if (!transaction.rowCount) throw new Error('Offline transaction not found');
+    const expectedCode = String(transaction.rows[0].settlement_code || '').trim().toUpperCase();
+    if (!expectedCode) throw new Error('No issued authorization code exists for this transaction batch');
+    if (normalizedCode !== expectedCode) throw new Error('Authorization code does not match the issued transaction code');
+
+    const result = await db.query(
+      `UPDATE pos2013_transactions
+       SET auth_code = ?
+       WHERE id = ?`,
+      [normalizedCode, normalizedId],
+    );
+    if (!result.rowCount) throw new Error('Offline transaction not found');
+    return { transactionId: normalizedId, authCode: normalizedCode };
   }
 
   private async resolveSecret(merchantId: string, terminalId: string): Promise<string> {

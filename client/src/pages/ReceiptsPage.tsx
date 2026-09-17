@@ -190,7 +190,7 @@ body { width: 80mm; padding: 2mm; font-family: "Courier New", Consolas, "Lucida 
       <div className="mb-8 flex items-start justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Receipts</h1>
-          <p className="text-gray-600 mt-2">Full 80mm thermal receipts with Protocol 101.1, tranche &amp; settlement details</p>
+          <p className="text-gray-600 mt-2">PRIME POS receipts with ICICI Vault, online/offline channel, transaction, card, terminal, ledger, and settlement details</p>
         </div>
         <div className="text-xs text-gray-500 bg-white border border-gray-200 rounded px-3 py-2">
           ✳️ &nbsp; Click any receipt row → then use <strong>PRINT THERMAL</strong> for ESC/POS 80mm (Customer + Merchant copies)
@@ -262,6 +262,9 @@ body { width: 80mm; padding: 2mm; font-family: "Courier New", Consolas, "Lucida 
                           ['TXN ID:', r.transactionId],
                           ['DATE / TIME:', r.txnTimestamp ? new Date(r.txnTimestamp).toLocaleString() : new Date(r.generatedAt).toLocaleString()],
                           ['STATUS:', r.status || 'AUTHORIZED'],
+                          ['POS BRAND:', 'PRIME'],
+                          ['VAULT:', 'ICICI'],
+                          ['CHANNEL:', String(r.authMode || '').toUpperCase().includes('OFFLINE') || String(r.batchId || '').toUpperCase().startsWith('OFFLINE-') ? 'OFFLINE' : 'ONLINE'],
                           ['STAN:', r.stan || '—'],
                           ['AUTH CODE:', r.authCode || '—'],
                           ['TERMINAL:', r.batchStatus ? r.batchStatus : r.transaction?.terminalId || '—'],
@@ -285,11 +288,20 @@ body { width: 80mm; padding: 2mm; font-family: "Courier New", Consolas, "Lucida 
                             ['CVV:', fullReceipt.fullTx.cvv_provided ? 'VERIFIED (***)' : 'NOT PRESENT'],
                             ['ENTRY MODE:', fullReceipt.fullTx.entry_mode || 'MANUAL'],
                             ['PIN VERIFIED:', fullReceipt.fullTx.pin_verified ? 'YES' : 'NO'],
-                            ['PROTOCOL:', `VER ${fullReceipt.fullTx.protocol_version || '101.1 PATH B'}`],
+                            ['EMV CRYPTO:', fullReceipt.fullTx.emv_cryptogram_type || '—'],
+                            ['PROTOCOL:', `VER ${fullReceipt.fullTx.protocol_version || '201.3'}`],
+                            ['POS BRAND:', fullReceipt.fullTx.pos_brand_name || 'PRIME'],
+                            ['VAULT:', fullReceipt.fullTx.vault_display_name || 'ICICI'],
+                            ['CHANNEL:', fullReceipt.fullTx.transaction_channel || 'ONLINE'],
+                            ['OFFLINE AUTH:', fullReceipt.fullTx.offline_approval_type || '—'],
                             ['PI ID:', fullReceipt.fullTx.pi_id || '—'],
                             ['RRN:', fullReceipt.fullTx.rrn || '—'],
+                            ['LOCAL TXN ID:', (fullReceipt.fullTx.local_txn_id && fullReceipt.fullTx.local_txn_id !== r.transactionId) ? fullReceipt.fullTx.local_txn_id : '—'],
                             ['SETTLEMENT CODE:', fullReceipt.fullTx.settlement_code || '—'],
                             ['BATCH STATUS:', fullReceipt.fullTx.batch_status || '—'],
+                            ['BATCH TXN CT:', fullReceipt.fullTx.batch_txn_count ? String(fullReceipt.fullTx.batch_txn_count) : '—'],
+                            ['BATCH TOTAL:', fullReceipt.fullTx.batch_total_amount_minor ? `${r.currency === 'USD' ? '$' : ''}${(Number(fullReceipt.fullTx.batch_total_amount_minor) / 100).toLocaleString('en-US',{minimumFractionDigits:2})} ${r.currency}` : '—'],
+                            ['PROCESSED AT:', fullReceipt.fullTx.batch_processed_at ? new Date(fullReceipt.fullTx.batch_processed_at).toLocaleString() : '—'],
                             ['SETTLE BANK:', fullReceipt.fullTx.settlement_bank || fullReceipt.fullTx.beneficiary_bank || '—'],
                             ['BENEF NAME:', fullReceipt.fullTx.beneficiary_name || '—'],
                             ['BENEF ACCT:', fullReceipt.fullTx.beneficiary_account_last4 ? `**** ${fullReceipt.fullTx.beneficiary_account_last4}` : '—'],
@@ -297,14 +309,44 @@ body { width: 80mm; padding: 2mm; font-family: "Courier New", Consolas, "Lucida 
                             ['PERM FLOOR:', `$${Number(fullReceipt.fullTx.terminal_floor_limit_permanent || 5000).toLocaleString('en-US')}`],
                             ['TEMP FLOOR RAISE:', fullReceipt.fullTx.floor_limit_raised_temporary_for_txn_only ? 'APPLIED (TXN ONLY)' : 'NO'],
                             ['FLOOR POST-TXN:', fullReceipt.fullTx.floor_limit_restored_post_commit ? `$${Number(fullReceipt.fullTx.floor_limit_restored_post_commit).toLocaleString('en-US')} (RESTORED)` : '—'],
-                            ['TERMINAL NAME:', fullReceipt.fullTx.terminal_name || '—'],
+                            ['TERMINAL NAME:', fullReceipt.fullTx.terminal_name || 'Main Terminal'],
                             ['MERCHANT:', fullReceipt.fullTx.merchant_name || 'PRIMESTACK'],
-                          ].filter(([, v]) => v && v !== '—').map(([k, v]) => (
+                            ['MERCHANT EMAIL:', fullReceipt.fullTx.merchant_email || '—'],
+                            ['LICENSE #:', fullReceipt.fullTx.merchant_license || '—'],
+                            ['TAX ID:', fullReceipt.fullTx.merchant_tax_id || '—'],
+                            ['LEDGER ENTRY:', fullReceipt.fullTx.ledger_entry_id || '—'],
+                            ['SETTLEMENT ID:', fullReceipt.fullTx.settlement_id || '—'],
+                            ['RECORDED AT:', fullReceipt.fullTx.created_at ? new Date(fullReceipt.fullTx.created_at).toLocaleString() : '—'],
+                            ['LAST UPDATED:', fullReceipt.fullTx.updated_at ? new Date(fullReceipt.fullTx.updated_at).toLocaleString() : '—'],
+                          ].filter(([, v]) => v && String(v) !== '—').map(([k, v]) => (
                             <div key={k} className="flex justify-between border-b border-dashed border-gray-100 py-1">
                               <span className="font-bold text-gray-500">{k}</span>
                               <span className="font-mono text-gray-900 text-right ml-3 break-all">{String(v)}</span>
                             </div>
                           ))}
+                          {fullReceipt.fullTx.decline_reason && (
+                            <div className="md:col-span-2 mt-2 bg-red-50 border border-red-200 rounded-lg p-3">
+                              <p className="font-bold text-red-800 mb-2">✗ ✗ ✗ DECLINED — DETAILS</p>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                                {(() => {
+                                  const dr = String(fullReceipt.fullTx.decline_reason || '');
+                                  const m = dr.match(/^\[([^\]]+)\]\s*(.*)$/);
+                                  const code = m ? m[1] : '';
+                                  const reason = m ? (m[2] || dr) : dr;
+                                  return [
+                                    ['STATUS:', r.status || 'DECLINED'],
+                                    ...(code ? [['DECLINE CODE:', code] as [string,string]] : []),
+                                    ['REASON:', reason || 'Card not authorized']
+                                  ].map(([kk,vv]) => (
+                                    <div key={kk} className="flex justify-between border-b border-dashed border-red-200 py-0.5">
+                                      <span className="font-bold text-red-700">{kk}</span>
+                                      <span className="font-mono text-red-900 text-right ml-3 break-all">{vv}</span>
+                                    </div>
+                                  ));
+                                })()}
+                              </div>
+                            </div>
+                          )}
                           {fullReceipt.fullTx.tranche && (fullReceipt.fullTx.tranche.total_agreement_usd || fullReceipt.fullTx.tranche.agreement_total) && (
                             <div className="md:col-span-2 mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
                               <p className="font-bold text-amber-800 mb-2">TRANCHE &amp; MASTER AGREEMENT</p>
@@ -314,7 +356,8 @@ body { width: 80mm; padding: 2mm; font-family: "Courier New", Consolas, "Lucida 
                                   ['TRANCHE AMOUNT:', `$${Number(r.amount).toLocaleString('en-US')} USD`],
                                   ['TRANCHE No:', `${fullReceipt.fullTx.tranche.tranches_completed || 1} OF ${fullReceipt.fullTx.tranche.tranches_total_expected || '?'}`],
                                   ['REMAINING:', fullReceipt.fullTx.tranche.tranches_remaining_usd ? `$${Number(fullReceipt.fullTx.tranche.tranches_remaining_usd).toLocaleString('en-US')} USD` : '—'],
-                                ].map(([k,v]) => (
+                                  ['LEFT AFTER:', (fullReceipt.fullTx.tranche.tranches_remaining_after_this !== undefined && fullReceipt.fullTx.tranche.tranches_remaining_after_this !== null) ? `${fullReceipt.fullTx.tranche.tranches_remaining_after_this} TRANCHE(S)` : '—'],
+                                ].filter(([,v]) => v && String(v) !== '—').map(([k,v]) => (
                                   <div key={k} className="flex justify-between border-b border-dashed border-amber-200 py-0.5">
                                     <span className="font-bold text-amber-700">{k}</span>
                                     <span className="font-mono text-amber-900 text-right ml-3">{String(v)}</span>

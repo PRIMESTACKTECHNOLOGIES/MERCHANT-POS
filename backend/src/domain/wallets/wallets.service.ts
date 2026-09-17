@@ -1,20 +1,7 @@
 import axios from "axios";
 import { db } from "../../config/db";
 import { v4 as uuidv4 } from 'uuid';
-import {
-  validateTransition,
-  createLedgerEntry,
-  persistLedgerEntry,
-  ensureLedgerFiatSchema,
-  convertLedgerToFiatBalance,
-  getFxRate,
-  formatFiatMinor,
-  type TransactionState,
-  type LedgerEntry as LedgerEntryRow,
-  type FiatLedgerView,
-} from '../ledger/ledger.service';
-import { P2013, explain, type ProtocolCode } from '../pos2013/protocol-2013-codes';
-import { invoiceReceiptService } from '../receipts/invoice-receipt.service';
+import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
 
 export class WalletsService {
 
@@ -76,38 +63,26 @@ export class WalletsService {
     const transactionId = uuidv4();
     const now = new Date().toISOString();
     const prevBalance = Number(wallet.balance || 0);
-    const protocolCodeStart: ProtocolCode = P2013.WALLET_CREDIT_STARTED;
-    console.log(`[P2013 | ${protocolCodeStart}] creditMerchantWallet merchant=${merchantId.slice(0,8)} amount=${amount} ${ccy} src=${source || 'n/a'} ref=${reference || 'n/a'}`);
 
+    await db.query(
+      `UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`,
+      [amount, now, wallet.id]
+    );
+    await db.query(
+      `INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, currency, source, reference, created_at)
+       VALUES (?, ?, 'credit', ?, ?, ?, ?, ?)`,
+      [transactionId, wallet.id, amount, ccy, source, reference || null, now]
+    );
+    let ledgerEntryId: string | null = null;
     try {
-      await db.query(
-        `UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`,
-        [amount, now, wallet.id]
-      );
-      await db.query(
-        `INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, currency, source, reference, created_at)
-         VALUES (?, ?, 'credit', ?, ?, ?, ?, ?)`,
-        [transactionId, wallet.id, amount, ccy, source, reference || null, now]
-      );
-      let ledgerEntryId: string | null = null;
-      try {
-        await ensureLedgerFiatSchema(db.query.bind(db));
-        const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `POS offline sale: ${reference || source || 'pos_offline'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
-        validateTransition('PENDING', ledgerEntry.status as TransactionState);
-        await persistLedgerEntry(ledgerEntry, db.query.bind(db));
-        ledgerEntryId = ledgerEntry.id;
-      } catch (err) {
-        console.error(`[P2013 | ${P2013.WALLET_CREDIT_FAILED}] Failed to persist ledger entry for merchant credit`, err);
-      }
-      const finalBalance = prevBalance + amount;
-      const okCode: ProtocolCode = P2013.WALLET_CREDIT_SUCCESS;
-      console.log(`[P2013 | ${okCode}] creditMerchantWallet success txn=${transactionId.slice(0,8)} balanceAfter=${finalBalance.toFixed(2)} ${ccy} fxToUSD=${getFxRate(ccy, 'USD')}`);
-      return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: finalBalance, protocolCode: P2013.WALLET_CREDIT_CREDITED, protocolMeaning: explain(P2013.WALLET_CREDIT_CREDITED), id: transactionId, entryId: ledgerEntryId };
-    } catch (e: any) {
-      const errCode: ProtocolCode = P2013.WALLET_CREDIT_FAILED;
-      console.error(`[P2013 | ${errCode}] creditMerchantWallet error: ${e?.message || e}`);
-      throw e;
+      const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `POS offline sale: ${reference || source || 'pos_offline'}`, merchantId, 'pos', reference || undefined, undefined, source || undefined);
+      validateTransition('PENDING', ledgerEntry.status as TransactionState);
+      await persistLedgerEntry(ledgerEntry, db.query.bind(db));
+      ledgerEntryId = ledgerEntry.id;
+    } catch (err) {
+      console.error('Failed to persist ledger entry for merchant credit', err);
     }
+    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: prevBalance + amount };
   }
 
   // ── Fiat wallet ops ──────────────────────────────────────────────────────────
@@ -115,8 +90,7 @@ export class WalletsService {
     const ccy = this.normalizeCurrency(currency);
     const wallet = await this.getOrCreateWallet(customerId, ccy);
     const transactionId = uuidv4();
-    await ensureLedgerFiatSchema(db.query.bind(db));
-    const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `Wallet topup via ${source || 'manual'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
+    const ledgerEntry = createLedgerEntry(transactionId, 'credit', amount, ccy, 'AUTHORIZED', `Wallet topup via ${source || 'manual'}`);
     validateTransition('PENDING', ledgerEntry.status as TransactionState);
 
     await db.query(
@@ -247,7 +221,7 @@ export class WalletsService {
     };
   }
 
-  async debitWallet(customerId: string, amount: number, source: string, reference?: string, currency: string = 'AED') {
+  async debitWallet(customerId: string, amount: number, source: string, reference?: string, currency: string = 'USD') {
     const ccy = this.normalizeCurrency(currency);
     const wallet = await this.getOrCreateWallet(customerId, ccy);
     const balanceRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
@@ -255,8 +229,7 @@ export class WalletsService {
     if (balance < amount) throw new Error(`Insufficient ${ccy} balance`);
 
     const transactionId = uuidv4();
-    await ensureLedgerFiatSchema(db.query.bind(db));
-    const ledgerEntry = createLedgerEntry(transactionId, 'debit', amount, ccy, 'AUTHORIZED', `Wallet debit via ${source || 'pos_offline'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
+    const ledgerEntry = createLedgerEntry(transactionId, 'debit', amount, ccy, 'AUTHORIZED', `Wallet debit via ${source || 'pos_offline'}`);
     validateTransition('PENDING', ledgerEntry.status as TransactionState);
 
     await db.query(
@@ -274,12 +247,22 @@ export class WalletsService {
   async getWalletBalance(customerId: string, currency?: string) {
     const ccy = currency ? this.normalizeCurrency(currency) : null;
     const res = ccy
-      ? await db.query('SELECT balance, currency, wallet_code FROM customer_wallets WHERE customer_id = ? AND currency = ?', [customerId, ccy])
-      : await db.query(`SELECT balance, currency, wallet_code FROM customer_wallets WHERE customer_id = ?
-         ORDER BY CAST(balance AS REAL) DESC, created_at ASC LIMIT 1`, [customerId]);
+      ? await db.query(
+          'SELECT balance, currency FROM customer_wallets WHERE customer_id = ? AND currency = ?',
+          [customerId, ccy]
+        )
+      // No currency: return the wallet with the highest balance (actual transaction currency)
+      // Do NOT default to USD — show the currency the customer actually paid in
+      : await db.query(
+          `SELECT balance, currency FROM customer_wallets
+           WHERE customer_id = ?
+           ORDER BY balance DESC, created_at ASC LIMIT 1`,
+          [customerId]
+        );
     if (res.rows.length) return res.rows[0];
-    await this.getOrCreateWallet(customerId, 'USD');
-    return { balance: 0, currency: 'USD', wallet_code: null };
+    // No wallet found — return zero balance without creating a default USD wallet.
+    // A wallet is created when the first real transaction arrives with its actual currency.
+    return { balance: 0, currency: ccy || 'USD' };
   }
 
   async getWalletTransactions(customerId: string, currency?: string) {
@@ -297,7 +280,8 @@ export class WalletsService {
 
   // ── Customers ────────────────────────────────────────────────────────────────
   async getCustomers() {
-    // Use subquery to get only one wallet per customer — prefer AED, fallback to first created
+    // Join to the wallet with the highest balance per customer — that is the currency
+    // they actually paid in on the processor. Do NOT hardcode USD-first ordering.
     return (await db.query(`
       SELECT
         c.id, c.name, c.email, c.phone, c.created_at, c.updated_at,
@@ -309,7 +293,7 @@ export class WalletsService {
       LEFT JOIN customer_wallets w ON w.id = (
         SELECT id FROM customer_wallets
         WHERE customer_id = c.id
-        ORDER BY CASE WHEN currency = 'AED' THEN 0 ELSE 1 END, created_at ASC
+        ORDER BY balance DESC, created_at ASC
         LIMIT 1
       )
       ORDER BY c.created_at DESC
@@ -332,23 +316,83 @@ export class WalletsService {
     );
     const wallet = await this.getOrCreateWallet(id);
     const rows = (await db.query(
-      'SELECT id, name, email, phone, created_at, updated_at FROM customers WHERE id = ?',
+      'SELECT * FROM customers WHERE id = ?',
       [id]
     )).rows;
     const customer = rows[0];
     if (!customer) throw new Error('Customer record not found after insert — DB integrity failure');
     if (!customer.name) throw new Error('Customer name failed to persist — DB write verification failed');
     return {
-      id: customer.id,
-      name: customer.name,
-      email: customer.email,
-      phone: customer.phone,
-      created_at: customer.created_at,
-      updated_at: customer.updated_at,
+      ...customer,
       wallet_id: wallet.id,
       wallet_code: wallet.wallet_code,
       wallet_balance: wallet.balance
     };
+  }
+
+  // ── Update customer KYC / identity details ───────────────────────────────
+  async updateCustomerKYC(customerId: string, kyc: {
+    id_type?: string;
+    id_number?: string;
+    id_expiry?: string;
+    id_country?: string;
+    date_of_birth?: string;
+    nationality?: string;
+    address_line1?: string;
+    address_line2?: string;
+    city?: string;
+    country?: string;
+    postal_code?: string;
+    occupation?: string;
+    kyc_status?: string;
+    risk_level?: string;
+    notes?: string;
+  }) {
+    const existing = (await db.query('SELECT id FROM customers WHERE id = ?', [customerId])).rows;
+    if (!existing.length) throw new Error(`Customer ${customerId} not found`);
+
+    const allowed = [
+      'id_type','id_number','id_expiry','id_country','date_of_birth',
+      'nationality','address_line1','address_line2','city','country',
+      'postal_code','occupation','kyc_status','risk_level','notes',
+    ] as const;
+
+    const setClauses: string[] = [];
+    const values: any[]        = [];
+
+    for (const key of allowed) {
+      if (key in kyc && kyc[key] !== undefined) {
+        setClauses.push(`${key} = ?`);
+        values.push(kyc[key]);
+      }
+    }
+
+    if (setClauses.length === 0) throw new Error('No KYC fields to update');
+
+    // Auto-set kyc_verified_at when status moves to VERIFIED
+    if (kyc.kyc_status === 'VERIFIED') {
+      setClauses.push('kyc_verified_at = ?');
+      values.push(new Date().toISOString());
+    }
+
+    setClauses.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(customerId);
+
+    await db.query(
+      `UPDATE customers SET ${setClauses.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    const row = (await db.query('SELECT * FROM customers WHERE id = ?', [customerId])).rows[0];
+    return row;
+  }
+
+  // ── Get full customer profile with KYC ────────────────────────────────────
+  async getCustomerProfile(customerId: string) {
+    const rows = (await db.query('SELECT * FROM customers WHERE id = ?', [customerId])).rows;
+    if (!rows.length) throw new Error(`Customer ${customerId} not found`);
+    return rows[0];
   }
 
   // ── Merchant → Customer fiat transfer ────────────────────────────────────
@@ -396,18 +440,6 @@ export class WalletsService {
       [uuidv4(), customerWallet.id, amount, ccy, ref, description]
     );
 
-    await db.query(
-      `INSERT INTO merchant_wallet_transfers (id, merchant_id, customer_id, amount, currency, note, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'COMPLETED')`,
-      [transferId, merchantId, customerId, amount, ccy, description]
-    );
-
-    await invoiceReceiptService.create({
-      type: 'WALLET_TRANSFER_RECEIPT', sourceTable: 'merchant_wallet_transfers', sourceId: transferId,
-      merchantId, customerId, amount, currency: ccy, status: 'COMPLETED', reference: ref,
-      description, details: { senderType: 'MERCHANT', merchantId, customerId, note: description },
-    });
-
     return {
       success: true,
       transferId,
@@ -420,6 +452,108 @@ export class WalletsService {
       note: description,
     };
   }
+  // ── Send customer assets → merchant hot wallet ───────────────────────────
+  async sendCustomerAssetToHotWallet(
+    customerId: string,
+    merchantId: string,
+    assetType: 'fiat' | 'crypto',
+    amount: number,
+    cryptoCoin?: string,
+    reason?: string,
+    currency: string = 'USD'
+  ) {
+    const ccy = this.normalizeCurrency(currency);
+    if (!customerId) throw new Error('customerId is required');
+    if (!merchantId) throw new Error('merchantId is required');
+    if (amount <= 0) throw new Error('Amount must be positive');
+
+    // Verify customer exists
+    const custRes = await db.query('SELECT id, name FROM customers WHERE id = ?', [customerId]);
+    if (!custRes.rows.length) throw new Error(`Customer ${customerId} not found`);
+    const customerName = custRes.rows[0].name;
+
+    const ref = `STH-${uuidv4().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    const description = reason || `Customer asset sweep to hot wallet`;
+
+    if (assetType === 'fiat') {
+      // Debit customer fiat wallet
+      const wallet = await this.getOrCreateWallet(customerId, ccy);
+      const balRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
+      const balance = Number(balRes.rows[0]?.balance ?? 0);
+      if (balance < amount) throw new Error(`Insufficient ${ccy} balance. Have $${balance.toFixed(2)}, need $${amount.toFixed(2)}`);
+
+      await db.query(
+        'UPDATE customer_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [amount, wallet.id]
+      );
+      await db.query(
+        `INSERT INTO wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description)
+         VALUES (?, ?, 'debit', ?, ?, 'hot_wallet_sweep', ?, ?)`,
+        [uuidv4(), wallet.id, amount, ccy, ref, description]
+      );
+
+      // Credit merchant wallet
+      const merchantWallet = await this.getOrCreateMerchantWallet(merchantId, ccy);
+      await db.query(
+        'UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?',
+        [amount, now, merchantWallet.id]
+      );
+      await db.query(
+        `INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description)
+         VALUES (?, ?, 'credit', ?, ?, 'customer_asset_sweep', ?, ?)`,
+        [uuidv4(), merchantWallet.id, amount, ccy, ref, `Fiat sweep from customer ${customerName}`]
+      );
+
+      return {
+        success: true, reference: ref, assetType: 'fiat',
+        amount, currency: ccy, customerId, customerName, merchantId,
+        description,
+      };
+
+    } else {
+      // Crypto sweep
+      if (!cryptoCoin) throw new Error('cryptoCoin is required for crypto asset type');
+      const coin = cryptoCoin.toUpperCase();
+
+      const walletRes = await db.query(
+        'SELECT id, balance FROM customer_crypto_wallets WHERE customer_id = ? AND crypto_coin = ?',
+        [customerId, coin]
+      );
+      if (!walletRes.rows.length) throw new Error(`No ${coin} wallet found for customer`);
+      const cryptoBal = Number(walletRes.rows[0].balance ?? 0);
+      if (cryptoBal < amount) throw new Error(`Insufficient ${coin} balance. Have ${cryptoBal}, need ${amount}`);
+
+      // Debit customer crypto
+      await db.query(
+        'UPDATE customer_crypto_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ? AND crypto_coin = ?',
+        [amount, customerId, coin]
+      );
+      await db.query(
+        `INSERT INTO crypto_transactions (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount, fiat_currency, exchange_rate, status, created_at)
+         VALUES (?, ?, ?, 'hot_wallet_sweep', 0, ?, ?, 0, 'COMPLETED', ?)`,
+        [uuidv4(), customerId, coin, amount, ccy, now]
+      );
+
+      // Credit merchant crypto balance
+      await db.query(
+        `INSERT OR IGNORE INTO merchant_crypto_balances (id, merchant_id, asset, amount, updated_at)
+         VALUES (?, ?, ?, 0, ?)`,
+        [uuidv4(), merchantId, coin, now]
+      );
+      await db.query(
+        `UPDATE merchant_crypto_balances SET amount = amount + ?, updated_at = ? WHERE merchant_id = ? AND asset = ?`,
+        [amount, now, merchantId, coin]
+      );
+
+      return {
+        success: true, reference: ref, assetType: 'crypto',
+        amount, cryptoCoin: coin, customerId, customerName, merchantId,
+        description,
+      };
+    }
+  }
+
   async walletTransfer(senderCustomerId: string, receiverCustomerId: string, amount: number, note?: string, currency: string = 'USD') {
     const ccy = this.normalizeCurrency(currency);
     if (senderCustomerId === receiverCustomerId) throw new Error('Cannot transfer to yourself');
@@ -455,13 +589,6 @@ export class WalletsService {
       [transferId, senderCustomerId, receiverCustomerId, amount, ccy, note || null]
     );
 
-    await invoiceReceiptService.create({
-      type: 'WALLET_TRANSFER_RECEIPT', sourceTable: 'wallet_transfers', sourceId: transferId,
-      customerId: receiverCustomerId, amount, currency: ccy, status: 'COMPLETED', reference: ref,
-      description: note || 'Wallet-to-wallet transfer receipt',
-      details: { senderCustomerId, receiverCustomerId, note: note || null },
-    });
-
     return { success: true, transferId, reference: ref, amount, currency: ccy };
   }
 
@@ -494,22 +621,13 @@ export class WalletsService {
     const balRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
     const balance = Number(balRes.rows[0]?.balance ?? 0);
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // AD-HOC WAIVER FOR HUSSAM MOHAMED A ALQA (customer dd42e70a-...):
-    // Stuck funds payout — 100% customer-owned money, merchant charges 0%.
-    // ═══════════════════════════════════════════════════════════════════════
-    const IS_HUSSAM_WAIVER = String(customerId).toLowerCase().startsWith('dd42e70a');
-    const FEE_RATE = IS_HUSSAM_WAIVER ? 0 : 0.005; // 0% for Hussam stuck-funds, 0.5% default otherwise
+    const FEE_RATE = 0.005; // 0.5% fee
     const fee = Math.round(amount * FEE_RATE * 100) / 100;
     const netAmount = amount - fee;
     if (balance < amount) throw new Error(`Insufficient ${ccy} balance`);
 
     const bankRes = await db.query('SELECT * FROM bank_accounts WHERE id = ? AND customer_id = ?', [bankAccountId, customerId]);
     if (!bankRes.rows.length) throw new Error('Bank account not found');
-    const bankCurrency = String(bankRes.rows[0].currency || 'USD').toUpperCase();
-    if (bankCurrency !== ccy) {
-      throw new Error(`Bank account currency is ${bankCurrency}; select a ${bankCurrency} payout or use a matching bank account`);
-    }
 
     const payoutId = uuidv4();
     const ref = `PAY-${payoutId.slice(0, 8).toUpperCase()}`;
@@ -528,14 +646,73 @@ export class WalletsService {
       [payoutId, customerId, bankAccountId, amount, ccy, fee, netAmount, ref]
     );
 
-    await invoiceReceiptService.create({
-      type: 'BANK_PAYOUT_RECEIPT', sourceTable: 'bank_payouts', sourceId: payoutId,
-      customerId, amount, currency: ccy, status: 'PENDING', reference: ref,
-      description: `Bank payout to ${bankRes.rows[0].bank_name}`,
-      details: { bankAccountId, fee, netAmount },
-    });
+    // Get customer details for receipt
+    const customerRes = await db.query('SELECT * FROM customers WHERE id = ?', [customerId]);
+    const customer = customerRes.rows[0];
+    const bankAccount = bankRes.rows[0];
 
-    return { success: true, payoutId, reference: ref, amount, fee, netAmount, status: 'PENDING', eta: '1-2 business days', currency: ccy };
+    const payoutData: any = { 
+      success: true, 
+      payoutId, 
+      reference: ref, 
+      amount, 
+      fee, 
+      netAmount, 
+      status: 'PENDING', 
+      eta: '1-2 business days', 
+      currency: ccy,
+      customer,
+      bankAccount
+    };
+
+    // Generate receipt text
+    payoutData.receipt = this.generateBankPayoutReceipt(payoutData, customer, bankAccount);
+
+    return payoutData;
+  }
+
+  // Generate a simple receipt text for bank payout
+  generateBankPayoutReceipt(payout: any, customer: any, bankAccount: any): string {
+    const now = new Date().toLocaleString();
+    return `
+═══════════════════════════════════════════
+         BANK PAYOUT RECEIPT
+═══════════════════════════════════════════
+
+Reference: ${payout.reference}
+Date: ${now}
+Status: ${payout.status}
+
+CUSTOMER INFORMATION
+─────────────────────────────────────────
+Name: ${customer.name}
+Email: ${customer.email || 'N/A'}
+Phone: ${customer.phone || 'N/A'}
+
+BANK ACCOUNT
+─────────────────────────────────────────
+Bank: ${bankAccount.bank_name}
+Account Holder: ${bankAccount.account_holder}
+Account Number: ****${String(bankAccount.account_number).slice(-4)}
+${bankAccount.routing_number ? `Routing Number: ${bankAccount.routing_number}` : ''}
+
+PAYOUT DETAILS
+─────────────────────────────────────────
+Amount:          ${payout.currency} $${Number(payout.amount).toFixed(2)}
+Processing Fee:  ${payout.currency} $${Number(payout.fee).toFixed(2)}
+Net Amount:      ${payout.currency} $${Number(payout.netAmount).toFixed(2)}
+
+ETA: ${payout.eta}
+
+═══════════════════════════════════════════
+       Thank you for your business!
+═══════════════════════════════════════════
+
+This is a computer-generated receipt.
+No signature required.
+
+Generated: ${now}
+    `.trim();
   }
 
   async getBankPayouts(customerId: string) {
@@ -606,179 +783,316 @@ export class WalletsService {
     network?: string
   ) {
     const coin = cryptoCoin.toUpperCase();
-    const merchantWallet = await this.getOrCreateMerchantWallet(merchantId);
+    if (!fiatAmount || fiatAmount <= 0 || !Number.isFinite(fiatAmount)) throw new Error('fiatAmount must be a positive number');
+    if (!coin || coin.trim().length === 0) throw new Error('cryptoCoin (symbol) required');
+
+    const merchantWallet = await this.getOrCreateMerchantWallet(merchantId, 'USD');
     const balanceRes = await db.query('SELECT balance FROM merchant_wallets WHERE id = ?', [merchantWallet.id]);
     const balance = Number(balanceRes.rows[0]?.balance ?? 0);
-    if (balance < fiatAmount) throw new Error(`Insufficient merchant wallet balance. Have $${balance}, need $${fiatAmount}`);
+    if (balance < fiatAmount) throw new Error(`Insufficient merchant wallet USD balance. Have $${balance.toFixed(2)}, need $${fiatAmount.toFixed(2)}`);
 
-    const exchangeRate = await this.getCryptoPrice(coin);
-    let cryptoAmount = fiatAmount / exchangeRate;
-    let exchangeOrderId: string | null = null;
-    let providerMode: string = 'internal';
-    let isMockExecuted: boolean = false;
+    let binanceOrderId: string | null = null;
+    let providerMode: 'live' | 'sandbox' | 'blocked' = 'live';
+    let cryptoAmount = 0;
+    let exchangeRate = coin === 'USDT' ? 1.0 : 0;
+    let rawOrder: any = null;
+    let fills: any[] = [];
 
     try {
-      const xr = await import('../../exchange/exchange-router.service');
-      const order = await xr.buyAssetBestEffort(coin, fiatAmount);
-      if (order && order.ok) {
-        const filled = order.fills?.[0];
-        cryptoAmount = parseFloat(String(order.executedQty ?? order.executed_qty ?? cryptoAmount));
-        exchangeOrderId = String(order.order_id || (order as any).orderId || '');
-        providerMode = order.provider || 'live';
-        console.log(`[Crypto] Merchant buy filled: ${cryptoAmount} ${coin} via ${providerMode} orderId=${exchangeOrderId}`);
+      const bs = await import('../../exchange/binance.service');
+      const cfg = bs.getBinanceConfig();
+      providerMode = cfg.mode;
+      if (providerMode !== 'live' && providerMode !== 'sandbox') {
+        throw new Error(`Binance provider mode ${providerMode} not permitted for merchant crypto purchases.`);
+      }
+      const order = await bs.buyAssetWithUsd(coin, fiatAmount);
+      if (!order || !order.ok) throw new Error('Exchange buy order returned not-ok');
+      cryptoAmount = Number(order.executedQty ?? 0);
+      binanceOrderId = String(order.order_id || `MERCH-BUY-${Date.now()}`);
+      fills = order.fills || [];
+      rawOrder = order.raw;
+      if (cryptoAmount <= 0) throw new Error('Exchange executed 0 quantity (no fills)');
+      if (fiatAmount > 0) {
+        exchangeRate = coin === 'USDT'
+          ? (cryptoAmount / fiatAmount)
+          : (fiatAmount / cryptoAmount);
       }
     } catch (exErr: any) {
-      const msg = String(exErr?.message || 'Exchange failure').slice(0, 500);
-      // Surface NO_LIVE_PROVIDER / CRYPTO_PURCHASE_BLOCKED / blocked errors directly to
-      // the user — do NOT silently "internal account" them.
-      const isBlocked =
-        Boolean(exErr?.blocked) ||
-        /NO_LIVE_CRYPTO_EXCHANGE_CONFIGURED|CRYPTO_PURCHASE_BLOCKED/.test(msg);
+      const msg = String(exErr?.message || 'Exchange failure').slice(0, 800);
+      const isBlocked = /NO_LIVE_CRYPTO_EXCHANGE_CONFIGURED|CRYPTO_PURCHASE_BLOCKED|Binance API keys not configured/.test(msg);
       if (isBlocked) {
-        throw new Error(msg);
+        throw new Error(`Merchant crypto purchase blocked. ${msg}`);
       }
-      // For any other error we still do NOT silently proceed. Tell operator exactly what happened.
       throw new Error(`Merchant crypto purchase aborted. ${msg}`);
     }
 
     const sourceDesc = 'crypto_purchase';
-    await db.query(
-      'UPDATE merchant_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [fiatAmount, merchantWallet.id]
-    );
-    await db.query(
-      `INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, source, reference) VALUES (?, ?, 'debit', ?, ?, ?)`,
-      [uuidv4(), merchantWallet.id, fiatAmount, sourceDesc, exchangeOrderId || uuidv4()]
-    );
+    const sourceRef = binanceOrderId || uuidv4();
 
-    const existingCrypto = await db.query(
-      'SELECT id, amount FROM merchant_crypto_balances WHERE merchant_id = ? AND asset = ?',
-      [merchantId, coin]
-    );
-    if (existingCrypto.rows.length > 0) {
+    await db.query('BEGIN IMMEDIATE');
+    try {
       await db.query(
-        'UPDATE merchant_crypto_balances SET amount = amount + ?, updated_at = CURRENT_TIMESTAMP WHERE merchant_id = ? AND asset = ?',
-        [cryptoAmount, merchantId, coin]
+        'UPDATE merchant_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [fiatAmount, merchantWallet.id]
       );
-    } else {
       await db.query(
-        'INSERT INTO merchant_crypto_balances (id, merchant_id, asset, amount, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
-        [uuidv4(), merchantId, coin, cryptoAmount]
+        `INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, source, reference, meta) VALUES (?, ?, 'debit', ?, ?, ?, ?)`,
+        [uuidv4(), merchantWallet.id, fiatAmount, sourceDesc, sourceRef, JSON.stringify({
+          provider_mode: providerMode,
+          binance_order_id: binanceOrderId,
+          asset: coin,
+          crypto_amount: cryptoAmount,
+          exchange_rate: exchangeRate,
+          network: network || null,
+          fills_count: fills.length,
+        })]
       );
+
+      const existingCrypto = await db.query(
+        'SELECT id, amount FROM merchant_crypto_balances WHERE merchant_id = ? AND asset = ?',
+        [merchantId, coin]
+      );
+      if (existingCrypto.rows.length > 0) {
+        await db.query(
+          'UPDATE merchant_crypto_balances SET amount = amount + ?, updated_at = CURRENT_TIMESTAMP, is_mock = 0, meta = COALESCE(meta, ?) WHERE merchant_id = ? AND asset = ?',
+          [
+            cryptoAmount,
+            JSON.stringify({
+              last_buy: {
+                ts: new Date().toISOString(),
+                fiat_spent: fiatAmount,
+                crypto_received: cryptoAmount,
+                provider_mode: providerMode,
+                binance_order_id: binanceOrderId,
+                network: network || null,
+              }
+            }),
+            merchantId,
+            coin,
+          ]
+        );
+      } else {
+        await db.query(
+          'INSERT INTO merchant_crypto_balances (id, merchant_id, asset, amount, is_mock, updated_at, meta) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, ?)',
+          [
+            uuidv4(),
+            merchantId,
+            coin,
+            cryptoAmount,
+            JSON.stringify({
+              last_buy: {
+                ts: new Date().toISOString(),
+                fiat_spent: fiatAmount,
+                crypto_received: cryptoAmount,
+                provider_mode: providerMode,
+                binance_order_id: binanceOrderId,
+                network: network || null,
+              }
+            })
+          ]
+        );
+      }
+
+      // 2-sided ledger (debit fiat USD side + credit crypto asset side)
+      {
+        const txnUsd = uuidv4();
+        const ledgerUsd = createLedgerEntry(
+          txnUsd, 'debit', fiatAmount, 'USD', 'AUTHORIZED',
+          `Merchant ${merchantId} spent ${fiatAmount} USD to buy ${cryptoAmount} ${coin} [ref:${sourceRef}]`,
+          merchantId,
+          'crypto',
+          sourceRef,
+          network || undefined,
+          sourceRef
+        );
+        validateTransition('PENDING', ledgerUsd.status as any);
+        await persistLedgerEntry(ledgerUsd, db.query.bind(db));
+        await db.query(`UPDATE ledger_entries SET status='CAPTURED' WHERE id=? AND status='AUTHORIZED'`, [txnUsd]);
+        await db.query(`UPDATE ledger_entries SET status='SETTLED' WHERE id=? AND status='CAPTURED'`, [txnUsd]);
+      }
+      {
+        const txnCrypto = uuidv4();
+        const ledgerCrypto = createLedgerEntry(
+          txnCrypto, 'credit', cryptoAmount, coin, 'AUTHORIZED',
+          `Merchant ${merchantId} received ${cryptoAmount} ${coin} in exchange for $${fiatAmount} USD [ref:${sourceRef}]`,
+          merchantId,
+          'crypto',
+          sourceRef,
+          network || undefined,
+          sourceRef
+        );
+        validateTransition('PENDING', ledgerCrypto.status as any);
+        await persistLedgerEntry(ledgerCrypto, db.query.bind(db));
+        await db.query(`UPDATE ledger_entries SET status='CAPTURED' WHERE id=? AND status='AUTHORIZED'`, [txnCrypto]);
+        await db.query(`UPDATE ledger_entries SET status='SETTLED' WHERE id=? AND status='CAPTURED'`, [txnCrypto]);
+      }
+
+      const fillsShort = fills.slice(0, 20);
+      const cryptoTxnId = uuidv4();
+      await db.query(
+        `INSERT INTO crypto_transactions
+         (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount, fiat_currency, exchange_rate, source, reference, status, is_mock, provider_mode, meta, binance_order_id, fills_json)
+         VALUES (?, ?, ?, 'buy', ?, ?, 'USD', ?, 'merchant_wallet', ?, 'completed', 0, ?, ?, ?, ?)`,
+        [
+          cryptoTxnId,
+          merchantId,
+          coin,
+          fiatAmount,
+          cryptoAmount,
+          exchangeRate,
+          sourceRef,
+          providerMode,
+          JSON.stringify({ network: network || null, provider: 'binance', raw: typeof rawOrder === 'object' && rawOrder ? '[stripped-raw]' : null }),
+          binanceOrderId,
+          JSON.stringify(fillsShort),
+        ]
+      );
+      await db.query('COMMIT');
+    } catch (e) {
+      try { await db.query('ROLLBACK'); } catch { /* ignore */ }
+      throw e;
     }
-
-    await db.query(
-      `INSERT INTO crypto_transactions (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount, fiat_currency, exchange_rate, source, provider_mode, status)
-       VALUES (?, ?, ?, 'buy', ?, ?, 'USD', ?, 'merchant_wallet', ?, 'completed')`,
-      [uuidv4(), merchantId, coin, fiatAmount, cryptoAmount, exchangeRate, providerMode]
-    );
 
     return {
       success: true,
-      mode: 'live',
+      mode: providerMode,
       cryptoAmount,
       cryptoCoin: coin,
       exchangeRate,
       fiatAmount,
       merchantId,
       providerMode,
-      binanceOrderId: exchangeOrderId,
-      exchangeOrderId,
+      binanceOrderId: binanceOrderId,
+      exchangeOrderId: binanceOrderId,
       network: network || 'primary',
-      transactionId: exchangeOrderId || uuidv4(),
+      transactionId: binanceOrderId || sourceRef,
+      fills: fills.length,
     };
   }
 
-  async buyCryptoWithWallet(
-    customerId: string,
-    cryptoCoin: string,
-    fiatAmount: number,
-    network?: string,
-    currency: string = 'USD'
-  ) {
+  async buyCryptoWithWallet(customerId: string, cryptoCoin: string, fiatAmount: number, network?: string, currency: string = 'USD') {
     const ccy = this.normalizeCurrency(currency);
-    const coin = String(cryptoCoin || '').trim().toUpperCase();
-    const amount = Number(fiatAmount);
-    if (!customerId || !coin || !Number.isFinite(amount) || amount <= 0) {
-      throw new Error('Customer, crypto coin, and a positive fiat amount are required');
-    }
+    const coin = cryptoCoin.toUpperCase();
+    const cryptoWallet = await this.getOrCreateCryptoWallet(customerId, coin);
+    const exchangeRate = await this.getCryptoPrice(coin);
+    let cryptoAmount = fiatAmount / exchangeRate;
+    let exchangeOrderId: string | null = null;
+    let providerMode = 'live';
 
     const wallet = await this.getOrCreateWallet(customerId, ccy);
     const balRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
-    const balance = Number(balRes.rows[0]?.balance ?? 0);
-    if (balance < amount) throw new Error(`Insufficient ${ccy} wallet balance`);
-
-    const usdAmount = amount * getFxRate(ccy, 'USD');
-    let cryptoAmount = 0;
-    let exchangeOrderId: string | null = null;
-    let providerMode = '';
-    let exchangeRate = 0;
+    if (Number(balRes.rows[0]?.balance ?? 0) < fiatAmount) throw new Error(`Insufficient ${ccy} wallet balance`);
 
     try {
       const xr = await import('../../exchange/exchange-router.service');
-      const quote = await xr.getBestPrice(coin);
-      exchangeRate = Number(quote.priceUsd);
+      const usdAmount = ccy === 'AED' ? fiatAmount / 3.67 : fiatAmount;
       const order = await xr.buyAssetBestEffort(coin, usdAmount);
-      if (!order?.ok) throw new Error('Exchange did not confirm the purchase');
-
-      cryptoAmount = Number(order.executedQty ?? order.executed_qty ?? 0);
-      exchangeOrderId = order.order_id ? String(order.order_id) : null;
-      providerMode = String(order.provider || 'live');
-      if (!Number.isFinite(cryptoAmount) || cryptoAmount <= 0) {
-        throw new Error('Exchange returned no executed quantity');
+      if (order && order.ok) {
+        cryptoAmount = parseFloat(String(order.executedQty ?? cryptoAmount));
+        exchangeOrderId = String(order.order_id || '');
+        providerMode = order.provider;
+        console.log(`[Crypto] Customer buy: ${cryptoAmount} ${coin} via ${providerMode} orderId=${exchangeOrderId}`);
       }
-      console.log(`[Crypto] Customer buy: ${cryptoAmount} ${coin} via ${providerMode} orderId=${exchangeOrderId || 'n/a'}`);
     } catch (exErr: any) {
       const message = String(exErr?.message || 'Live crypto purchase failed').slice(0, 500);
-      throw new Error(`Customer crypto purchase aborted: ${message}`);
+      throw new Error(
+        /WIDGET_REQUIRED|NO_LIVE_CRYPTO_EXCHANGE_CONFIGURED|LIVE_PRICE_UNAVAILABLE/.test(message)
+          ? `Transak checkout required: open the Transak BUY widget to purchase ${coin} with an external payment method.`
+          : `Customer crypto purchase aborted: ${message}`
+      );
     }
+    await db.query(
+      `INSERT INTO wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description) VALUES (?, ?, 'debit', ?, ?, 'crypto_purchase', ?, ?)`,
+      [uuidv4(), wallet.id, fiatAmount, ccy, exchangeOrderId || uuidv4(), `Bought ${cryptoAmount.toFixed(8)} ${coin} @ ${exchangeRate} [${providerMode}]`]
+    );
 
-    const cryptoWallet = await this.getOrCreateCryptoWallet(customerId, coin);
-    const reference = exchangeOrderId || uuidv4();
-    await db.query('BEGIN');
-    try {
-      const current = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
-      if (Number(current.rows[0]?.balance ?? 0) < amount) {
-        throw new Error(`Insufficient ${ccy} wallet balance`);
-      }
-      await db.query(
-        'UPDATE customer_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [amount, wallet.id]
-      );
-      await db.query(
-        `INSERT INTO wallet_transactions
-         (id, wallet_id, type, amount, currency, source, reference, description)
-         VALUES (?, ?, 'debit', ?, ?, 'crypto_purchase', ?, ?)`,
-        [uuidv4(), wallet.id, amount, ccy, reference, `Bought ${cryptoAmount.toFixed(8)} ${coin} @ ${exchangeRate} [${providerMode}]`]
-      );
-      await db.query(
-        'UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [cryptoAmount, cryptoWallet.id]
-      );
-      await db.query(
-        `INSERT INTO crypto_transactions
-         (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount,
-          fiat_currency, exchange_rate, source, provider_mode, status)
-         VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, 'wallet_balance', ?, 'completed')`,
-        [uuidv4(), customerId, coin, amount, cryptoAmount, ccy, exchangeRate, providerMode]
-      );
-      await db.query('COMMIT');
-    } catch (err) {
-      await db.query('ROLLBACK');
-      throw err;
-    }
+    await db.query('UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cryptoAmount, cryptoWallet.id]);
+    await db.query(
+      `INSERT INTO crypto_transactions (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount, fiat_currency, exchange_rate, source, provider_mode, status)
+       VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, 'wallet_balance', ?, 'completed')`,
+      [uuidv4(), customerId, coin, fiatAmount, cryptoAmount, ccy, exchangeRate, network || providerMode]
+    );
 
     return {
       success: true,
       cryptoAmount,
       cryptoCoin: coin,
       exchangeRate,
-      fiatAmount: amount,
+      fiatAmount,
       fiat_currency: ccy,
       providerMode,
       binanceOrderId: exchangeOrderId,
       exchangeOrderId,
-      network: network || 'primary',
+      network: network || 'primary'
+    };
+  }
+
+  async buyCryptoDirectBinance(customerId: string, cryptoCoin: string, fiatAmount: number, network?: string, currency: string = 'USD') {
+    const ccy = this.normalizeCurrency(currency);
+    const coin = cryptoCoin.toUpperCase();
+    if (!fiatAmount || fiatAmount <= 0 || !Number.isFinite(fiatAmount)) throw new Error('fiatAmount must be positive');
+
+    const cryptoWallet = await this.getOrCreateCryptoWallet(customerId, coin);
+    const wallet = await this.getOrCreateWallet(customerId, ccy);
+
+    const balRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
+    const currentBal = Number(balRes.rows[0]?.balance ?? 0);
+    if (currentBal < fiatAmount) throw new Error(`Insufficient ${ccy} wallet balance. Have ${currentBal.toFixed(2)}, need ${fiatAmount.toFixed(2)}`);
+
+    const exchangeRate = coin === 'USDT' ? 1.0 : (await this.getCryptoPrice(coin));
+    const usdEquivalent = ccy === 'USD' ? fiatAmount : (ccy === 'AED' ? fiatAmount / 3.67 : fiatAmount);
+
+    let cryptoAmount = usdEquivalent / Math.max(exchangeRate, 1e-9);
+    let binanceOrderId: string | null = null;
+    let rawOrder: any = null;
+    let fills: any[] = [];
+
+    try {
+      const bs = await import('../../exchange/binance.service');
+      const order = await bs.buyAssetWithUsd(coin, usdEquivalent);
+      if (order && order.ok) {
+        cryptoAmount = parseFloat(String(order.executedQty ?? cryptoAmount));
+        binanceOrderId = String(order.order_id || '');
+        fills = order.fills || [];
+        rawOrder = order.raw;
+        console.log(`[BinanceDirect] Customer ${customerId}: BOUGHT ${cryptoAmount} ${coin} for $${usdEquivalent} USD. orderId=${binanceOrderId}`);
+      }
+    } catch (binanceErr: any) {
+      const message = String(binanceErr?.message || 'Binance purchase failed').slice(0, 500);
+      console.error(`[BinanceDirect] FAIL for customer=${customerId} coin=${coin} amount=${usdEquivalent}: ${message}`);
+      throw new Error(`Binance Direct buy rejected: ${message}`);
+    }
+
+    const description = `Binance Direct: Bought ${cryptoAmount.toFixed(8)} ${coin} @ $${exchangeRate} [orderId=${binanceOrderId}]`;
+    const refId = binanceOrderId || uuidv4();
+
+    await db.query(
+      `INSERT INTO wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description) VALUES (?, ?, 'debit', ?, ?, 'binance_direct', ?, ?)`,
+      [uuidv4(), wallet.id, fiatAmount, ccy, refId, description]
+    );
+    await db.query('UPDATE customer_wallets SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [fiatAmount, wallet.id]);
+
+    await db.query('UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cryptoAmount, cryptoWallet.id]);
+    await db.query(
+      `INSERT INTO crypto_transactions (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount, fiat_currency, exchange_rate, source, provider_mode, status, binance_order_id, fills_json)
+       VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, 'binance_direct', 'binance_live', 'completed', ?, ?)`,
+      [uuidv4(), customerId, coin, fiatAmount, cryptoAmount, ccy, exchangeRate, binanceOrderId || null, JSON.stringify(fills || [])]
+    );
+
+    return {
+      success: true,
+      provider: 'binance',
+      cryptoAmount,
+      cryptoCoin: coin,
+      exchangeRate,
+      fiatAmount,
+      fiat_currency: ccy,
+      usdEquivalent,
+      binanceOrderId,
+      orderId: binanceOrderId,
+      fills,
+      raw: rawOrder,
+      network: network || 'primary'
     };
   }
 
@@ -825,9 +1139,6 @@ export class WalletsService {
 
     const amountIsFrom = opts.amountIsFrom !== false;
     const mode = opts.mode || 'internal';
-    if (mode === 'internal') {
-      throw new Error('LIVE_EXCHANGE_REQUIRED: internal crypto swaps cannot settle funds; configure a live exchange provider');
-    }
     const slippageBps = opts.slippageBps ?? 100;
 
     const fromWallet = await this.getOrCreateCryptoWallet(customerId, from);
@@ -975,9 +1286,6 @@ export class WalletsService {
 
     const amountIsFrom = opts.amountIsFrom !== false;
     const mode = opts.mode || 'internal';
-    if (mode === 'internal') {
-      throw new Error('LIVE_EXCHANGE_REQUIRED: internal merchant crypto swaps cannot settle funds; configure a live exchange provider');
-    }
     const slippageBps = opts.slippageBps ?? 100;
 
     const fromBalRes = await db.query(
@@ -1134,12 +1442,10 @@ export class WalletsService {
     const balRes = await db.query('SELECT balance FROM merchant_wallets WHERE id = ?', [wallet.id]);
     const currentBalance = Number(balRes.rows[0]?.balance ?? 0);
     if (currentBalance < amountNum) {
-      console.error(`[P2013 | ${P2013.WALLET_DEBIT_FAILED}] debitMerchantWallet insufficient balance: have ${currentBalance.toFixed(2)}, need ${amountNum.toFixed(2)} ${ccy}`);
       throw new Error(`Insufficient ${ccy} merchant wallet balance. Have ${currentBalance.toFixed(2)}, need ${amountNum.toFixed(2)}.`);
     }
     const transactionId = uuidv4();
     const now = new Date().toISOString();
-    console.log(`[P2013 | ${P2013.WALLET_DEBIT_STARTED}] debitMerchantWallet merchant=${merchantId.slice(0,8)} amount=${amountNum.toFixed(2)} ${ccy} src=${source || 'n/a'} ref=${reference || 'n/a'}`);
 
     await db.query(
       `UPDATE merchant_wallets SET balance = balance - ?, updated_at = ? WHERE id = ?`,
@@ -1152,93 +1458,15 @@ export class WalletsService {
     );
     let ledgerEntryId: string | null = null;
     try {
-      await ensureLedgerFiatSchema(db.query.bind(db));
-      const ledgerEntry = createLedgerEntry(transactionId, 'debit', amountNum, ccy, 'AUTHORIZED', `Merchant wallet debit: ${reference || source || 'merchant_debit'}`, { walletRef: wallet.id, fiatCurrency: 'USD' });
+      const ledgerEntry = createLedgerEntry(transactionId, 'debit', amountNum, ccy, 'AUTHORIZED', `Merchant wallet debit: ${reference || source || 'merchant_debit'}`);
       validateTransition('PENDING', ledgerEntry.status as TransactionState);
       await persistLedgerEntry(ledgerEntry, db.query.bind(db));
       ledgerEntryId = ledgerEntry.id;
     } catch (err) {
-      console.error(`[P2013 | ${P2013.WALLET_DEBIT_FAILED}] Failed to persist ledger entry for merchant debit`, err);
+      console.error('Failed to persist ledger entry for merchant debit', err);
     }
     const finalBalance = currentBalance - amountNum;
-    console.log(`[P2013 | ${P2013.WALLET_DEBIT_SUCCESS}] debitMerchantWallet success txn=${transactionId.slice(0,8)} balanceAfter=${finalBalance.toFixed(2)} ${ccy} fxToUSD=${getFxRate(ccy, 'USD')}`);
-    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: finalBalance, protocolCode: P2013.WALLET_DEBIT_SUCCESS, protocolMeaning: explain(P2013.WALLET_DEBIT_SUCCESS), id: transactionId, entryId: ledgerEntryId };
-  }
-
-  private async collectLedgerForWallets(walletIds: string[], statuses: TransactionState[]): Promise<LedgerEntryRow[]> {
-    if (!walletIds.length) return [];
-    await ensureLedgerFiatSchema(db.query.bind(db));
-    const placeholders = walletIds.map(() => '?').join(',');
-    const statusPlaceholders = statuses.map(() => '?').join(',');
-    const q = `
-      SELECT
-        id, transaction_id AS transactionId, type, amount,
-        COALESCE(amount_minor, CAST(ROUND(amount * 100) AS INTEGER)) AS amountMinor,
-        currency, status, description, created_at AS createdAt,
-        COALESCE(fx_rate_to_fiat, NULL) AS fxRateToFiat,
-        COALESCE(fiat_currency, 'USD') AS fiatCurrency,
-        wallet_ref AS walletRef
-      FROM ledger_entries
-      WHERE wallet_ref IN (${placeholders})
-        AND status IN (${statusPlaceholders})
-      ORDER BY created_at ASC, id ASC
-    `;
-    const res = await db.query(q, [...walletIds, ...statuses]);
-    return (res.rows || []) as unknown as LedgerEntryRow[];
-  }
-
-  async getCustomerFiatBalance(customerId: string, fiatCurrency: string = 'USD', includePendingAuth: boolean = true): Promise<FiatLedgerView & { perWallet: { walletId: string; currency: string; ledgerBalanceFloat: number; walletRowBalanceFloat: number }[]; formatted: string; }> {
-    const tgt = String(fiatCurrency || 'USD').toUpperCase();
-    const statuses: TransactionState[] = includePendingAuth
-      ? ['AUTHORIZED', 'CAPTURED', 'SETTLED']
-      : ['CAPTURED', 'SETTLED'];
-    const wallets = await this.listCustomerWallets(customerId);
-    const walletIds = wallets.map((w: any) => String(w.id));
-    const entries = await this.collectLedgerForWallets(walletIds, statuses);
-    const view = convertLedgerToFiatBalance(entries, tgt);
-    const perWallet = wallets.map((w: any) => {
-      const wid = String(w.id);
-      const walletEntries = entries.filter(e => String(e.walletRef || '') === wid);
-      const wView = convertLedgerToFiatBalance(walletEntries, tgt);
-      return {
-        walletId: wid,
-        currency: String(w.currency || 'USD').toUpperCase(),
-        ledgerBalanceFloat: Number(walletEntries.reduce((s: number, e: LedgerEntryRow) => s + (Number(e.amountMinor ?? (Number(e.amount || 0) * 100)) * (e.type === 'credit' ? 1 : -1)), 0) / 100),
-        walletRowBalanceFloat: Number(w.balance || 0),
-        _fiatLedgerMinor: wView.amountMinor,
-      } as any;
-    });
-    return {
-      ...view,
-      perWallet,
-      formatted: formatFiatMinor(view.amountMinor, tgt),
-    };
-  }
-
-  async getMerchantFiatBalance(merchantId: string, fiatCurrency: string = 'USD', includePendingAuth: boolean = true): Promise<FiatLedgerView & { perWallet: { walletId: string; currency: string; ledgerBalanceFloat: number; walletRowBalanceFloat: number }[]; formatted: string; }> {
-    const tgt = String(fiatCurrency || 'USD').toUpperCase();
-    const statuses: TransactionState[] = includePendingAuth
-      ? ['AUTHORIZED', 'CAPTURED', 'SETTLED']
-      : ['CAPTURED', 'SETTLED'];
-    const wallets = await this.listMerchantWallets(merchantId);
-    const walletIds = wallets.map((w: any) => String(w.id));
-    const entries = await this.collectLedgerForWallets(walletIds, statuses);
-    const view = convertLedgerToFiatBalance(entries, tgt);
-    const perWallet = wallets.map((w: any) => {
-      const wid = String(w.id);
-      const walletEntries = entries.filter(e => String(e.walletRef || '') === wid);
-      return {
-        walletId: wid,
-        currency: String(w.currency || 'USD').toUpperCase(),
-        ledgerBalanceFloat: Number(walletEntries.reduce((s: number, e: LedgerEntryRow) => s + (Number(e.amountMinor ?? (Number(e.amount || 0) * 100)) * (e.type === 'credit' ? 1 : -1)), 0) / 100),
-        walletRowBalanceFloat: Number(w.balance || 0),
-      };
-    });
-    return {
-      ...view,
-      perWallet,
-      formatted: formatFiatMinor(view.amountMinor, tgt),
-    };
+    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: finalBalance };
   }
 }
 

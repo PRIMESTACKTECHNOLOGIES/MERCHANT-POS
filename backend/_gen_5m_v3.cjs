@@ -361,7 +361,6 @@ function run() {
     `CREATE TABLE IF NOT EXISTS merchant_settings (
       merchant_id TEXT PRIMARY KEY, api_key TEXT, webhook_url TEXT,
       test_mode INTEGER DEFAULT 0, merchant_name TEXT, support_email TEXT,
-      paypal_client_id TEXT, paypal_client_secret TEXT,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP, features TEXT,
       extended_settings TEXT, terminal_id TEXT
     ) WITHOUT ROWID`,

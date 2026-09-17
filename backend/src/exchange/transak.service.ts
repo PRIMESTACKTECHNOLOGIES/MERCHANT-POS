@@ -87,7 +87,7 @@ export interface TransakWidgetParams {
 }
 
 export interface CreateWidgetSessionResponse {
-  sessionId: string;
+  sessionId?: string;
   widgetUrl: string;
   expiresAt: string;
 }
@@ -225,6 +225,31 @@ export interface TransakWebhooksResponse {
   data: Array<Record<string, unknown>>;
 }
 
+export interface TransakOrdersQuery {
+  limit?: number;
+  skip?: number;
+  startDate?: string;
+  endDate?: string;
+  status?: string;
+  sortOrder?: 'asc' | 'desc';
+  walletAddress?: string;
+  partnerOrderId?: string;
+  productsAvailed?: 'BUY' | 'SELL';
+}
+
+export interface TransakOrdersResponse {
+  meta?: Record<string, unknown>;
+  data: Array<Record<string, unknown>>;
+}
+
+export interface TransakCryptoCurrency {
+  symbol?: string;
+  name?: string;
+  isAllowed?: boolean;
+  networks?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
 let accessTokenCache: {
   token: string;
   expiresAt: number;
@@ -262,7 +287,7 @@ export function getTransakConfig(): TransakConfig {
 
   if (requestedMode === 'production') {
     mode = 'production';
-    baseUrl = process.env.TRANSAK_BASE_URL?.trim() || 'https://api.transak.com';
+    baseUrl = process.env.TRANSAK_BASE_URL?.trim() || 'https://api-gateway.transak.com';
     publicApiUrl = process.env.TRANSAK_PUBLIC_API_URL?.trim() || 'https://api.transak.com';
     widgetUrl = process.env.TRANSAK_WIDGET_URL?.trim() || 'https://global.transak.com';
   } else {
@@ -337,11 +362,16 @@ export async function createWidgetSession(
     fiatAmount?: number;
     fiatCurrency?: string;
   } = {
+    ...widgetParams,
+    // These values must always come from the partner backend. Do not allow
+    // client-supplied widget parameters to override them.
     apiKey: cfg.apiKey,
     referrerDomain: cfg.referrerDomain,
     environment: cfg.mode,
-    ...widgetParams,
   };
+  if (!cfg.referrerDomain) {
+    throw new Error('Transak referrer domain is not configured. Set TRANSAK_REFERRER_DOMAIN.');
+  }
 
   if (!params.cryptoCurrencyCode && params.defaultCryptoCurrency) {
     params.cryptoCurrencyCode = params.defaultCryptoCurrency;
@@ -377,11 +407,11 @@ export async function createWidgetSession(
     const expiresAt = res.data?.expiresAt || res.data?.expires_at
       || new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    if (!widgetUrl || !sessionId) {
-      throw new Error('Transak widget session response missing sessionId or widgetUrl');
+    if (!widgetUrl) {
+      throw new Error('Transak widget session response missing widgetUrl');
     }
 
-    return { sessionId, widgetUrl, expiresAt };
+    return { ...(sessionId ? { sessionId } : {}), widgetUrl, expiresAt };
   } catch (e: any) {
     const msg = e?.response?.data?.message || e?.message || String(e);
     throw new Error(`Transak widget session creation failed: ${msg}`);
@@ -579,17 +609,72 @@ export async function getOrderStatus(orderId: string): Promise<TransakOrder> {
 
   const axiosInst = (await import('axios')).default;
   const res = await axiosInst.get(
-    `${cfg.baseUrl}/api/v2/orders/${orderId}`,
+    `${cfg.publicApiUrl}/partners/api/v2/order/${encodeURIComponent(orderId)}`,
     {
       headers: {
-        'Content-Type': 'application/json',
+        'x-api-key': cfg.apiKey,
         'access-token': token,
       },
       timeout: 10000,
     }
   );
 
-  return res.data as TransakOrder;
+  const order = res.data?.data || res.data;
+  if (!order || !(order.id || order._id)) {
+    throw new Error('Transak order response did not contain an order');
+  }
+  return {
+    ...order,
+    id: order.id || order._id,
+    statusHistories: order.statusHistories || [],
+    createdAt: order.createdAt || '',
+    updatedAt: order.updatedAt || order.createdAt || '',
+  } as TransakOrder;
+}
+
+export async function getOrders(query: TransakOrdersQuery = {}): Promise<TransakOrdersResponse> {
+  const cfg = getTransakConfig();
+  const accessToken = await generateAccessToken();
+  const params: Record<string, string | number> = {
+    limit: Math.min(Math.max(Number(query.limit || 100), 1), 100),
+    skip: Math.max(Number(query.skip || 0), 0),
+  };
+
+  if (query.startDate) params.startDate = query.startDate;
+  if (query.endDate) params.endDate = query.endDate;
+  if (query.status) params['filter[status]'] = query.status;
+  if (query.sortOrder) params['filter[sortOrder]'] = query.sortOrder;
+  if (query.walletAddress) params['filter[walletAddress]'] = query.walletAddress;
+  if (query.partnerOrderId) params['filter[partnerOrderId]'] = query.partnerOrderId;
+  if (query.productsAvailed) params['filter[productsAvailed]'] = JSON.stringify([query.productsAvailed]);
+
+  const res = await axios.get(`${cfg.publicApiUrl}/partners/api/v2/orders`, {
+    params,
+    headers: {
+      'x-api-key': cfg.apiKey,
+      'access-token': accessToken,
+    },
+    timeout: 15000,
+  });
+  const data = res.data || {};
+  if (!Array.isArray(data.data)) {
+    throw new Error('Transak orders response did not contain a data array');
+  }
+  return { meta: data.meta, data: data.data };
+}
+
+export async function getCryptoCurrencies(): Promise<{ response: TransakCryptoCurrency[] }> {
+  const cfg = getTransakConfig();
+  const res = await axios.get(`${cfg.publicApiUrl}/cryptocoverage/api/v1/public/crypto-currencies`, {
+    headers: { 'x-api-key': cfg.apiKey },
+    timeout: 15000,
+  });
+  const data = res.data || {};
+  const currencies = data.response || data.data || [];
+  if (!Array.isArray(currencies)) {
+    throw new Error('Transak crypto-currencies response did not contain an array');
+  }
+  return { response: currencies };
 }
 
 export async function createOrder(
@@ -645,9 +730,10 @@ export function verifyWebhookSignature(
   signatureHeader: string,
   signingSecret?: string
 ): boolean {
-  const cfg = getTransakConfig();
-  const secret = signingSecret || cfg.webhookSecret;
+  const secret = signingSecret || process.env.TRANSAK_WEBHOOK_SECRET?.trim() || '';
   if (!secret) return false;
+  const provided = String(signatureHeader || '').trim();
+  if (!/^[a-f0-9]{64}$/i.test(provided)) return false;
 
   const expected = crypto
     .createHmac('sha256', secret)
@@ -656,7 +742,7 @@ export function verifyWebhookSignature(
 
   return crypto.timingSafeEqual(
     Buffer.from(expected, 'hex'),
-    Buffer.from(signatureHeader || '', 'hex')
+    Buffer.from(provided, 'hex')
   );
 }
 

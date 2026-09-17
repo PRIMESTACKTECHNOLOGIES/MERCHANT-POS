@@ -309,6 +309,40 @@ router.post('/merchant/:merchantId/payout/crypto', async (req, res) => {
             parsedSenderMode === 'treasury' ? 'treasury' :
             parsedSenderMode === 'hot'      ? 'hot'      :
                                               'auto';
+
+          // ★ AUTO TRX GAS TOPUP (TRON rail only) ★
+          // If this is a tron withdrawal AND the sender wallet (hot/treasury) has < 20 TRX,
+          // automatically buy TRX on Binance using the MERCHANT'S OWN USD WALLET,
+          // withdraw it to the sender, wait for chain confirmations, THEN proceed with
+          // broadcast. Zero manual "go outside & buy TRX" steps ever again.
+          if (directRail === 'tronweb' && isUsdt) {
+            try {
+              const tws = await import('../../exchange/tronweb.service');
+              let roleToTopup: 'hot' | 'treasury';
+              if (fallBackSenderMode === 'treasury') roleToTopup = 'treasury';
+              else if (fallBackSenderMode === 'hot') roleToTopup = 'hot';
+              else {
+                const treasuryUsdt = tws.isTreasuryConfigured() ? await tws.getTreasuryUsdtBalance() : 0;
+                roleToTopup = (tws.isTreasuryConfigured() && treasuryUsdt >= amount) ? 'treasury' : 'hot';
+              }
+              const autoGas = await tws.ensureHotWalletGasOrFail({
+                merchantId,
+                senderRole: roleToTopup,
+                minTrx: 20,
+                trxTarget: 25,
+                usdBuffer: 5.5,
+                maxWaitMs: 180_000,
+              });
+              if (autoGas && autoGas.neededTopup && autoGas.ok) {
+                console.log(`[CryptoPayout:AutoGas] ✅ ${roleToTopup.toUpperCase()} wallet auto-funded ${autoGas.topupTrxBought?.toFixed(4) || '?'} TRX ` +
+                  `for $${autoGas.topupUsdSpent?.toFixed(2) || '?'} merchant USD → on-chain ${autoGas.postTopupTrx.toFixed(4)} TRX ready. ` +
+                  `withdrawId=${autoGas.binanceWithdrawId || 'n/a'} settle=~${((autoGas.settledAfterMs||0)/1000).toFixed(1)}s`);
+              }
+            } catch (autoGasErr: any) {
+              console.warn(`[CryptoPayout:AutoGas] ⚠️ Auto TRX topup skipped/failed: ${autoGasErr?.message || String(autoGasErr)}`);
+            }
+          }
+
           withdrawalResult = await xr.directRailWithdraw(directRail, assetUpper, address, amount, {
             senderMode: fallBackSenderMode,
           });
@@ -443,6 +477,28 @@ router.post('/merchant/:merchantId/payout/crypto', async (req, res) => {
       if (fallbackDirectRail) {
         try {
           console.log(`[MerchantPayout:Crypto] Exchange blocked, using ${fallbackDirectRail} fallback: ${amount} USDT → ${address}`);
+
+          // ★ AUTO TRX GAS TOPUP (fallback TRON rail) ★
+          if (fallbackDirectRail === 'tronweb' && isUsdt) {
+            try {
+              const tws = await import('../../exchange/tronweb.service');
+              const autoGas = await tws.ensureHotWalletGasOrFail({
+                merchantId,
+                senderRole: 'hot',
+                minTrx: 20,
+                trxTarget: 25,
+                usdBuffer: 5.5,
+                maxWaitMs: 180_000,
+              });
+              if (autoGas && autoGas.neededTopup && autoGas.ok) {
+                console.log(`[CryptoPayout:AutoGas:Fallback] ✅ HOT wallet auto-funded ${autoGas.topupTrxBought?.toFixed(4) || '?'} TRX ` +
+                  `for $${autoGas.topupUsdSpent?.toFixed(2) || '?'} merchant USD → on-chain ${autoGas.postTopupTrx.toFixed(4)} TRX ready.`);
+              }
+            } catch (autoGasErr: any) {
+              console.warn(`[CryptoPayout:AutoGas:Fallback] ⚠️ Auto TRX topup skipped/failed: ${autoGasErr?.message || String(autoGasErr)}`);
+            }
+          }
+
           withdrawalResult = await xr.directRailWithdraw(fallbackDirectRail, assetUpper, address, amount);
           provider = fallbackDirectRail;
           if (withdrawalResult.deferred) {

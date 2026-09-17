@@ -131,7 +131,7 @@ router.get('/summary', async (req: Request, res: Response) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /csv  — Wise Batch Payment CSV (exact Wise format)
-// Upload directly to: wise.com → Business → Batch Payments → Upload CSV
+// Upload through the configured bank provider's batch-payment workflow.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/csv', async (req: Request, res: Response) => {
   try {
@@ -153,7 +153,7 @@ router.get('/csv', async (req: Request, res: Response) => {
     const now      = new Date().toISOString().slice(0, 10);
 
     // ── Wise Batch CSV exact column order ─────────────────────────────────
-    // Source: https://wise.com/help/articles/2976723
+    // Keep the generated batch format aligned with the configured provider.
     // Columns:
     //   name, recipientEmail, paymentReference, receiverType,
     //   amountCurrency, amount, sourceCurrency, targetCurrency,
