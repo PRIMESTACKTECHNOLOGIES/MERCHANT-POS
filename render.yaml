@@ -3,7 +3,7 @@ services:
   - type: web
     name: pos-offline-api
     env: docker
-    plan: free
+    plan: starter
     branch: main
     region: frankfurt
     dockerfilePath: ./Dockerfile
@@ -27,3 +27,7 @@ services:
         value: https://api-gateway.transak.com/api/v2
       - key: WEBHOOK_SECRET
         generateValue: true
+    disk:
+      name: pos-offline-data
+      mountPath: /app/data
+      sizeGB: 1

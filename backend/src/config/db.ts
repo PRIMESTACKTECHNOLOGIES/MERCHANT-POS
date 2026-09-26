@@ -19,9 +19,11 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
  */
 
 const BACKEND_ROOT = path.join(__dirname, '../..');
-// Keep the local POS instance isolated from DATABASE_PATH values inherited
-// from older installations or parent shells.
-const DB_PATH = path.join(BACKEND_ROOT, 'data', 'database.sqlite');
+// Render mounts its persistent data disk at DATABASE_PATH; local runs keep the default path.
+const configuredDbPath = process.env.DATABASE_PATH?.trim();
+const DB_PATH = configuredDbPath
+  ? path.resolve(configuredDbPath)
+  : path.join(BACKEND_ROOT, 'data', 'database.sqlite');
 
 const DB_DIR = path.dirname(DB_PATH);
 if (!fs.existsSync(DB_DIR)) {
