@@ -1,33 +1,268 @@
 services:
-  # Backend API server (Docker)
+  # ── PRIMESTACK MERCHANT POS — Backend API + Frontend ─────────────────────────
   - type: web
-    name: pos-offline-api
+    name: merchant-pos-api
     env: docker
     plan: starter
     branch: main
     region: frankfurt
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: SERVE_FRONTEND
-        value: "false"
-      - key: PORT
-        value: 10000
-      - key: DATABASE_PATH
-        value: /app/data/database.sqlite
-      - key: ALLOWED_ORIGINS
-        sync: false
-      - key: JWT_SECRET
-        generateValue: true
-      - key: PARTNER_ACCESS_TOKEN
-        sync: false
-      - key: TRANSAK_API_BASE_URL
-        value: https://api-gateway.transak.com/api/v2
-      - key: WEBHOOK_SECRET
-        generateValue: true
     disk:
-      name: pos-offline-data
+      name: merchant-pos-data
       mountPath: /app/data
       sizeGB: 1
+    envVars:
+      # ── Runtime ────────────────────────────────────────────────────────────
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_PATH
+        value: /app/data/database.sqlite
+      - key: SERVE_FRONTEND
+        value: "true"
+
+      # ── JWT / Auth ─────────────────────────────────────────────────────────
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_LOGIN_USERNAME
+        value: admin
+      - key: ADMIN_LOGIN_PASSWORD
+        sync: false
+
+      # ── Card Processor ─────────────────────────────────────────────────────
+      - key: CARD_PROCESSOR_ENABLED
+        value: "true"
+      - key: CARD_PROCESSOR_URL
+        value: https://processor.primestack-tech.com/api/v1/capture
+      - key: CARD_PROCESSOR_LOOKUP_URL
+        value: https://processor.primestack-tech.com/api/v1/lookup
+      - key: CARD_PROCESSOR_CAPTURE_URL
+        value: https://processor.primestack-tech.com/api/v1/capture
+      - key: CARD_PROCESSOR_KEY
+        sync: false
+
+      # ── Processor Identity ─────────────────────────────────────────────────
+      - key: PROCESSOR_NAME
+        value: PRIMESTACK PAYMENT PROCESSOR
+      - key: PROCESSOR_MODEL
+        value: PRIMESTACK-POS-201.3
+      - key: PROCESSOR_VERSION
+        value: 2.1.3
+      - key: PROCESSOR_PROTOCOL
+        value: "201.3"
+      - key: PROCESSOR_MERCHANT_ID
+        value: MRC-1001
+      - key: PROCESSOR_TERMINAL_ID
+        value: T2013-001
+      - key: DEFAULT_TID
+        value: T2013-001
+      - key: MCC
+        value: "5999"
+      - key: PROCESSOR_FLOOR_LIMIT
+        value: "150000"
+      - key: PROCESSOR_API_KEY
+        sync: false
+      - key: PROCESSOR_SECRET_KEY
+        sync: false
+      - key: PROCESSOR_KEY_ID
+        value: PRIMESTACK-B4C329F83258
+      - key: ISSUER_SECRET_KEY
+        sync: false
+      - key: API_KEYS
+        sync: false
+
+      # ── Vault Bank ─────────────────────────────────────────────────────────
+      - key: VAULT_BANK_PORT
+        value: "9001"
+      - key: VAULT_BANK_BIND_HOST
+        value: 127.0.0.1
+      - key: VAULT_BANK_API_KEY
+        sync: false
+      - key: VAULT_BANK_SECRET_KEY
+        sync: false
+      - key: VAULT_BANK_TRANSFER_URL
+        value: http://127.0.0.1:9001/api/vault/settlement
+      - key: VAULT_ACTIVE_API_KEY
+        sync: false
+      - key: VAULT_EXTERNAL_LOAD_HMAC_SECRET
+        sync: false
+      - key: VAULT_BANK_WEBHOOK_SECRET
+        sync: false
+      - key: VAULT_BANK_MODE
+        value: TEST
+
+      # ── Acquirer ───────────────────────────────────────────────────────────
+      - key: ACQUIRER_HOST
+        value: 127.0.0.1
+      - key: ACQUIRER_PORT
+        value: "9000"
+      - key: ACQUIRER_PROTOCOL
+        value: iso8583-tcp
+      - key: ACQUIRER_API_KEY
+        sync: false
+      - key: ACQUIRER_SECRET_KEY
+        sync: false
+      - key: ACQUIRER_TIMEOUT_MS
+        value: "8000"
+      - key: ACQUIRER_MERCHANT_ACCOUNT
+        value: MRC-1001
+
+      # ── PAN Encryption ─────────────────────────────────────────────────────
+      - key: CARD_ENC_KEY
+        sync: false
+      - key: PAN_ENCRYPTION_SECRET
+        sync: false
+
+      # ── Wise (Primary Payout Rail) ─────────────────────────────────────────
+      - key: WISE_API_KEY
+        sync: false
+      - key: WISE_API_URL
+        value: https://api.wise.com
+      - key: WISE_PROFILE_ID
+        value: "94913186"
+      - key: INTERNAL_PAYOUT_DOWNSTREAM
+        value: wise
+
+      # ── Wise Receiving Account Details ─────────────────────────────────────
+      - key: WISE_RECEIVE_USD_ROUTING
+        value: "084009519"
+      - key: WISE_RECEIVE_USD_ACCOUNT
+        value: "343612919064346"
+      - key: WISE_RECEIVE_USD_SWIFT
+        value: TRWIUS35XXX
+      - key: WISE_RECEIVE_EUR_IBAN
+        value: BE19905861593312
+      - key: WISE_RECEIVE_EUR_BIC
+        value: TRWIBEB1XXX
+      - key: WISE_RECEIVE_AED_IBAN
+        value: GB64TRWI60846482676861
+      - key: WISE_RECEIVE_AED_SWIFT
+        value: TRWIGB2LXXX
+
+      # ── Merchant IBAN/BIC (SEPA outbound debtor side) ──────────────────────
+      - key: MERCHANT_IBAN
+        value: BE19905861593312
+      - key: MERCHANT_BIC
+        value: TRWIBEB1XXX
+
+      # ── Binance ────────────────────────────────────────────────────────────
+      - key: BINANCE_MODE
+        value: live
+      - key: BINANCE_BASE_URL
+        value: https://api.binance.com
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+
+      # ── Exchange Provider Priority ─────────────────────────────────────────
+      - key: EXCHANGE_PROVIDER_PRIORITY
+        value: binance,transak,tronweb,bscweb,polygonweb,kucoin
+
+      # ── Tron ───────────────────────────────────────────────────────────────
+      - key: TRON_PRIVATE_KEY
+        sync: false
+      - key: TRON_WALLET_ADDRESS
+        sync: false
+      - key: TRON_API_KEY
+        sync: false
+      - key: TRON_JWT_SECRET
+        sync: false
+      - key: TRON_FULL_NODE
+        value: https://api.trongrid.io
+
+      # ── Transak ────────────────────────────────────────────────────────────
+      - key: TRANSAK_DEMO_MODE
+        value: "false"
+      - key: TRANSAK_MODE
+        value: production
+      - key: TRANSAK_API_KEY
+        sync: false
+      - key: TRANSAK_API_SECRET
+        sync: false
+      - key: TRANSAK_BASE_URL
+        value: https://api-gateway.transak.com
+      - key: TRANSAK_PUBLIC_API_URL
+        value: https://api.transak.com
+      - key: TRANSAK_WIDGET_URL
+        value: https://global.transak.com
+      - key: TRANSAK_REFERRER_DOMAIN
+        value: primestack-tech.com
+      - key: TRANSAK_WEBHOOK_SECRET
+        sync: false
+
+      # ── Jupiter (Solana DEX) ───────────────────────────────────────────────
+      - key: JUPITER_MODE
+        value: live
+      - key: JUPITER_FORCE_LIVE
+        value: "1"
+      - key: JUPITER_API_KEY
+        sync: false
+      - key: JUPITER_BASE_URL
+        value: https://quote-api.jup.ag/v6
+
+      # ── KuCoin ─────────────────────────────────────────────────────────────
+      - key: KUCOIN_MODE
+        value: live
+
+      # ── Cash / Card Top-up ─────────────────────────────────────────────────
+      - key: VAULT_CASH_OPERATOR_CODE
+        sync: false
+      - key: BSCSCAN_API_KEY
+        sync: false
+      - key: POLYGONSCAN_API_KEY
+        sync: false
+      - key: ETHERSCAN_API_KEY
+        sync: false
+
+      # ── ABSA Business Bank (future) ────────────────────────────────────────
+      - key: ABSA_ENVIRONMENT
+        value: sandbox
+      - key: ABSA_CLIENT_ID
+        sync: false
+      - key: ABSA_CLIENT_SECRET
+        sync: false
+      - key: ABSA_ACCOUNT_NUMBER
+        sync: false
+      - key: ABSA_WEBHOOK_SECRET
+        sync: false
+
+      # ── Operator Cards ─────────────────────────────────────────────────────
+      - key: OPERATOR_CARD_USD_HOLDER
+        value: AJI ALOSIOUS
+      - key: OPERATOR_CARD_USD_NUMBER
+        sync: false
+      - key: OPERATOR_CARD_USD_EXPIRY
+        value: 05/30
+      - key: OPERATOR_CARD_USD_CVV
+        sync: false
+      - key: OPERATOR_CARD_USD_SCHEME
+        value: VISA
+      - key: OPERATOR_CARD_USD_CURRENCY
+        value: USD
+      - key: OPERATOR_CARD_EUR_HOLDER
+        value: DANIA ALOSIOUS
+      - key: OPERATOR_CARD_EUR_NUMBER
+        sync: false
+      - key: OPERATOR_CARD_EUR_EXPIRY
+        value: 06/29
+      - key: OPERATOR_CARD_EUR_CVV
+        sync: false
+      - key: OPERATOR_CARD_EUR_SCHEME
+        value: VISA
+      - key: OPERATOR_CARD_EUR_CURRENCY
+        value: EUR
+
+      # ── Payout Provider ────────────────────────────────────────────────────
+      - key: BANK_PAYOUT_PROVIDER
+        value: internal
+
+      # ── Allow legacy crypto rail ───────────────────────────────────────────
+      - key: ALLOW_LEGACY_CUSTOMER_CRYPTO_WITHDRAW_RAIL
+        value: "1"
