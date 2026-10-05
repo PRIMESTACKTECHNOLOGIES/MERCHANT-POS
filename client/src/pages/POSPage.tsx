@@ -25,7 +25,7 @@ import {
 import type { Customer, Settings } from '../lib/api';
 import { TerminalRiskManagement } from "../lib/emv/terminal-risk-management";
 import { processEMVOffline } from '../lib/emv/emv-pos-bridge';
-import { useToast } from '../components/ui/Toast';
+import { useToast } from '../components/ui/toastContext';
 
 interface CartItem {
   product: Product;
@@ -34,9 +34,9 @@ interface CartItem {
 
 const riskManagement = new TerminalRiskManagement({
   floorLimit: 50,
-  randomSelectionPercentage: 20,
-  cumulativeOfflineLimit: 200,
-  consecutiveOfflineLimit: 3
+  randomOnlinePercentage: 20,
+  forceOnline: false,
+  allowOffline: true,
 });
 
 const TIP_PRESETS = [0, 10, 15, 18, 20, 25];
@@ -50,9 +50,8 @@ export const POSPage = () => {
   const [showWalletForm, setShowWalletForm] = useState(false);
   const [showRecent, setShowRecent] = useState(false);
   const [cardData, setCardData] = useState({ pan: "", expiry: "", cvv: "" });
-  const [voiceAuth, setVoiceAuth] = useState(false);
   const [voiceAuthCode, setVoiceAuthCode] = useState("");
-  const [posProtocol, setPosProtocol] = useState<'101.1' | '101.6' | '201.3'>('101.6');
+  const posProtocol = '201.3' as const;
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerWalletBalance, setCustomerWalletBalance] = useState<number | null>(null);
@@ -361,13 +360,13 @@ export const POSPage = () => {
       return;
     }
 
-    // Protocol-aware validation
-    if ((posProtocol === '101.6' || posProtocol === '201.3') && !cardData.cvv.trim()) {
-      showToast('CVV is required for ' + posProtocol, 'error');
+    // CVV and Auth Code are always required
+    if (!cardData.cvv.trim()) {
+      showToast('CVV is required', 'error');
       return;
     }
-    if ((posProtocol === '101.1' || posProtocol === '201.3') && !voiceAuthCode.trim()) {
-      showToast(posProtocol === '201.3' ? 'Protocol 201.3 requires an Authorization Code' : 'Enter the voice authorization code', 'error');
+    if (!voiceAuthCode.trim()) {
+      showToast('Auth Code is required', 'error');
       return;
     }
 
@@ -884,7 +883,7 @@ export const POSPage = () => {
                   <p className="text-xs text-gray-400 uppercase tracking-wider">Payment</p>
                   <p className="text-2xl font-bold mt-0.5">${finalAmount}</p>
                 </div>
-                <button onClick={() => { setShowCardForm(false); setVoiceAuth(false); setVoiceAuthCode(""); }} className="text-gray-400 hover:text-white transition-colors">
+                <button onClick={() => { setShowCardForm(false); setVoiceAuthCode(""); }} className="text-gray-400 hover:text-white transition-colors">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
@@ -939,50 +938,6 @@ export const POSPage = () => {
                   placeholder="0000 0000 0000 0000"
                 />
               </div>
-              {/* ── Protocol Selector: 101.1 | 101.6 | 201.3 ── */}
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Auth Protocol</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {([['101.1','📞','Voice Auth'],['101.6','💳','EMV Chip'],['201.3','🔒','Offline Batch']] as const).map(([proto, icon, label]) => (
-                    <button
-                      key={proto}
-                      type="button"
-                      onClick={() => {
-                        setPosProtocol(proto as '101.1'|'101.6'|'201.3');
-                        setVoiceAuth(proto === '101.1');
-                        if (proto !== '101.1') setVoiceAuthCode('');
-                        if (proto !== '101.6') setCardData(prev => ({...prev, cvv: ''}));
-                      }}
-                      className={`flex flex-col items-center gap-0.5 py-2 px-1 rounded-xl border-2 text-xs font-bold transition-all
-                        ${posProtocol === proto
-                          ? proto === '201.3' ? 'border-purple-500 bg-purple-50 text-purple-800'
-                          : proto === '101.1' ? 'border-amber-400 bg-amber-50 text-amber-800'
-                          : 'border-blue-500 bg-blue-50 text-blue-800'
-                          : 'border-gray-200 bg-gray-50 text-gray-400 hover:border-gray-300'}`}
-                    >
-                      <span className="text-base">{icon}</span>
-                      <span className="font-mono">{proto}</span>
-                      <span className="font-normal text-[9px] opacity-70 leading-none">{label}</span>
-                    </button>
-                  ))}
-                </div>
-                {posProtocol === '101.1' && (
-                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-800">
-                    📞 <strong>101.1 Voice Auth</strong> — Enter the verbal auth code from the issuer. CVV not required.
-                  </div>
-                )}
-                {posProtocol === '101.6' && (
-                  <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-800">
-                    💳 <strong>101.6 EMV Chip</strong> — Card present, chip read. CVV required.
-                  </div>
-                )}
-                {posProtocol === '201.3' && (
-                  <div className="mt-2 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2 text-xs text-purple-800">
-                    🔒 <strong>201.3 Offline Batch</strong> — Enter CVV <em>and</em> the pre-auth code from an existing transaction. Wrong code = declined.
-                  </div>
-                )}
-              </div>
-
               <div className="flex gap-3">
                 <div className="flex-1">
                   <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Expiry</label>
@@ -998,44 +953,28 @@ export const POSPage = () => {
                     placeholder="MM/YY"
                   />
                 </div>
-                {/* CVV — shown for 101.6 and 201.3 */}
-                {(posProtocol === '101.6' || posProtocol === '201.3') && (
-                  <div className="flex-1">
-                    <label className={`block text-xs font-semibold uppercase tracking-wider mb-1.5 ${posProtocol === '201.3' ? 'text-purple-600' : 'text-gray-500'}`}>CVV</label>
-                    <input
-                      type="password"
-                      value={cardData.cvv}
-                      onChange={(e) => setCardData(prev => ({...prev, cvv: e.target.value.replace(/\D/g, '').substring(0, 4)}))}
-                      className={`w-full px-4 py-3 border-2 rounded-xl outline-none text-center font-mono bg-gray-50/50
-                        ${posProtocol === '201.3' ? 'border-purple-300 focus:border-purple-500 bg-purple-50/30' : 'border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'}`}
-                      placeholder="123"
-                      autoComplete="off"
-                    />
-                  </div>
-                )}
-                {/* Auth Code — shown for 101.1 and 201.3 */}
-                {(posProtocol === '101.1' || posProtocol === '201.3') && (
-                  <div className="flex-1">
-                    <label className={`block text-xs font-semibold uppercase tracking-wider mb-1.5 ${posProtocol === '201.3' ? 'text-purple-600' : 'text-amber-600'}`}>
-                      Auth Code {posProtocol === '201.3' ? '*' : ''}
-                    </label>
-                    <input
-                      type="text"
-                      value={voiceAuthCode}
-                      onChange={(e) => setVoiceAuthCode(e.target.value.replace(/[^a-zA-Z0-9\-]/g, '').substring(0, 32))}
-                      className={`w-full px-4 py-3 border-2 rounded-xl outline-none text-center font-mono tracking-widest font-bold
-                        ${posProtocol === '201.3'
-                          ? 'border-purple-300 focus:border-purple-500 bg-purple-50 text-purple-900'
-                          : 'border-amber-300 focus:border-amber-400 bg-amber-50 text-amber-900'}`}
-                      placeholder={posProtocol === '201.3' ? 'Required auth code' : '000000'}
-                      autoFocus={posProtocol === '101.1'}
-                      autoComplete="off"
-                    />
-                    {posProtocol === '201.3' && (
-                      <p className="text-[10px] text-purple-600 mt-0.5">Must match an existing transaction auth code</p>
-                    )}
-                  </div>
-                )}
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">CVV</label>
+                  <input
+                    type="password"
+                    value={cardData.cvv}
+                    onChange={(e) => setCardData(prev => ({...prev, cvv: e.target.value.replace(/\D/g, '').substring(0, 4)}))}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-center font-mono bg-gray-50/50"
+                    placeholder="123"
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Auth Code</label>
+                <input
+                  type="text"
+                  value={voiceAuthCode}
+                  onChange={(e) => setVoiceAuthCode(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').substring(0, 32))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-center font-mono tracking-widest font-bold bg-gray-50/50"
+                  placeholder="Auth code"
+                  autoComplete="off"
+                />
               </div>
               <button 
                 onClick={handleCharge}

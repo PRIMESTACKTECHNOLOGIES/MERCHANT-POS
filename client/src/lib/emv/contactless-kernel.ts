@@ -125,7 +125,7 @@ export class ContactlessKernel {
    * Performs GPO → READ RECORD → MERGE TLV → mode detection.
    */
   private async buildResult(
-    selected: { aid: string; label: string; raw: Uint8Array },
+    selected: { aid: string; label?: string; raw: Uint8Array },
     terminalTLVHex: string
   ): Promise<CTLResult> {
     const aid = selected.aid;

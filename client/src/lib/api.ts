@@ -1,4 +1,4 @@
-﻿import { generateHmacSignature } from './crypto';
+import { generateHmacSignature } from './crypto';
 import { resolveApiBaseUrl } from './backendUrl';
 
 const BASE_URL = resolveApiBaseUrl({
@@ -13,6 +13,7 @@ export interface Terminal {
   name: string;
   offlineEnabled: boolean;
   lastBatchAt?: string | null;
+  status?: 'ONLINE' | 'OFFLINE' | 'ERROR' | 'SYNCING';
 }
 
 export interface Transaction {
@@ -41,6 +42,9 @@ export interface Transaction {
   paymentMethod?: "card" | "wallet" | "code";
   customerId?: string;
   walletTransactionId?: string;
+  readerSource?: string;
+  cvmResult?: string;
+  pinVerified?: boolean;
 }
 
 export interface Customer {
@@ -77,6 +81,11 @@ export interface WalletBalance {
   currency: string;
 }
 
+export interface CustomerWalletBalance extends WalletBalance {
+  id: string;
+  wallet_code?: string;
+}
+
 export interface WalletCard {
   cardId: string;
   walletId: string;
@@ -103,6 +112,10 @@ export interface WalletTransaction {
   reference?: string;
   description?: string;
   created_at: string;
+  currency?: string;
+  transaction_type?: "credit" | "debit" | string;
+  fiat_amount?: number;
+  status?: string;
 }
 
 export interface OfflineWalletPayment {
@@ -156,6 +169,7 @@ export interface BankTransferTransaction {
   userEmail?: string;
   accountDetails?: Record<string, unknown>;
   createdAt: string;
+  created_at?: string;
   updatedAt: string;
 }
 
@@ -174,6 +188,25 @@ export interface Batch {
   approvedCount?: number;
   declinedCount?: number;
   batchSeq?: number;
+  totalAmount?: number;
+  currency?: string;
+  total_amount_minor?: number;
+  connectionType?: string;
+  connection_type?: string;
+  firmwareVersion?: string;
+  firmware_version?: string;
+  ipAddress?: string;
+  ip_address?: string;
+  terminal_name?: string;
+  txn_count?: number;
+  approved_count?: number;
+  declined_count?: number;
+  duplicate_count?: number;
+  offline_approved_count?: number;
+  stored_count?: number;
+  upload_timestamp?: string;
+  created_at?: string;
+  createdAt?: string;
 }
 
 export interface Product {
@@ -197,6 +230,15 @@ export interface Settings {
   license_number?: string;
   tax_id?: string;
   paymentConfig?: Array<Record<string, unknown>>;
+  terminal?: {
+    offlineMode: boolean;
+    autoUpdate: boolean;
+    features: {
+      manualEntry: boolean;
+      refunds: boolean;
+      tips: boolean;
+    };
+  };
   terminal_id?: string;
 }
 
@@ -209,6 +251,11 @@ export interface Receipt {
   currency: string;
   cardMasked: string;
   status: string;
+  authCode?: string;
+  txnTimestamp?: string;
+  authMode?: string;
+  batchId?: string;
+  batchStatus?: string;
   merchantInfo?: {
     name: string;
     address: string;
@@ -284,6 +331,8 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
 
 export interface VaultStats {
   totalVaultBalance: number;
+  confirmedRealFundsByCurrency?: Record<string, number>;
+  vaultBalancesByCurrency?: Record<string, number>;
   totalMerchantBalances: number;
   totalPendingSettlement: number;
   totalPendingPayouts: number;
@@ -1069,6 +1118,16 @@ export async function createCustomer(name: string, email?: string, phone?: strin
   return res.json();
 }
 
+export async function deleteCustomer(customerId: string, confirmationName: string): Promise<{ ok: boolean; id: string; name: string; deleted: boolean }> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/customers/${encodeURIComponent(customerId)}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirmationName }),
+  });
+  const data = await res.json().catch(() => ({} as any));
+  if (!res.ok) throw new Error(data.error || 'Customer deletion failed');
+  return data;
+}
+
 export async function getCustomerProfile(customerId: string): Promise<Customer> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/customers/${customerId}/profile`);
   if (!res.ok) throw new Error('Customer not found');
@@ -1083,15 +1142,22 @@ export async function updateCustomerKYC(customerId: string, kyc: Partial<Custome
   if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || 'KYC update failed'); }
   return res.json();
 }
-export async function getWalletBalance(customerId: string): Promise<WalletBalance> {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/balance/${customerId}`);
-  if (!res.ok) return { balance: 0, currency: 'USD' };
+export async function getWalletBalance(customerId: string, currency?: string): Promise<WalletBalance> {
+  const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/balance/${encodeURIComponent(customerId)}${query}`);
+  if (!res.ok) throw new Error('Wallet balance could not be loaded');
   return res.json();
 }
 export async function getWalletTransactions(customerId: string): Promise<WalletTransaction[]> {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/transactions/${customerId}`);
-  if (!res.ok) return [];
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/transactions/${encodeURIComponent(customerId)}`);
+  if (!res.ok) throw new Error('Wallet transactions could not be loaded');
   return res.json();
+}
+export async function getCustomerWalletBalances(customerId: string): Promise<CustomerWalletBalance[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/wallet/customer/${encodeURIComponent(customerId)}/balances`);
+  if (!res.ok) throw new Error('Customer wallets could not be loaded');
+  const data = await res.json() as { wallets?: CustomerWalletBalance[] };
+  return Array.isArray(data.wallets) ? data.wallets : [];
 }
 export async function topupWallet(customerId: string, amount: number, source?: string, reference?: string) {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/topup`, { method: 'POST', body: JSON.stringify({ customerId, amount, source, reference }) });
@@ -1167,8 +1233,8 @@ export async function debitWallet(customerId: string, amount: number, source?: s
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Debit failed'); }
   return res.json();
 }
-export async function walletTransfer(senderCustomerId: string, receiverCustomerId: string, amount: number, note?: string): Promise<WalletTransfer> {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/transfer`, { method: 'POST', body: JSON.stringify({ senderCustomerId, receiverCustomerId, amount, note }) });
+export async function walletTransfer(senderCustomerId: string, receiverCustomerId: string, amount: number, note?: string, currency = 'USD'): Promise<WalletTransfer> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/transfer`, { method: 'POST', body: JSON.stringify({ senderCustomerId, receiverCustomerId, amount, note, currency }) });
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Transfer failed'); }
   return res.json();
 }
@@ -1198,6 +1264,39 @@ export async function sendToHotWallet(params: {
     body: JSON.stringify(params),
   });
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Send to hot wallet failed'); }
+  return res.json();
+}
+export async function callProviderAndSendToMerchant(params: {
+  customerId: string;
+  merchantId: string;
+  amountMinor: number;
+  currency: string;
+  endpointUrl: string;
+  apiKey: string;
+  requestReference: string;
+  reason?: string;
+}): Promise<{
+  success: boolean;
+  reference: string;
+  providerReference: string;
+  amount: number;
+  currency: string;
+  customerId: string;
+  merchantId: string;
+  cryptoCoin?: string;
+}> {
+  const localHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+  if (window.location.protocol !== 'https:' && !localHosts.has(window.location.hostname)) {
+    throw new Error('Use the wallet over HTTPS before entering a provider API key');
+  }
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/provider-send-to-merchant`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({} as ApiErrorPayload));
+    throw new Error(error.error || 'Provider transfer failed');
+  }
   return res.json();
 }
 export async function getBankAccounts(customerId: string): Promise<BankAccount[]> {
@@ -1302,6 +1401,7 @@ export interface MerchantBankAccount {
 
 export interface MerchantPayout {
   id: string;
+  merchant_id?: string;
   amount: number;
   currency: string;
   status: string;
@@ -1427,10 +1527,10 @@ export async function downloadPayoutReceipt(
   const qs = params.toString();
   const baseUrl = `${BASE_URL}/api/payout/payouts/${encodeURIComponent(payoutId)}/receipt${qs ? `?${qs}` : ''}`;
   const accessToken = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  const urlWithToken = accessToken
+    ? baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(accessToken)
+    : baseUrl;
   try {
-    const urlWithToken = accessToken
-      ? baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(accessToken)
-      : baseUrl;
     const res = await fetchWithAuth(baseUrl, { method: 'GET', headers: { Accept: 'text/html,text/plain,*/*' } });
     const contentType = res.headers.get('content-type') || '';
     const isText = contentType.includes('text/plain');
@@ -1445,21 +1545,21 @@ export async function downloadPayoutReceipt(
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
-      try { document.body.removeChild(a); } catch (_) { /* ignore */ }
-      try { URL.revokeObjectURL(blobUrl); } catch (_) { /* ignore */ }
+      try { document.body.removeChild(a); } catch { /* ignore */ }
+      try { URL.revokeObjectURL(blobUrl); } catch { /* ignore */ }
     }, 10000);
     try {
       const features = 'noopener,noreferrer,width=860,height=1040,menubar=yes,location=yes,scrollbars=yes,status=yes,toolbar=yes';
       window.open(blobUrl, '_blank', features);
-    } catch (_) {
+    } catch {
       window.open(urlWithToken, '_blank');
     }
     return { ok: true, url: urlWithToken, filename: fn };
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (accessToken) {
       const features = 'noopener,noreferrer,width=860,height=1040,menubar=yes,location=yes,scrollbars=yes,status=yes,toolbar=yes';
       try { window.open(urlWithToken, '_blank', features); return { ok: true, fallback: 'query-token', url: urlWithToken }; }
-      catch (_) { /* swallow */ }
+      catch { /* swallow */ }
     }
     throw e;
   }
@@ -1565,7 +1665,7 @@ export async function getMerchantBalance(merchantId: string): Promise<MerchantWa
     try {
       const errorData = await res.json();
       console.error('[API] Error details:', errorData);
-    } catch (e) {
+    } catch {
       console.error('[API] Could not parse error response');
     }
     return { id: '', merchant_id: merchantId, balance: 0, currency: 'USD' };
@@ -2023,6 +2123,7 @@ export async function syncOfflineWalletPayments(): Promise<{ synced: number; fai
 // ── Offline PIN sale upload queue for POS EMV offline approvals ─────────────
 export interface OfflinePinSalePayload {
   merchantId: string;
+  customerId: string;
   terminalId?: string;
   amountMinor: number;
   currency: string;
@@ -2101,4 +2202,157 @@ export async function syncOfflinePinSales(): Promise<{ synced: number; failed: n
   }
 
   return { synced, failed };
+}
+
+// ── Vault Bank Operator / Issuer Virtual Cards (wallet_cards table) ────────
+export interface IssuedVirtualCard {
+  id: string;
+  customerId: string;
+  walletId?: string | null;
+  scheme: "VISA" | "MASTERCARD";
+  bin: string;
+  last4: string;
+  cardNumber?: string;             // only present if include_secrets=true
+  expiryMonth: string;
+  expiryYear: string;
+  expiry?: string;
+  cvv?: string;                    // only present if include_secrets=true
+  cardholderName?: string | null;
+  currency: string;
+  status: "ACTIVE" | "INACTIVE" | "BLOCKED" | "EXPIRED" | "DEACTIVATED";
+  spendingLimit?: number;
+  usedAmount?: number;
+  metaJson?: Record<string, any> | null;
+  createdAt: string;
+  updatedAt?: string;
+  activatedAt?: string | null;
+}
+
+export interface IssueCardParams {
+  customerId: string;
+  walletId?: string;
+  scheme?: "VISA" | "MASTERCARD";
+  currency?: string;
+  validityYears?: number;
+  cardholderName?: string;
+  spendingLimit?: number;
+  meta?: Record<string, any>;
+  linkToWallet?: boolean;
+}
+
+export interface ListCardsParams {
+  status?: IssuedVirtualCard["status"];
+  currency?: string;
+  includeSecrets?: boolean;
+}
+
+export async function listCustomerVirtualCards(
+  customerId: string,
+  params: ListCardsParams = {}
+): Promise<{ count: number; customerId: string; cards: IssuedVirtualCard[] }> {
+  const qp = new URLSearchParams();
+  if (params.status) qp.set("status", params.status);
+  if (params.currency) qp.set("currency", params.currency);
+  if (params.includeSecrets) qp.set("include_secrets", "true");
+  const suffix = qp.toString() ? `?${qp.toString()}` : "";
+  const res = await fetchWithAuth(`${BASE_URL}/api/wallet-cards/customer/${encodeURIComponent(customerId)}/cards${suffix}`);
+  const data = await res.json().catch(() => ({ count: 0, cards: [] }));
+  if (!res.ok) throw new Error(data.error || data.message || "Failed to list issued cards");
+  return {
+    count: Number(data.count || 0),
+    customerId: data.customer_id || customerId,
+    cards: (Array.isArray(data.cards) ? data.cards : []).map(normalizeIssuedCard),
+  };
+}
+
+export async function issueCustomerVirtualCard(params: IssueCardParams): Promise<IssuedVirtualCard> {
+  const res = await fetchWithAuth(
+    `${BASE_URL}/api/wallet-cards/customer/${encodeURIComponent(params.customerId)}/cards`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        wallet_id: params.walletId,
+        scheme: params.scheme,
+        currency: params.currency || "USD",
+        validity_years: params.validityYears,
+        cardholder_name: params.cardholderName,
+        spending_limit: params.spendingLimit,
+        meta: params.meta,
+        link_to_wallet: params.linkToWallet,
+      }),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || "Card issuance failed");
+  return normalizeIssuedCard(data);
+}
+
+export async function getCustomerVirtualCard(
+  cardId: string,
+  includeSecrets = false
+): Promise<IssuedVirtualCard> {
+  const qs = includeSecrets ? "?include_secrets=true" : "";
+  const res = await fetchWithAuth(`${BASE_URL}/api/wallet-cards/${encodeURIComponent(cardId)}${qs}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || "Card not found");
+  return normalizeIssuedCard(data);
+}
+
+export async function updateCustomerVirtualCard(
+  cardId: string,
+  patch: {
+    status?: IssuedVirtualCard["status"];
+    spendingLimit?: number;
+    cardholderName?: string;
+    meta?: Record<string, any>;
+  }
+): Promise<IssuedVirtualCard> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/wallet-cards/${encodeURIComponent(cardId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      status: patch.status,
+      spending_limit: patch.spendingLimit,
+      cardholder_name: patch.cardholderName,
+      meta: patch.meta,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || "Card update failed");
+  return normalizeIssuedCard(data);
+}
+
+function normalizeIssuedCard(raw: any): IssuedVirtualCard {
+  const schemeUpper = String(raw?.scheme || raw?.cardScheme || "VISA").toUpperCase();
+  const mm = String(raw?.expiryMonth ?? raw?.expiry_month ?? "").padStart(2, "0");
+  const yy = String(raw?.expiryYear ?? raw?.expiry_year ?? "").padStart(2, "0");
+  return {
+    id: raw?.id || raw?.cardId || "",
+    customerId: raw?.customerId ?? raw?.customer_id ?? "",
+    walletId: raw?.walletId ?? raw?.wallet_id ?? null,
+    scheme: schemeUpper === "MASTERCARD" ? "MASTERCARD" : "VISA",
+    bin: String(raw?.bin || raw?.cardNumber?.slice?.(0, 6) || ""),
+    last4: String(raw?.last4 || raw?.cardNumber?.slice?.(-4) || ""),
+    cardNumber: raw?.cardNumber ?? raw?.card_number ?? undefined,
+    expiryMonth: mm,
+    expiryYear: yy,
+    expiry: mm && yy ? `${mm}/${yy}` : raw?.expiry,
+    cvv: raw?.cvv ?? undefined,
+    cardholderName: raw?.cardholderName ?? raw?.cardholder_name ?? null,
+    currency: (raw?.currency || "USD").toUpperCase(),
+    status: (String(raw?.status || "ACTIVE").toUpperCase() as IssuedVirtualCard["status"]),
+    spendingLimit: typeof raw?.spendingLimit === "number" ? raw.spendingLimit
+                  : typeof raw?.spending_limit === "number" ? raw.spending_limit : undefined,
+    usedAmount: typeof raw?.usedAmount === "number" ? raw.usedAmount
+                : typeof raw?.used_amount === "number" ? raw.used_amount : 0,
+    metaJson: (typeof raw?.metaJson === "string"
+                ? (() => { try { return JSON.parse(raw.metaJson); } catch { return {}; } })()
+                : raw?.meta_json
+                    ? (typeof raw.meta_json === "string"
+                        ? (() => { try { return JSON.parse(raw.meta_json); } catch { return {}; } })()
+                        : raw.meta_json)
+                    : raw?.meta) ?? null,
+    createdAt: raw?.createdAt ?? raw?.created_at ?? new Date().toISOString(),
+    updatedAt: raw?.updatedAt ?? raw?.updated_at,
+    activatedAt: raw?.activatedAt ?? raw?.activated_at ?? null,
+  };
 }

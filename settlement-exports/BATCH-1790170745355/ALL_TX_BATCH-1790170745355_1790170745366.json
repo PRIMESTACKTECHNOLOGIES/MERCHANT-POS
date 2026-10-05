@@ -1,0 +1,69 @@
+{
+  "batchId": "BATCH-1790170745355",
+  "createdAt": "2026-09-23T13:39:05.355Z",
+  "generatedBy": "MANUAL",
+  "status": "GENERATED",
+  "count": 2,
+  "totals": {
+    "AED": {
+      "count": 2,
+      "amount": 5000
+    }
+  },
+  "transactions": [
+    {
+      "stan": "000101",
+      "rrn": "VISA-RRN-001",
+      "amount": 3000,
+      "currencyCode": "AED",
+      "mid": "VAULT-MERCHANT-001",
+      "tid": "T2013-001",
+      "pan": "410685******7890",
+      "mti": "0100",
+      "processingCode": "000000",
+      "createdAt": "2026-09-23T13:39:05.347Z",
+      "acquiringInstitution": "VAULT_BANK"
+    },
+    {
+      "stan": "000102",
+      "rrn": "VISA-RRN-002",
+      "amount": 2000,
+      "currencyCode": "AED",
+      "mid": "VAULT-MERCHANT-001",
+      "tid": "T2013-001",
+      "pan": "410685******9999",
+      "mti": "0100",
+      "processingCode": "000000",
+      "createdAt": "2026-09-23T13:39:05.351Z",
+      "acquiringInstitution": "VAULT_BANK"
+    }
+  ],
+  "_rawTransactions": [
+    {
+      "stan": "000101",
+      "rrn": "VISA-RRN-001",
+      "amount": 3000,
+      "currencyCode": "AED",
+      "mid": "VAULT-MERCHANT-001",
+      "tid": "T2013-001",
+      "pan": "4106851234567890",
+      "mti": "0100",
+      "processingCode": "000000",
+      "createdAt": "2026-09-23T13:39:05.347Z",
+      "acquiringInstitution": "VAULT_BANK"
+    },
+    {
+      "stan": "000102",
+      "rrn": "VISA-RRN-002",
+      "amount": 2000,
+      "currencyCode": "AED",
+      "mid": "VAULT-MERCHANT-001",
+      "tid": "T2013-001",
+      "pan": "4106859999999999",
+      "mti": "0100",
+      "processingCode": "000000",
+      "createdAt": "2026-09-23T13:39:05.351Z",
+      "acquiringInstitution": "VAULT_BANK"
+    }
+  ]
+}

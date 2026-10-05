@@ -1,0 +1,9 @@
+warning: in the working copy of 'backend/src/domain/payments/payments.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'client/dist/index.html', LF will be replaced by CRLF the next time Git touches it
+ backend/src/domain/payments/payments.service.ts  | 11 [32m++[m[31m--[m
+ backend/src/domain/wallets/wallets.controller.ts | 15 [32m+++++[m
+ backend/src/domain/wallets/wallets.router.ts     |  2 [32m+[m
+ backend/src/domain/wallets/wallets.service.ts    | 74 [32m++++++++++++++++++++++++[m
+ client/dist/index.html                           |  2 [32m+[m[31m-[m
+ client/src/lib/api.ts                            | 10 [32m++++[m
+ 6 files changed, 107 insertions(+), 7 deletions(-)

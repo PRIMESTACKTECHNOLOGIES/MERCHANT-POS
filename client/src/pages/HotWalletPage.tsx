@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { useNotifications } from '../contexts/NotificationContext';
+import React, { useState, useEffect } from 'react';
+import { useNotifications } from '../contexts/useNotifications';
+import './HotWalletPage.css';
 import {
   getHotWalletBalance, autobuyTopupHotWalletUsdt,
   type HotWalletBalance, type HotWalletAutobuyResult,
@@ -14,6 +15,50 @@ const NETWORK_OPTIONS: Array<{ id: 'tron'|'bsc'|'polygon'; label: string; short:
   { id: 'bsc',     label: 'BSC (BEP-20)',    short: 'BSC',    native: 'BNB',     nativeSymbol: '🟡', explorer: 'bscscan.com',   color: 'from-yellow-500 to-amber-600',       icon: '🟡' },
   { id: 'polygon', label: 'Polygon (ERC-20)', short: 'Polygon', native: 'MATIC',  nativeSymbol: '🟣', explorer: 'polygonscan.com', color: 'from-purple-500 to-indigo-600',      icon: '🟣' },
 ];
+
+const TokenLogo = ({ symbol, size = 28 }: { symbol: 'USDT' | 'TRX' | 'BNB' | 'MATIC'; size?: number }) => {
+  const map: Record<string, { src: string; bg: string; mark: string }> = {
+    USDT:  { src: '/coins/usdt.png', bg: '#26A17B', mark: '₮' },
+    TRX:   { src: '/coins/tron.png', bg: '#ef0027', mark: '△' },
+    BNB:   { src: '/coins/bnb.png',  bg: '#F3BA2F', mark: '◆' },
+    MATIC: { src: '/coins/matic.png', bg: '#8247e5', mark: '⬡' },
+  };
+  const a = map[symbol] || { src: '', bg: '#555', mark: symbol.slice(0,2) };
+  const [err, setErr] = React.useState(false);
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', justifyContent:'center',
+      width:size, height:size, borderRadius:'50%', background:a.bg, overflow:'hidden',
+      flexShrink:0, boxShadow:'0 2px 8px rgba(0,0,0,.25)' }}
+      aria-label={`${symbol} logo`}>
+      {!err && a.src
+        ? <img src={a.src} alt={symbol} style={{ width:'85%', height:'85%', objectFit:'contain' }} onError={()=>setErr(true)} />
+        : <span style={{ color:'#fff', fontSize:size*0.38, fontWeight:800, lineHeight:1 }}>{a.mark}</span>
+      }
+    </span>
+  );
+};
+
+const NetworkLogo = ({ network, size = 38 }: { network: 'tron' | 'bsc' | 'polygon'; size?: number }) => {
+  const map = {
+    tron:    { src: '/coins/tron.png',    bg: '#ef0027', radius: '10px' },
+    bsc:     { src: '/coins/bnb.png',     bg: '#F3BA2F', radius: '10px' },
+    polygon: { src: '/coins/polygon.png', bg: '#8247e5', radius: '10px' },
+  };
+  const a = map[network];
+  const [err, setErr] = React.useState(false);
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', justifyContent:'center',
+      width:size, height:size, borderRadius:a.radius, background:a.bg, overflow:'hidden',
+      flexShrink:0, boxShadow:'0 2px 8px rgba(0,0,0,.25)' }}
+      aria-label={`${network} network`}>
+      {!err
+        ? <img src={a.src} alt={network} style={{ width:'80%', height:'80%', objectFit:'contain' }} onError={()=>setErr(true)} />
+        : <span style={{ color:'#fff', fontSize:size*0.4, fontWeight:800 }}>{network.slice(0,1).toUpperCase()}</span>
+      }
+    </span>
+  );
+};
+
 
 export const HotWalletPage = () => {
   const { addNotification } = useNotifications();
@@ -44,7 +89,15 @@ export const HotWalletPage = () => {
     Number(hotWalletBalance?.polygon?.USDT || 0);
 
   return (
-    <div className="p-4 lg:p-8 space-y-6 max-w-[1600px] mx-auto">
+    <div className="hot-wallet-theme p-4 lg:p-8 space-y-6 max-w-[1600px] mx-auto">
+      <div className="hot-wallet-grain" aria-hidden="true" />
+      <svg className="hot-wallet-arcs" viewBox="0 0 600 1200" aria-hidden="true">
+        <circle cx="0" cy="600" r="250" />
+        <circle cx="0" cy="600" r="330" />
+        <circle cx="0" cy="600" r="410" />
+        <circle cx="0" cy="600" r="490" />
+      </svg>
+      <div className="hot-wallet-divider" aria-hidden="true"><span /><b /><span /></div>
       {/* ── Page Header ────────────────────────────────────────────────── */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
@@ -54,7 +107,7 @@ export const HotWalletPage = () => {
           </div>
           <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-slate-900">Hot Wallet Dashboard</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Manage on-chain hot wallet liquidity · auto-buy USDT via Binance SPOT · transfer & withdraw across Tron, BSC and Polygon.
+            Manage on-chain hot wallet liquidity · transfer & withdraw across Tron, BSC and Polygon.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
@@ -64,12 +117,6 @@ export const HotWalletPage = () => {
             disabled={loading}
           >
             {loading ? '⏳ Refreshing…' : '⟳ Refresh Balances'}
-          </button>
-          <button
-            className="rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 hover:shadow-xl hover:shadow-emerald-500/30 transition-all hover:scale-[1.02]"
-            onClick={() => setActiveTab('autobuy-usdt')}
-          >
-            ₮ Auto-Buy USDT → Hot Wallet
           </button>
           <button
             className="rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-orange-500/20 hover:shadow-xl hover:shadow-orange-500/30 transition-all hover:scale-[1.02]"
@@ -85,7 +132,6 @@ export const HotWalletPage = () => {
         <div className="flex flex-wrap gap-1.5">
           {[
             { id: 'overview',      label: '📊 Overview',      emoji: '📊' },
-            { id: 'autobuy-usdt',  label: '₮ Auto-Buy USDT', emoji: '₮'  },
             { id: 'transfer',      label: '🔄 Transfer',      emoji: '🔄' },
             { id: 'withdraw',      label: '💸 Withdraw',      emoji: '💸' },
             { id: 'history',       label: '📜 History',       emoji: '📜' },
@@ -109,7 +155,6 @@ export const HotWalletPage = () => {
       {/* ── Tab Content ────────────────────────────────────────────────── */}
       <div className="space-y-6">
         {activeTab === 'overview'     && <OverviewTab balance={hotWalletBalance} loading={loading} onRefresh={() => refreshBalances()} />}
-        {activeTab === 'autobuy-usdt' && <AutobuyUsdtTab balance={hotWalletBalance} addNotification={addNotification} onSuccess={() => refreshBalances(true)} />}
         {activeTab === 'transfer'     && <TransferTab addNotification={addNotification} />}
         {activeTab === 'withdraw'     && <WithdrawTab addNotification={addNotification} />}
         {activeTab === 'history'      && <HistoryTab totalUsdt={totalUsdt} />}
@@ -147,7 +192,7 @@ const OverviewTab = ({ balance, loading, onRefresh }: {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-600 rounded-2xl p-6 text-white shadow-lg shadow-emerald-500/20">
           <div className="flex items-center justify-between mb-4">
-            <span className="text-3xl font-black tracking-tight">₮</span>
+            <TokenLogo symbol="USDT" size={36} />
             <span className="text-xs font-bold uppercase tracking-[0.25em] bg-white/15 px-3 py-1 rounded-full">Total USDT Liquidity</span>
           </div>
           <div className="text-4xl font-black tabular-nums">
@@ -211,9 +256,7 @@ const OverviewTab = ({ balance, loading, onRefresh }: {
           {chainCards.map(c => (
             <div key={c.net.id} className="px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
               <div className="lg:col-span-2 flex items-center gap-3">
-                <div className={`inline-flex h-11 w-11 items-center justify-center rounded-xl text-xl bg-gradient-to-br ${c.net.color} text-white shadow-md`}>
-                  {c.net.icon}
-                </div>
+                <NetworkLogo network={c.net.id} />
                 <div>
                   <div className="font-bold text-slate-900">{c.net.short}</div>
                   <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">{c.net.label}</div>
@@ -240,13 +283,13 @@ const OverviewTab = ({ balance, loading, onRefresh }: {
                 </div>
               </div>
               <div className="lg:col-span-2 text-right">
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">USDT</div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400 inline-flex items-center gap-1.5"><TokenLogo symbol="USDT" size={16} /> USDT</div>
                 <div className="font-extrabold tabular-nums text-emerald-700 text-lg">
                   ₮ {c.usdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
               <div className="lg:col-span-2 text-right">
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">Native gas ({c.nativeLabel})</div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-400 inline-flex items-center gap-1.5">Native gas <TokenLogo symbol={c.nativeLabel as 'TRX' | 'BNB' | 'MATIC'} size={16} /> ({c.nativeLabel})</div>
                 <div className="font-extrabold tabular-nums text-slate-900 text-lg">
                   {c.native.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 })} {c.nativeLabel}
                 </div>
@@ -262,17 +305,17 @@ const OverviewTab = ({ balance, loading, onRefresh }: {
 const ChainBalanceCard = ({ net, usdt, native, nativeLabel, address, loading }: any) => (
   <div className={`rounded-2xl bg-gradient-to-br ${net.color} p-6 text-white shadow-lg`}>
     <div className="flex items-center justify-between mb-4">
-      <span className="text-2xl">{net.icon}</span>
+      <NetworkLogo network={net.id} size={36} />
       <span className="text-[10px] font-bold uppercase tracking-[0.2em] bg-white/15 px-3 py-1 rounded-full">{net.short} Hot Wallet</span>
     </div>
-    <div className="text-xs opacity-80 font-medium">USDT on {net.short}</div>
+    <div className="text-xs opacity-80 font-medium inline-flex items-center gap-2"><TokenLogo symbol="USDT" size={20} /> USDT on {net.short}</div>
     <div className="mt-1 text-3xl font-black tabular-nums">
       {loading ? '—' : usdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
     </div>
     <div className="mt-3 pt-3 border-t border-white/15 flex justify-between text-[11px] opacity-90">
       <div>
         <div className="opacity-70 uppercase tracking-wider">Gas</div>
-        <div className="font-bold">{native.toLocaleString(undefined, { maximumFractionDigits: 4 })} {nativeLabel}</div>
+        <div className="font-bold inline-flex items-center gap-1.5"><TokenLogo symbol={nativeLabel as 'TRX' | 'BNB' | 'MATIC'} size={18} /> {native.toLocaleString(undefined, { maximumFractionDigits: 4 })} {nativeLabel}</div>
       </div>
       <div className="text-right">
         <div className="opacity-70 uppercase tracking-wider">Status</div>

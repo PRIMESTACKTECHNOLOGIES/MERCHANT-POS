@@ -2,6 +2,7 @@ package com.pos2013.offline.ui
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -36,15 +37,48 @@ class SettingsActivity : AppCompatActivity() {
         // ── Section: Backend URL ──────────────────────────────────────────────
         root.addView(sectionLabel("Backend Server URL"))
         root.addView(hintLabel(
-            "Emulator: http://10.0.2.2:7000/  |  " +
-            "This Wi-Fi: http://10.0.1.156:7000/  |  " +
-            "Cloud: https://your-app.onrender.com/"
+            "This PC: http://172.16.0.210:7000/  |  " +
+            "Emulator: http://10.0.2.2:7000/"
         ))
         val etUrl = editField(
-            hint = "http://10.0.1.156:7000/",
+            hint = "http://172.16.0.210:7000/",
             value = prefs.getString("server_url", ApiClient.DEFAULT_URL) ?: ApiClient.DEFAULT_URL
         )
         root.addView(etUrl)
+        root.addView(spacer(4))
+
+        // Auto-detect button — probes both IPs and fills the URL field
+        val tvAutoDetectStatus = statusLabel("")
+        val btnAutoDetect = Button(this).apply {
+            text = "🔍 Auto-Detect Server"
+            textSize = 13f
+            setTextColor(Color.parseColor("#1D4ED8"))
+            setBackgroundColor(Color.parseColor("#EFF6FF"))
+            setPadding(0, dp(10), 0, dp(10))
+            gravity = Gravity.CENTER
+            setOnClickListener {
+                isEnabled = false
+                text = "Detecting..."
+                tvAutoDetectStatus.text = "⏳ Probing 172.16.0.121 and 172.16.0.140..."
+                tvAutoDetectStatus.setTextColor(Color.parseColor("#D97706"))
+                lifecycleScope.launch {
+                    val resolved = PosApplication.probeAndResolveUrl(this@SettingsActivity)
+                    if (resolved != null) {
+                        etUrl.setText(resolved)
+                        tvAutoDetectStatus.text = "✅ Found: $resolved"
+                        tvAutoDetectStatus.setTextColor(Color.parseColor("#16A34A"))
+                    } else {
+                        tvAutoDetectStatus.text = "❌ Neither IP responded — check Wi-Fi and backend"
+                        tvAutoDetectStatus.setTextColor(Color.parseColor("#DC2626"))
+                    }
+                    isEnabled = true
+                    text = "🔍 Auto-Detect Server"
+                }
+            }
+        }
+        root.addView(btnAutoDetect)
+        root.addView(spacer(4))
+        root.addView(tvAutoDetectStatus)
         root.addView(spacer(16))
 
         // ── Section: Admin Login ──────────────────────────────────────────────
@@ -165,14 +199,29 @@ class SettingsActivity : AppCompatActivity() {
         root.addView(spacer(12))
 
         root.addView(sectionLabel("Connection Mode"))
-        val chkRequireBackend = Switch(this).apply {
-            text = "Require backend connection"
-            isChecked = prefs.getBoolean("require_backend_connection", true)
-            textSize = 14f
-            setTextColor(Color.parseColor("#111827"))
-            setPadding(0, dp(8), 0, dp(8))
+        val switchCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#F1F5F9"))
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
-        root.addView(chkRequireBackend)
+        val chkRequireBackend = Switch(this).apply {
+            text = " Require backend connection"
+            isChecked = prefs.getBoolean("require_backend_connection", true)
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#0F172A"))
+            scaleX = 1.3f
+            scaleY = 1.3f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        switchCard.addView(chkRequireBackend)
+        root.addView(switchCard)
         root.addView(spacer(16))
 
         // ── Section: Terminal registration ────────────────────────────────────

@@ -11,21 +11,61 @@
  *  - pos_transaction    (EMV card transaction)
  */
 
+import { loadSecureQueue, saveSecureQueue } from './offline/secure-storage';
+import { createSignedQueueItem } from './offline/signed-queue';
+import { rememberIdempotencyKey } from './offline/idempotency';
+
 export type OfflineOpType =
   | 'wallet_debit'
   | 'wallet_transfer'
   | 'pos_transaction'
   | 'wallet_topup_card';
 
-export interface OfflineOp {
+export interface OfflineOpPayloads {
+  wallet_debit: {
+    customerId: string;
+    amount: number;
+    source?: string;
+  };
+  wallet_transfer: {
+    senderCustomerId: string;
+    receiverCustomerId: string;
+    amount: number;
+    note?: string;
+  };
+  pos_transaction: Record<string, unknown>;
+  wallet_topup_card: {
+    customerId: string;
+    amount: number;
+    cardNumber: string;
+    panMasked: string;
+    expiry: string;
+    cvv: string;
+    emvData?: unknown;
+  };
+}
+
+interface OfflineOpBase {
   id:         string;
-  type:       OfflineOpType;
-  payload:    Record<string, any>;
   createdAt:  string;
   attempts:   number;
   synced:     boolean;
   error?:     string;
+  signature?: string;
+  signedAt?:  string;
 }
+
+export type OfflineOp = {
+  [T in OfflineOpType]: OfflineOpBase & {
+    type: T;
+    payload: OfflineOpPayloads[T];
+  };
+}[OfflineOpType];
+
+export type OfflineOpFor<T extends OfflineOpType> = OfflineOpBase & {
+  type: T;
+  payload: OfflineOpPayloads[T];
+};
 
 const KEY = 'pos_offline_ops';
 
@@ -43,9 +83,9 @@ function save(ops: OfflineOp[]) {
 }
 
 /** Enqueue an offline operation */
-export function enqueue(type: OfflineOpType, payload: Record<string, any>): OfflineOp {
+export function enqueue<T extends OfflineOpType>(type: T, payload: OfflineOpPayloads[T]): OfflineOpFor<T> {
   const opId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const op: OfflineOp = {
+  const op: OfflineOpFor<T> = {
     id:        opId,
     type,
     payload,
@@ -57,10 +97,10 @@ export function enqueue(type: OfflineOpType, payload: Record<string, any>): Offl
   if (!rememberIdempotencyKey(signed.id)) {
     throw new Error('Duplicate offline operation detected');
   }
-  (op as any).signature = signed.signature;
-  (op as any).signedAt = signed.createdAt;
+  op.signature = signed.signature;
+  op.signedAt = signed.createdAt;
   const ops = load();
-  ops.push(op);
+  ops.push(op as OfflineOp);
   save(ops);
   console.log(`[OfflineQueue] Queued ${type}:`, payload);
   return op;

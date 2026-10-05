@@ -1,0 +1,325 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap');
+
+.hot-wallet-theme {
+  --hw-bg: #f1eee6;
+  --hw-paper: #fffdf8;
+  --hw-ink: #282720;
+  --hw-muted: #5d5a51;
+  --hw-line: #d9d3c7;
+  --hw-accent: #873b25;
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  color: var(--hw-ink);
+  font-family: Geist, system-ui, sans-serif;
+  background:
+    radial-gradient(120% 70% at 50% 0%, #fffdf8 0%, var(--hw-bg) 62%, #e8e3d8 100%);
+}
+
+.hot-wallet-theme > :not(.hot-wallet-grain):not(.hot-wallet-arcs):not(.hot-wallet-divider) {
+  position: relative;
+  z-index: 1;
+}
+
+.hot-wallet-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  opacity: .035;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.1 0 0 0 0 0.1 0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+.hot-wallet-arcs {
+  position: absolute;
+  z-index: 0;
+  left: -190px;
+  top: 80px;
+  width: 540px;
+  height: 1080px;
+  opacity: .32;
+  fill: none;
+  stroke: rgba(40, 39, 32, .16);
+  stroke-width: 1;
+  animation: hot-wallet-arc-breathe 6s ease-in-out infinite;
+}
+
+.hot-wallet-arcs circle:nth-child(2) { opacity: .75; }
+.hot-wallet-arcs circle:nth-child(3) { opacity: .55; }
+.hot-wallet-arcs circle:nth-child(4) { opacity: .35; }
+
+.hot-wallet-divider {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(420px, 80%);
+  margin: 0 auto 18px;
+}
+
+.hot-wallet-divider span {
+  height: 1px;
+  flex: 1;
+  background: rgba(40, 39, 32, .3);
+}
+
+.hot-wallet-divider b {
+  width: 28px;
+  height: 5px;
+  background: var(--hw-ink);
+  display: block;
+}
+
+.hot-wallet-theme button {
+  font-family: Geist, system-ui, sans-serif;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.hot-wallet-theme button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.hot-wallet-theme button:focus-visible,
+.hot-wallet-theme a:focus-visible,
+.hot-wallet-theme input:focus-visible,
+.hot-wallet-theme select:focus-visible,
+.hot-wallet-theme textarea:focus-visible {
+  outline: 3px solid #315f50;
+  outline-offset: 2px;
+}
+
+.hot-wallet-token-logo,
+.hot-wallet-network-logo {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  font-family: Georgia, serif;
+  font-size: .72em;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.3), 0 4px 12px rgba(40,39,32,.14);
+  overflow: hidden;
+}
+
+.hot-wallet-token-logo img,
+.hot-wallet-network-logo img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.hot-wallet-token-logo span {
+  display: none;
+  transform: translateY(-.02em);
+}
+
+.hot-wallet-network-logo {
+  border-radius: 13px;
+  color: #fff;
+  font-family: Georgia, serif;
+  font-size: 1.1em;
+}
+
+.hot-wallet-network-tron { background: #ef0027; }
+.hot-wallet-network-bsc { background: #f3ba2f; color: #282720; }
+.hot-wallet-network-polygon { background: #8247e5; }
+
+/* Keep the page's utility-class panels on a consistent cream-and-paper palette. */
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-5"],
+.hot-wallet-theme [class*="rounded-xl"][class*="p-4"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="bg-white"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="bg-slate-50"],
+.hot-wallet-theme [class*="rounded-xl"][class*="border"],
+.hot-wallet-theme [class*="rounded-lg"][class*="border"],
+.hot-wallet-theme [class*="rounded-md"][class*="border"] {
+  background-color: var(--hw-paper) !important;
+  background-image: none !important;
+  border-color: var(--hw-line) !important;
+  color: var(--hw-ink);
+  box-shadow: 0 10px 28px rgba(40, 39, 32, .07) !important;
+}
+
+.hot-wallet-theme [class*="rounded-2xl"] {
+  border-radius: 22px;
+}
+
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] [class*="text-white"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-5"] [class*="text-white"],
+.hot-wallet-theme [class*="rounded-xl"][class*="p-4"] [class*="text-white"],
+.hot-wallet-theme [class*="rounded-xl"][class*="border"] [class*="text-white"],
+.hot-wallet-theme [class*="rounded-lg"][class*="border"] [class*="text-white"],
+.hot-wallet-theme [class*="rounded-md"][class*="border"] [class*="text-white"] {
+  color: var(--hw-ink) !important;
+}
+
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] [class*="opacity-"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-5"] [class*="opacity-"],
+.hot-wallet-theme [class*="rounded-xl"][class*="p-4"] [class*="opacity-"] {
+  opacity: 1 !important;
+}
+
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] [class*="bg-white/"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-5"] [class*="bg-white/"],
+.hot-wallet-theme [class*="rounded-xl"][class*="p-4"] [class*="bg-white/"] {
+  background-color: #eee9de !important;
+  border-color: var(--hw-line) !important;
+  color: var(--hw-ink) !important;
+}
+
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] [class*="text-slate-300"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] [class*="text-blue-300"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] [class*="text-emerald-300"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] [class*="text-amber-300"] {
+  color: #514d43 !important;
+}
+
+.hot-wallet-theme [class*="text-slate-900"],
+.hot-wallet-theme [class*="text-slate-800"],
+.hot-wallet-theme [class*="text-slate-700"] {
+  color: #302e27 !important;
+}
+
+.hot-wallet-theme [class*="text-slate-600"],
+.hot-wallet-theme [class*="text-slate-500"],
+.hot-wallet-theme [class*="text-slate-400"] {
+  color: var(--hw-muted) !important;
+}
+
+.hot-wallet-theme [class*="text-emerald-700"],
+.hot-wallet-theme [class*="text-emerald-600"] {
+  color: #176044 !important;
+}
+
+.hot-wallet-theme [class*="text-amber-800"],
+.hot-wallet-theme [class*="text-amber-700"],
+.hot-wallet-theme [class*="text-amber-600"] {
+  color: #75420b !important;
+}
+
+.hot-wallet-theme [class*="text-rose-700"],
+.hot-wallet-theme [class*="text-rose-600"] {
+  color: #9d263f !important;
+}
+
+.hot-wallet-theme [class*="shadow-lg"],
+.hot-wallet-theme [class*="shadow-sm"] {
+  box-shadow: 0 10px 28px rgba(40, 39, 32, .07) !important;
+}
+
+.hot-wallet-theme button[class*="bg-slate-900"] {
+  background: #315b50 !important;
+  color: #fff !important;
+}
+
+.hot-wallet-theme button[class*="from-orange"],
+.hot-wallet-theme button[class*="from-emerald"] {
+  background: #315b50 !important;
+  background-image: none !important;
+  color: #fff !important;
+}
+
+.hot-wallet-theme button[class*="from-blue"] {
+  background: #315b50 !important;
+  color: #fff !important;
+}
+
+.hot-wallet-theme button[class*="from-red"],
+.hot-wallet-theme button[class*="from-yellow"],
+.hot-wallet-theme button[class*="from-purple"] {
+  background: #315b50 !important;
+  background-image: none !important;
+  color: #fff !important;
+}
+
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] button[class*="from-"][class*="text-white"],
+.hot-wallet-theme button[class*="rounded-xl"][class*="border"][class*="from-"][class*="text-white"],
+.hot-wallet-theme [class*="rounded-2xl"][class*="p-6"] button[class*="bg-slate-900"][class*="text-white"] {
+  background: #315b50 !important;
+  background-image: none !important;
+  color: #fff !important;
+}
+
+.hot-wallet-theme button[class*="from-orange"]:hover:not(:disabled),
+.hot-wallet-theme button[class*="from-emerald"]:hover:not(:disabled),
+.hot-wallet-theme button[class*="from-blue"]:hover:not(:disabled),
+.hot-wallet-theme button[class*="from-red"]:hover:not(:disabled),
+.hot-wallet-theme button[class*="from-yellow"]:hover:not(:disabled),
+.hot-wallet-theme button[class*="from-purple"]:hover:not(:disabled),
+.hot-wallet-theme button[class*="bg-slate-900"]:hover:not(:disabled) {
+  background: #25483e !important;
+}
+
+.hot-wallet-theme button[class*="bg-white/"] {
+  background: #eee9de !important;
+  border-color: #c9c2b5 !important;
+  color: #302e27 !important;
+}
+
+.hot-wallet-theme button[class*="bg-white/"]:hover:not(:disabled) {
+  background: #e5dfd3 !important;
+}
+
+.hot-wallet-theme input,
+.hot-wallet-theme select,
+.hot-wallet-theme textarea {
+  background: #fffefa !important;
+  border-color: #aaa395 !important;
+  color: #282720 !important;
+  font-family: 'Geist Mono', monospace;
+}
+
+.hot-wallet-theme input::placeholder,
+.hot-wallet-theme textarea::placeholder {
+  color: #625e55 !important;
+  opacity: 1;
+}
+
+.hot-wallet-theme input:disabled,
+.hot-wallet-theme select:disabled,
+.hot-wallet-theme textarea:disabled,
+.hot-wallet-theme button:disabled {
+  cursor: not-allowed;
+  opacity: .65;
+}
+
+.hot-wallet-theme [class*="font-mono"] {
+  font-family: 'Geist Mono', monospace !important;
+  letter-spacing: .01em;
+}
+
+.hot-wallet-theme a {
+  color: #174f83;
+}
+
+.hot-wallet-theme [class*="rounded-xl"]:not(button),
+.hot-wallet-theme [class*="rounded-lg"]:not(button),
+.hot-wallet-theme [class*="rounded-md"]:not(button) {
+  transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+}
+
+.hot-wallet-theme [class*="rounded-xl"]:not(button):hover,
+.hot-wallet-theme [class*="rounded-lg"]:not(button):hover,
+.hot-wallet-theme [class*="rounded-md"]:not(button):hover {
+  border-color: rgba(135, 59, 37, .45) !important;
+}
+
+@keyframes hot-wallet-arc-breathe {
+  0%, 100% { transform: translate3d(0, 0, 0); opacity: .25; }
+  50% { transform: translate3d(16px, 0, 0); opacity: .4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hot-wallet-theme *,
+  .hot-wallet-theme *::before,
+  .hot-wallet-theme *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}

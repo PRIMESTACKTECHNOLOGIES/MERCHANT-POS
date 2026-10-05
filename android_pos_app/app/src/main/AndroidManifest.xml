@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.NFC" />
 
@@ -50,6 +53,27 @@
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
+
+        <!-- ── Transaction History Activity ─────────────────────────────── -->
+        <activity
+            android:name=".ui.TransactionHistoryActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="Transaction History" />
+
+        <!-- ── Customer Activity ─────────────────────────────────────────── -->
+        <activity
+            android:name=".ui.CustomerActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="Customers" />
+
+        <!-- ── Dashboard Sync Activity ───────────────────────────────────── -->
+        <activity
+            android:name=".ui.DashboardSyncActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:label="Dashboard" />
 
         <!-- ── HCE Virtual Card Service ───────────────────────────────────── -->
         <service

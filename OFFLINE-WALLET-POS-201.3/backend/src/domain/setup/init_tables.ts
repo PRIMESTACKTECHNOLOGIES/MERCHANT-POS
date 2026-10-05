@@ -38,9 +38,24 @@ export const initTables = async () => {
         support_email TEXT,
         paypal_client_id TEXT,
         paypal_client_secret TEXT,
+        features TEXT,
+        extended_settings TEXT,
+        payment_config TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    const merchantSettingsColumns = await db.query("SELECT name FROM pragma_table_info('merchant_settings')");
+    const existingMerchantSettingsColumns = new Set(merchantSettingsColumns.rows.map((column: { name: string }) => column.name));
+    for (const [name, definition] of [
+      ["features", "TEXT"],
+      ["extended_settings", "TEXT"],
+      ["payment_config", "TEXT"]
+    ] as const) {
+      if (!existingMerchantSettingsColumns.has(name)) {
+        await db.query(`ALTER TABLE merchant_settings ADD COLUMN ${name} ${definition}`);
+      }
+    }
 
     // Batches Table - Updated to match usage in pos2013Offline.service.ts
     await db.query(`

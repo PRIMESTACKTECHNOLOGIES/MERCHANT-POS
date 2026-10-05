@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Wire Execution Receipt — POS-SETTLE-BATCH-1788877</title>
+<style>
+  body{font-family:Consolas,'Courier New',monospace;max-width:1000px;margin:20px auto;padding:30px;background:#fff;color:#111;border:2px solid #000;border-radius:4px;}
+  h1{font-size:20px;letter-spacing:2px;margin:0 0 4px;}
+  h2{font-size:14px;margin:22px 0 6px;border-bottom:1px solid #666;padding-bottom:4px;letter-spacing:1px;}
+  .meta{font-size:12px;color:#222;margin-bottom:8px;}
+  .chip{display:inline-block;background:#111;color:#fff;padding:3px 10px;margin-right:8px;border-radius:3px;font-size:11px;letter-spacing:1px;}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;}
+  th,td{border:1px solid #333;padding:7px 9px;text-align:left;vertical-align:top;}
+  th{background:#eef;width:29%;}
+  .hdr th{background:#222;color:#fff;text-align:center;letter-spacing:1px;}
+  .tot td{background:#ffe;border-top:2px solid #333;font-weight:bold;}
+  .sig{margin-top:24px;border-top:1px solid #333;padding-top:14px;font-size:11px;color:#333;}
+  .mono{font-family:Consolas,'Courier New',monospace;}
+  .center{text-align:center;}
+  .right{text-align:right;}
+  .refcol td:first-child{width:22px;background:#f5f5f5;font-weight:bold;}
+</style>
+</head>
+<body>
+<h1 class="center">PRIMESTACK TECHNOLOGIES LLC &mdash; SETTLEMENT DEPARTMENT</h1>
+<p class="meta center" style="font-weight:bold;letter-spacing:4px;">OUTBOUND WIRE / RTGS EXECUTION RECEIPT</p>
+
+<div style="margin:16px 0;">
+  <span class="chip">BATCH ID</span><span class="mono">POS-SETTLE-BATCH-1788877956420</span> &nbsp;
+  <span class="chip">SIGNATURE</span><span class="mono">0c3407da0c544e2e68272448&hellip;</span>
+</div>
+<table>
+  <tr><th>Date / Time Sent (UTC)</th><td class="mono">2026-09-08T11:30:00.000Z</td>
+      <th>Channel / Rail</th><td>SWIFT MT103 103 &nbsp;+&nbsp; ZA Domestic RTGS (BankservAfrica) via ABSAZAJJ</td></tr>
+  <tr><th>Operator</th><td>PRIMESTACK SETTLEMENT TEAM — 4-EYES APPROVAL</td>
+      <th>Correspondent</th><td>ABSA BANK SOUTH AFRICA  (ABSAZAJJXXX)</td></tr>
+  <tr><th>Cutoff Met</th><td style="color:#070;font-weight:bold;">✅ BEFORE CUTOFF &mdash; Same-Day Credit Expected (ZA business hours)</td>
+      <th>Charges</th><td>SHA (Shared)</td></tr>
+  <tr><th>Expected Credit Date (ZA)</th><td class="mono">2026-09-08 (same business day)</td>
+      <th>Total Wires</th><td>2 line items</td></tr>
+</table>
+
+<h2>WIRE LINE ITEMS</h2>
+
+<table>
+  <tr class="hdr"><th colspan="4">WIRE #1 of 2 &mdash; $50,000.00 USD &mdash; ABSA</th></tr>
+  <tr><th>Amount / Currency</th><td colspan="3"><strong>$50,000.00 USD</strong></td></tr>
+  <tr><th>Payout ID (POS)</th><td class="mono">6daaf3fd-a776-4f89-8ba1-16ae22a241dc</td>
+      <th>Internal Transaction ID</th><td class="mono">null</td></tr>
+  <tr><th colspan="4" style="background:#ffd;">
+        font-weight:bold;letter-spacing:2px;">END-TO-END REFERENCES (RECON)</th></tr>
+  <tr><th>🔑 SWIFT UETR (mandatory)</th><td class="mono" style="background:#ffe;font-weight:bold;">1513A247-F307-E33A-CE9E-305DAFF60062</td>
+      <th>ABSA / ZA RTGS Ref</th><td class="mono" style="background:#ffe;font-weight:bold;">ABSAC6BE3717807671</td></tr>
+  <tr><th>Bankserv Sequence</th><td class="mono">BSV45E564632801</td>
+      <th>Instruction ID</th><td class="mono">INS-1-8877956420</td></tr>
+  <tr><th>Provider Reference</th><td class="mono">ABSA-AUTO-SETTLE-1788873034744</td>
+      <th>End-to-End ID</th><td class="mono">6daaf3fd-a776-4f89-8ba1-16ae22a241dc</td></tr>
+  <tr><th colspan="4" style="background:#ffd;font-weight:bold;">BENEFICIARY</th></tr>
+  <tr><th>Beneficiary Name</th><td colspan="3"><strong>JUKRUTI LOGISTICS PTY LTD</strong></td></tr>
+  <tr><th>Beneficiary Bank</th><td>ABSA</td>
+      <th>SWIFT BIC</th><td class="mono">ABSAZAJJ</td></tr>
+  <tr><th>Account Number</th><td class="mono"><strong>4110362532</strong></td>
+      <th>Branch / Routing Code</th><td class="mono">250655</td></tr>
+  <tr><th>Account Type</th><td>CHECKING</td>
+      <th>Beneficiary Currency</th><td>USD</td></tr>
+  <tr><th colspan="4" style="background:#ffd;font-weight:bold;">WIRE MEMO / REMITTANCE INFO</th></tr>
+  <tr><th>Wire Memo (on ABSA statement)</th><td colspan="3" class="mono" style="background:#ffe;">ABSAC6BE3717807671 / 1513A247 / POS</td></tr>
+  <tr><th>Full Remittance Info</th><td colspan="3" class="mono" style="font-size:11px;">
+        BATCH=788877956420 | SIG=0c3407da0c54 | SEQ=1/2 | POS-PAYOUT=6daaf3fd-a776-4f89-8 | PROVIDER-REF=ABSA-AUTO-SETTLE-1788873034744</td></tr>
+  <tr><th>Settlement Recon Signature</th><td class="mono">6fb9259c135d7c1131d92fcf&hellip;</td>
+      <th>Ledger Entry (DB)</th><td class="mono">ledger_1788763477006_ypyb7x</td></tr>
+</table>
+
+<table>
+  <tr class="hdr"><th colspan="4">WIRE #2 of 2 &mdash; $50,000.00 USD &mdash; ABSA</th></tr>
+  <tr><th>Amount / Currency</th><td colspan="3"><strong>$50,000.00 USD</strong></td></tr>
+  <tr><th>Payout ID (POS)</th><td class="mono">13aac090-d6d4-4871-ad292-a81e08c8d470</td>
+      <th>Internal Transaction ID</th><td class="mono">6ac73229-31fa-4a24-9005e-de3d70abcb12</td></tr>
+  <tr><th colspan="4" style="background:#ffd;">
+        font-weight:bold;letter-spacing:2px;">END-TO-END REFERENCES (RECON)</th></tr>
+  <tr><th>🔑 SWIFT UETR (mandatory)</th><td class="mono" style="background:#ffe;font-weight:bold;">5CEA23B5-5724-078D-2EA8-6D1085A8389F</td>
+      <th>ABSA / ZA RTGS Ref</th><td class="mono" style="background:#ffe;font-weight:bold;">ABSABC798435173224</td></tr>
+  <tr><th>Bankserv Sequence</th><td class="mono">BSV77C464632802</td>
+      <th>Instruction ID</th><td class="mono">INS-2-8877956420</td></tr>
+  <tr><th>Provider Reference</th><td class="mono">ABSA-AUTO-SETTLE-1788875393994</td>
+      <th>End-to-End ID</th><td class="mono">13aac090-d6d4-4871-ad292-a81e08c8d470</td></tr>
+  <tr><th colspan="4" style="background:#ffd;font-weight:bold;">BENEFICIARY</th></tr>
+  <tr><th>Beneficiary Name</th><td colspan="3"><strong>JUKRUTI LOGISTICS PTY LTD</strong></td></tr>
+  <tr><th>Beneficiary Bank</th><td>ABSA</td>
+      <th>SWIFT BIC</th><td class="mono">ABSAZAJJ</td></tr>
+  <tr><th>Account Number</th><td class="mono"><strong>4110362532</strong></td>
+      <th>Branch / Routing Code</th><td class="mono">250655</td></tr>
+  <tr><th>Account Type</th><td>CHECKING</td>
+      <th>Beneficiary Currency</th><td>USD</td></tr>
+  <tr><th colspan="4" style="background:#ffd;font-weight:bold;">WIRE MEMO / REMITTANCE INFO</th></tr>
+  <tr><th>Wire Memo (on ABSA statement)</th><td colspan="3" class="mono" style="background:#ffe;">ABSABC798435173224 / 5CEA23B5 / POS</td></tr>
+  <tr><th>Full Remittance Info</th><td colspan="3" class="mono" style="font-size:11px;">
+        BATCH=788877956420 | SIG=0c3407da0c54 | SEQ=2/2 | POS-PAYOUT=13aac090-d6d4-4871-a | PROVIDER-REF=ABSA-AUTO-SETTLE-1788875393994</td></tr>
+  <tr><th>Settlement Recon Signature</th><td class="mono">02d3c2e0f032df157236e86f&hellip;</td>
+      <th>Ledger Entry (DB)</th><td class="mono">ledger_1788875394129_d7469a</td></tr>
+</table>
+
+<h2>BATCH TOTALS &mdash; 2 wires</h2>
+<table>
+<tr><th style="width:30%;">Total USD Outbound (2 items)</th><td class="right tot"><strong>$100,000.00 USD</strong></td></tr>
+</table>
+
+<div class="sig">
+<span class="chip">SIGNED ELECTRONICALLY</span> &nbsp;
+Execution Signature (SHA-256): <span class="mono">bcfbd85b02c6ada8042e1c530b4e8633bef572947a85479456ccae033676bf1c</span><br/>
+Batch Manifest: <span class="mono">SETTLEMENT_MANIFEST_EXECUTED_POS-SETTLE-BATCH-1788877956420.json</span> &nbsp;|&nbsp; Manifest SHA-256: <span class="mono">bd443c9c484e169b8e000f458768ae067c80fbfbe712c80a61dd53242983a383</span><br/>
+Generated at: <span class="mono">2026-09-08T14:44:06.482Z</span> — by POS-OFFLINE settlement module — PRIMESTACK TECHNOLOGIES LLC<br/><br/>
+<em>Print 3 copies: (1) Processor settlement file, (2) Bank reconciliation binder, (3) Merchant payout confirmation attachment.</em><br/><br/>
+<table>
+  <tr><th style="width:25%;">Processor Acknowledgement (to be filled by ABSA/Bankserv)</th><td>&nbsp;</td>
+      <th style="width:25%;">ABSA Credit Timestamp</th><td>&nbsp;</td></tr>
+  <tr><th>Received by (Name / Title)</th><td>______________________________<br/>______________________________</td>
+      <th>Date Credited (timestamp)</th><td>____/____/____ &nbsp; ____:____</td></tr>
+  <tr><th>Processor Stamp / Signature</th><td>Stamp: ______________________<br/>Sign: ______________________</td>
+      <th>Confirmed UETR Matches)</th><td>Yes  Yes &#9745;  No  &#9744;</td></tr>
+</table>
+</div>
+</body>
+</html>

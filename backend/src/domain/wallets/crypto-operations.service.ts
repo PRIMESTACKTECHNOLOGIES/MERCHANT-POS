@@ -11,7 +11,7 @@ export interface BuyCryptoRequest {
   amount_usd: number;
   crypto_currency: string; // BTC, ETH, USDT, SOL, etc.
   network: string; // tron, ethereum, solana, bsc, polygon
-  payment_method: 'transak' | 'stripe' | 'wallet_balance'; // How to pay
+  payment_method: 'transak' | 'wallet_balance'; // How to pay
   wallet_address?: string; // Customer's address (if they provide one)
 }
 
@@ -49,18 +49,17 @@ export interface SwapResult {
 }
 
 /**
- * Orchestrates buy/sell/swap operations for customers
- * Routes to Transak (fiat on-ramp), Stripe (card top-up), Jupiter (DEX swaps), etc.
+ * Orchestrates buy/sell/swap operations for customers.
+ * Routes to Transak (fiat on-ramp), wallet balance, or Jupiter (DEX swaps).
  */
 export class CryptoOperationsService {
 
   /**
-   * Buy crypto with fiat (via Transak or Stripe)
+   * Buy crypto with fiat (via Transak or wallet balance)
    */
   async buyCrypto(req: BuyCryptoRequest): Promise<BuyCryptoResult> {
     try {
       const txnId = uuidv4();
-      const now = new Date().toISOString();
 
       // Validate customer exists
       const customerRes = await db.query(
@@ -82,8 +81,6 @@ export class CryptoOperationsService {
         return await this.buyCryptoWithTransak(req, txnId);
       } else if (req.payment_method === 'wallet_balance') {
         return await this.buyCryptoWithWalletBalance(req, txnId);
-      } else if (req.payment_method === 'stripe') {
-        return await this.buyCryptoWithStripe(req, txnId);
       }
 
       return {
@@ -269,19 +266,6 @@ export class CryptoOperationsService {
         error: err.message,
       };
     }
-  }
-
-  /**
-   * Buy crypto using Stripe
-   */
-  private async buyCryptoWithStripe(req: BuyCryptoRequest, txnId: string): Promise<BuyCryptoResult> {
-    // TODO: Implement Stripe card on-ramp flow
-    return {
-      success: false,
-      transaction_id: txnId,
-      status: 'NOT_IMPLEMENTED',
-      error: 'Stripe payment method coming soon',
-    };
   }
 
   /**

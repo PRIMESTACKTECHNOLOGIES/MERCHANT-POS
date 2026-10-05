@@ -1,0 +1,2 @@
+name,recipientEmail,paymentReference,receiverType,amountCurrency,amount,sourceCurrency,targetCurrency,accountHolderName,bankName,accountNumber,IBAN,swiftCode,nationality,dateOfBirth,addressCountryCode,addressCity,addressFirstLine,addressState,transferPurpose
+NGUYEN NGOC SON,metatradedxb@gmail.com,NGUYEN-POS-20260905,PERSON,USD,10000000.00,USD,USD,NGUYEN NGOC SON,ABSA Bank,4110362532,,ABSAZAJJ,,,,ZA,Johannesburg,,SERVICES

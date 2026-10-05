@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-09-05T11:18:43.225Z",
+  "payment_reference": "NGUYEN-POS-20260905",
+  "customer": {
+    "id": "18259759-fb57-4127-a070-ef8e9da383e9",
+    "name": "NGUYEN NGOC SON",
+    "email": "metatradedxb@gmail.com"
+  },
+  "wallet": {
+    "balance": 10000000,
+    "currency": "USD"
+  },
+  "source_transactions": [
+    {
+      "type": "credit",
+      "amount": 10000000,
+      "currency": "USD",
+      "source": "wallet_transfer",
+      "reference": "TRF-6D5696AB",
+      "date": "2026-08-25 18:10:36"
+    }
+  ],
+  "beneficiary": {
+    "bank": "ABSA Bank South Africa",
+    "account_holder": "NGUYEN NGOC SON",
+    "account_number": "4110362532",
+    "branch_code": "632005",
+    "swift": "ABSAZAJJ",
+    "account_type": "Current"
+  },
+  "payment": {
+    "amount": 10000000,
+    "currency": "USD",
+    "own_reference": "NGUYEN-POS-20260905",
+    "beneficiary_reference": "POS-TRF-6D5696AB"
+  },
+  "status": "READY_TO_UPLOAD"
+}

@@ -1,0 +1,47 @@
+{
+  "schema": "OFFLINE_POS_201.3_SETTLEMENT_MANIFEST_EXECUTED_v1",
+  "batch_id": "POS-SETTLE-BATCH-1788936556636",
+  "payout_id": "13aac090-d6d4-4871-ad292-a81e08c8d470",
+  "merchant_id": "MRC-1001",
+  "status": "EXECUTED",
+  "executed_at": "2026-09-09T06:49:16.513Z",
+  "sent_at": "2026-09-09T04:49:16.513Z",
+  "currency": "USD",
+  "amount_usd": 50000,
+  "amount_zar_equiv": 930000,
+  "beneficiary": {
+    "name": "JUKRUTI LOGISTICS PTY LTD",
+    "bank": "ABSA BANK SOUTH AFRICA",
+    "bic": "ABSAZAJJXXX",
+    "branch_code": "632005",
+    "account_number": "4110362532",
+    "account_type": "BUSINESS CURRENT",
+    "country": "ZA"
+  },
+  "execution_rail": {
+    "primary": "SWIFT_MT103_SINGLE_CUSTOMER_CREDIT_TRANSFER",
+    "domestic_leg": "ZA_RTGS_BANKSERVRFICA_14H_SESSION",
+    "correspondent": "ABSAZAJJXXX — ABSA Head Office, Johannesburg",
+    "cut_off_met": "YES  (submitted 4:49 UTC, 06:49 SAST, 431 min before 14:00 domestic cutoff)",
+    "same_day_credit_expected": "YES — ZA domestic RTGS before cutoff settles same business day"
+  },
+  "transactions": [
+    {
+      "seq": 1,
+      "payout_id": "13aac090-d6d4-4871-ad292-a81e08c8d470",
+      "amount": 50000,
+      "currency": "USD",
+      "uetr": "712436CE-E566-D0F4-7F76-AD8E8B92904F",
+      "rtgs_reference": "ABSABC98348953564347",
+      "bankserv_sequence": "BSV7DC693572901",
+      "sent_at_utc": "2026-09-09T04:49:16.513Z",
+      "beneficiary_account": "4110362532",
+      "instructions": "ZA DOMESTIC RTGS - BEFORE 14:00 SAST CUTOFF → SAME DAY CREDIT TO BENEFICIARY"
+    }
+  ],
+  "execution_signature": {
+    "algorithm": "SHA-256",
+    "preimage": "712436CE-E566-D0F4-7F76-AD8E8B92904F‖ABSABC98348953564347‖2026-09-09T04:49:16.513Z‖13aac090-d6d4-4871-ad292-a81e08c8d470‖50000.00",
+    "digest": "7D7E3138B93F339BF4F623264BABC5EF4DED158749DBDEE07804D8E6B62FE230"
+  }
+}

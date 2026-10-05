@@ -1,0 +1,72 @@
+{1:F01PPROCESSORBIC0000000000}
+{2:I103TRWIBEB1XXXN}
+{3:{108:POS2013-EUR50K-MTXL1UKC}{121:NOT_YET_ASSIGNED_PENDING_REAL_UETR_FROM_PROCESSOR}}
+{4:
+:20:POS2013-EUR50K-MTXL1UKC
+:23B:CRED
+:23E:SEPA
+:32A:260911EUR50000,00
+:50K:/MW-EUR-1001
+PRIMESTACK TECHNOLOGIES LLC
+MERCHANT PROCESSOR MRC-1001
+OFFLINE POS SETTLEMENT TRUST (PROCESSOR TREASURY)
+PROTOCOL 201.3
+:52A:PROCESSOR_BIC_ASSIGNED_BY_ISSUER
+:57A:TRWIBEB1XXX
+:59:/BE19905861593312
+PRIMESTACK TECHNOLOGIES LLC
+WISE PAYMENTS EUROPE S.A.
+RUE DU TRONE 100, 3RD FLOOR
+BRUSSELS, 1050, BELGIUM
+:70:/PAYOUT-ID/3E31293C-7609-490F-838B-193828E86AED
+/SETTLEMENT-REF/INTL-MRC-1001-MTXL1UKC
+/WISE-TRANSFER-ID/2366635788
+MERCHANT PAYOUT EUR 50,000.00
+PRIMESTACK TECHNOLOGIES LLC SETTLEMENT
+PROTOCOL 201.3 OFFLINE POS CARD PROCEEDS
+:71A:SLEV
+:77B:BNF/NOTIFIED
+-}
+
+===== TRANSACTION DETAILS (PROCESSOR INTERNAL COPY) =====
+Ordering Customer (50K):      PRIMESTACK TECHNOLOGIES LLC — Processor Treasury / MW-EUR-1001
+Ordering Institution (52A):   PROCESSOR BANK (LICENSED INTERNAL ACQUIRER — Protocol 201.3)
+Sender Correspondent (53A):   [PROCESSOR NOSTRO — filled by processor ops]
+Receiver Correspondent (57A): TRWIBEB1XXX (Wise Payments Europe S.A., Brussels)
+Beneficiary (59):             PRIMESTACK TECHNOLOGIES LLC IBAN BE19 9058 6159 3312 (Wise EUR Mediator)
+Interbank Settled Amount:     EUR 50,000.00
+Currency/Amount (32A):        EUR 50,000.00  (2026-09-11 value date)
+Bank Operation Code (23B):    CRED
+Service Level (23E):          SEPA  (Same-Business-Day if before TARGET2 16:00 CET cutoff)
+Reference (20):               POS2013-EUR50K-MTXL1UKC
+Remittance Info (70):         Payout #3e31293c · Settlement INTL-MRC-1001-MTXL1UKC · Wise Transfer #2366635788
+Charge Bearer (71A):          SLEV  (Sender pays all sender charges; Beneficiary pays beneficiary bank charges)
+UETR (121):                   PENDING — REAL HASH TO BE STAMPED BY PROCESSOR BANK UPON ACTUAL MT103 ORIGINATION
+
+===== INTERNAL BOOK AUDIT TRACE (MTXL1UKC) =====
+ Merchant MRC-1001 EUR Wallet DEBIT  : -€50,000.00  (wallet MW-EUR-1001 · now €509,950,000.00)
+ MWTX Debit ID                      : 81e01605-2705-4a69-bf7a-fc890934e4c7
+ Ledger AUTHORIZED Debit ID         : 19860faa-7900-48a2-ac84-dc33f50cbc5b  (ref PAYOUT-EUR50K-2026-09-11)
+ Merchant Payout ID                 : 3e31293c-7609-490f-838b-193828e86aed
+ Payout Settlement Instruction Ref  : INTL-MRC-1001-MTXL1UKC   (row id 36cef476-1908-4966-b407-782af9c1023e)
+ Wise Transfer ID (downstream rail) : 2366635788   (status: WAITING FOR BALANCE)
+ Wise BALANCE FUNDING (expected)    : HTTP 200 → outgoing_payment_sent → final credit to Wise EUR balance
+ Wise Recipient ID                   : 1569435635
+ Wise Quote ID                       : ab926789-ce54-4b11-ba6e-712cc39f9223
+
+===== PROCESSOR ACTION REQUIRED TO EXECUTE REAL SWEEP =====
+ [ ] Log in to Processor Bank Portal (Tier-1 Vault) → Payments → Create SEPA Credit Transfer
+ [ ] Beneficiary IBAN:  BE19 9058 6159 3312
+ [ ] Beneficiary BIC:   TRWIBEB1XXX
+ [ ] Beneficiary Name:  PRIMESTACK TECHNOLOGIES LLC
+ [ ] Beneficiary Bank:  Wise Payments Europe S.A., Rue du Trône 100, 3rd floor, Brussels 1050, Belgium
+ [ ] Amount / Currency: 50000.00 EUR
+ [ ] Remittance Ref:    INTL-MRC-1001-MTXL1UKC / POS2013-EUR50K-MTXL1UKC
+ [ ] Execution Date:    TODAY (2026-09-11)
+ [ ] Charge Type:       OUR / SLEV — Sender (Processor) pays charges
+ [ ] → CLICK CONFIRM & AUTHENTICATE (processor 2FA)
+ [ ] → Copy the REAL UETR hash from the bank portal confirmation screen
+ [ ] → STAMP BACK: POST to {BACKEND}/api/payout/bank/approve with external_reference=<real UETR>
+ [ ] → RESULT: Wise EUR mediator balance goes from €0.00 → €50,000.00 → Wise Transfer #2366635788 auto-completes.
+
+Generated: 2026-09-11T23:23:59.810Z · Processor: Offline-POS 201.3 · Merchant: MRC-1001 (PRIMESTACK TECHNOLOGIES LLC)

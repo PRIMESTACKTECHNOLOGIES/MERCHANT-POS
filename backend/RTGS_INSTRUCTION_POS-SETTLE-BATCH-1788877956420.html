@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>RTGS Settlement Instruction — POS-SETTLE-BATCH-1788877956420</title>
+<style>
+  body{font-family:Consolas,'Courier New',monospace;max-width:900px;margin:20px auto;padding:30px;color:#111;background:#fff;border:1px dashed #444;}
+  h1{font-size:18px;margin:0 0 4px;letter-spacing:2px;}
+  h2{font-size:14px;margin:24px 0 8px;border-bottom:1px solid #999;padding-bottom:4px;letter-spacing:1px;}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:12px;}
+  th,td{border:1px solid #888;padding:6px 8px;text-align:left;vertical-align:top;}
+  th{background:#eef;width:30%;}
+  .sig{margin-top:20px;border-top:1px solid #555;padding-top:14px;font-size:12px;color:#555;}
+  .mono{font-family:Consolas,'Courier New',monospace;}
+  .chip{display:inline-block;background:#000;color:#fff;padding:2px 8px;margin-right:6px;border-radius:3px;font-size:11px;}
+  .tot{text-align:right;font-weight:bold;font-size:13px;}
+</style>
+</head>
+<body>
+<h1>PRIMESTACK TECHNOLOGIES LLC &mdash; POS-OFFLINE SETTLEMENT</h1>
+<div style="font-size:12px;color:#333;margin-bottom:12px;">
+  <span class="chip">BATCH ID</span><span class="mono">POS-SETTLE-BATCH-1788877956420</span><br/>
+  <span class="chip">BATCH SIG</span><span class="mono">0c3407da0c544e2e682724487452510c</span><br/>
+  <span class="chip">CREATED</span>2026-09-08T14:32:36.571Z<br/>
+  <span class="chip">OPERATOR</span>PRIMESTACK TECHNOLOGIES LLC / POS-SYSTEM &middot; <span class="mono">system-auto-signed-primestack-settlement-569613177eec</span>
+</div>
+
+<h2>INSTRUCTION FOR PROCESSOR / BANK</h2>
+<p style="font-size:13px;">
+  Execute <strong>2 outbound credit transfer(s)</strong> today
+  from the <strong>PRIMESTACK TECHNOLOGIES LLC settlement account</strong> to the beneficiaries below.
+  Include the exact <strong>Wire Memo / Beneficiary Reference</strong> shown per line so reconciliation against
+  the POS system automatic recon engine (signature <span class="mono">0c3407da0c544e2e…</span>) succeeds.
+  Notify settlements@primestack-tech.com with RTGS confirmation + UETR for each wire.
+</p>
+
+<h2>WIRE DETAILS (2 line items)</h2>
+
+<table>
+  <tr><th colspan="4" style="background:#dde;">WIRE #1 of 2 &mdash; POS Payout 6daaf3fd-a776-4f89-8ba1-&hellip; &mdash; $50,000.00 USD</th></tr>
+  <tr><th>Amount / Currency</th><td colspan="3"><strong>$50,000.00 USD</strong></td></tr>
+  <tr><th>Value Date (UTC)</th><td>2026-09-08</td>
+      <th>Charges</th><td>SHA (Shared)</td></tr>
+  <tr><th>Ordering Customer (Sender)</th><td colspan="3">PRIMESTACK TECHNOLOGIES LLC<br/>1000 N WEST ST STE 400, WILMINGTON DE 19801, UNITED STATES<br/>Entity Ref: PRIMESTACK-SETTLEMENT</td></tr>
+  <tr><th>Sender's Bank (optional)</th><td>ABSAZAJJ</td>
+      <th>Beneficiary Bank (BIC)</th><td><strong class="mono">ABSAZAJJ</strong></td></tr>
+  <tr><th>Beneficiary Bank Name</th><td colspan="3"><strong>ABSA</strong></td></tr>
+  <tr><th>Beneficiary Name</th><td colspan="3"><strong>JUKRUTI LOGISTICS PTY LTD</strong></td></tr>
+  <tr><th>Account Number</th><td><strong class="mono">4110362532</strong></td>
+      <th>Routing / Branch Code</th><td class="mono">250655</td></tr>
+  <tr><th>IBAN (if EU/Intl)</th><td class="mono">—</td>
+      <th>Sort Code (if UK)</th><td class="mono">—</td></tr>
+  <tr><th>Account Type</th><td>CHECKING</td>
+      <th>Beneficiary Currency</th><td>USD</td></tr>
+  <tr><th style="background:#fff3e6;">Wire Memo / Beneficiary Reference <em>(REQUIRED for recon)</em></th>
+      <td colspan="3" style="background:#fffbe6;font-weight:bold;" class="mono">ABSA-AUTO-SETTLE-1788873034744</td></tr>
+  <tr><th>Remittance / Payment Purpose</th>
+      <td colspan="3" class="mono" style="font-size:11px;">POS Payout Settlement / Goods &amp; Services<br/>BATCH=POS-SETTLE-BATCH-1788877956420 | SIG=0c3407da0c544e2e | SEQ=1/2 | POS-ID=6daaf3fd-a776-4f89-8</td></tr>
+  <tr><th>Expected Domestic Rail</th><td>US ABA-ACH / Domestic Wire</td>
+      <th>System Payout Reference</th><td class="mono">ABSA-AUTO-SETTLE-1788873034744</td></tr>
+</table>
+  
+<table>
+  <tr><th colspan="4" style="background:#dde;">WIRE #2 of 2 &mdash; POS Payout 13aac090-d6d4-4871-ad292&hellip; &mdash; $50,000.00 USD</th></tr>
+  <tr><th>Amount / Currency</th><td colspan="3"><strong>$50,000.00 USD</strong></td></tr>
+  <tr><th>Value Date (UTC)</th><td>2026-09-08</td>
+      <th>Charges</th><td>SHA (Shared)</td></tr>
+  <tr><th>Ordering Customer (Sender)</th><td colspan="3">PRIMESTACK TECHNOLOGIES LLC<br/>1000 N WEST ST STE 400, WILMINGTON DE 19801, UNITED STATES<br/>Entity Ref: PRIMESTACK-SETTLEMENT</td></tr>
+  <tr><th>Sender's Bank (optional)</th><td>ABSAZAJJ</td>
+      <th>Beneficiary Bank (BIC)</th><td><strong class="mono">ABSAZAJJ</strong></td></tr>
+  <tr><th>Beneficiary Bank Name</th><td colspan="3"><strong>ABSA</strong></td></tr>
+  <tr><th>Beneficiary Name</th><td colspan="3"><strong>JUKRUTI LOGISTICS PTY LTD</strong></td></tr>
+  <tr><th>Account Number</th><td><strong class="mono">4110362532</strong></td>
+      <th>Routing / Branch Code</th><td class="mono">250655</td></tr>
+  <tr><th>IBAN (if EU/Intl)</th><td class="mono">—</td>
+      <th>Sort Code (if UK)</th><td class="mono">—</td></tr>
+  <tr><th>Account Type</th><td>CHECKING</td>
+      <th>Beneficiary Currency</th><td>USD</td></tr>
+  <tr><th style="background:#fff3e6;">Wire Memo / Beneficiary Reference <em>(REQUIRED for recon)</em></th>
+      <td colspan="3" style="background:#fffbe6;font-weight:bold;" class="mono">ABSA-AUTO-SETTLE-1788875393994</td></tr>
+  <tr><th>Remittance / Payment Purpose</th>
+      <td colspan="3" class="mono" style="font-size:11px;">POS Payout Settlement / Goods &amp; Services<br/>BATCH=POS-SETTLE-BATCH-1788877956420 | SIG=0c3407da0c544e2e | SEQ=2/2 | POS-ID=13aac090-d6d4-4871-a</td></tr>
+  <tr><th>Expected Domestic Rail</th><td>US ABA-ACH / Domestic Wire</td>
+      <th>System Payout Reference</th><td class="mono">ABSA-AUTO-SETTLE-1788875393994</td></tr>
+</table>
+  
+
+<h2>BATCH TOTALS</h2>
+<table>
+<tr><th style="width:30%;">Total USD Wires (2 items)</th><td class="tot"><strong>$100,000.00 USD</strong></td></tr>
+<tr><th>Settlement Operator</th><td>PRIMESTACK TECHNOLOGIES LLC / POS-SYSTEM &mdash; electronically signed <span class="mono">2026-09-08T14:32:36.572Z</span></td></tr>
+</table>
+
+<h2>DELIVERY CONFIRMATION (to be completed by processor / bank)</h2>
+<table>
+  <tr><th style="width:30%;">Processor Name</th><td>__________________________________________</td></tr>
+  <tr><th>Date Submitted</th><td>____/____/__________</td></tr>
+<tr><th>Wire 1 — UETR / RTGS Reference</th><td>POS Payout 6daaf3fd-a776-4f… UETR: ______________________</td></tr>,<tr><th>Wire 2 — UETR / RTGS Reference</th><td>POS Payout 13aac090-d6d4-48… UETR: ______________________</td></tr>
+  <tr><th>Authorized Signatory</th><td>Signature: ________________________ Name: ________________________ Title: ________________________</td></tr>
+</table>
+
+<div class="sig">
+  Document signature (SHA-256): <span class="mono">9189950102447fd315c629e4bafe973d4ae90b5d9f0342a25530712c08fab3d8</span><br/>
+  Source Batch: <span class="mono">POS-SETTLE-BATCH-1788877956420</span> &middot; Generated by POS-OFFLINE settlement module.<br/>
+  <em>Print 2 copies &mdash; one for processor, one filed with your bank reconciliation binder.</em>
+</div>
+</body>
+</html>

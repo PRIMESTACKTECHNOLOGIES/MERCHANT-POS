@@ -16,7 +16,7 @@ export default defineConfig(() => {
       strictPort: false,
       host: true,
       proxy: {
-        '/merchant': {
+        '/merchant/v1': {
           target: apiUrl,
           changeOrigin: true,
         },

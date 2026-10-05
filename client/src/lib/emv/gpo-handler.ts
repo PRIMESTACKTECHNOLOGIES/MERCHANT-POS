@@ -14,7 +14,6 @@
 
 import type { CardInterface, APDUResponse } from './pos-apdu-bridge';
 import { TLVParser } from './tlv-parser';
-import type { EMVTag } from './tlv-parser';
 
 export interface GPOResult {
   /** Application Interchange Profile (tag 82) — hex */

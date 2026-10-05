@@ -23,7 +23,6 @@
 import type { CardInterface } from './pos-apdu-bridge';
 import type { APDUResponse } from './pos-apdu-bridge';
 import { TLVParser } from './tlv-parser';
-import type { EMVTag } from './tlv-parser';
 
 export interface ScriptResult {
   /** Overall success — all scripts executed without error */
@@ -286,11 +285,6 @@ export class IssuerScriptProcessor {
 
     let i = 0;
     while (i + 4 <= bytes.length) {
-      const cla = bytes[i];
-      const ins = bytes[i + 1];
-      const p1 = bytes[i + 2];
-      const p2 = bytes[i + 3];
-
       let apduEnd = i + 4;
 
       // Check for Lc

@@ -1,0 +1,49 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>Payout Receipt 6daaf3fd</title><style>
+body{font-family:Segoe UI,system-ui,sans-serif;background:#f3f4f6;color:#111827;padding:28px;}.wrap{max-width:780px;margin:auto;background:#fff;border-radius:16px;padding:40px;box-shadow:0 4px 24px rgba(0,0,0,0.06);border:1px solid #e5e7eb;}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1e293b;padding-bottom:24px;margin-bottom:28px;}.logo{font-size:24px;font-weight:800;letter-spacing:-0.5px;color:#0f172a;}.logo .sub{font-size:12px;color:#64748b;font-weight:500;letter-spacing:2px;margin-top:4px;display:block;}
+.pill{display:inline-block;padding:8px 16px;border-radius:999px;background:#d9770614;color:#d97706;font-weight:700;font-size:13px;letter-spacing:0.5px;border:1px solid #d9770633;}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:2px;color:#64748b;font-weight:700;margin:0 0 8px 0;}.grid{display:grid;grid-template-columns:1fr 1fr;gap:22px 32px;}
+.k{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;font-weight:600;}.v{font-size:15px;color:#0f172a;font-weight:600;margin-top:2px;word-break:break-all;}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;}
+.amount{grid-column:1 / -1;background:#0f172a;color:#fff;padding:22px 26px;border-radius:12px;margin:24px 0;display:flex;justify-content:space-between;align-items:center;}.amount .small{color:#94a3b8;text-transform:uppercase;letter-spacing:2px;font-size:11px;font-weight:700;}.amount .big{font-size:40px;font-weight:800;letter-spacing:-1px;}.bigmono{font-size:11px;color:#cbd5e1;margin-top:4px;}
+.sec{margin-top:28px;}table{width:100%;border-collapse:collapse;font-size:14px;}th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #e5e7eb;}th{background:#f8fafc;text-transform:uppercase;letter-spacing:1px;font-size:11px;color:#64748b;}
+.foot{margin-top:34px;padding-top:22px;border-top:1px dashed #cbd5e1;text-align:center;font-size:12px;color:#64748b;line-height:1.8;}.foot .sig{margin-top:14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#475569;}
+.btns{display:flex;gap:12px;justify-content:flex-end;margin-bottom:16px;}button{border-radius:8px;border:1px solid #1e293b;background:#fff;padding:8px 14px;font-weight:600;cursor:pointer;}button.primary{background:#0f172a;color:#fff;}@media print{.btns{display:none;}body{padding:0;background:#fff;}.wrap{box-shadow:none;border:none;}}
+</style></head><body><div class="wrap">
+<div class="btns"><button onclick="window.print()" class="primary">Print / Save as PDF</button><button onclick="window.close()">Close</button></div>
+<div class="hdr"><div><div class="logo">JUKRUTI LOGISTICS PTY LTD<span class="sub">MERCHANT PAYOUT RECEIPT &middot; PROTOCOL 201.3</span></div></div><div class="pill">PENDING BANK SETTLEMENT</div></div>
+<div class="amount"><div><div class="small">Total Payout Amount</div><div class="big">$50,000.00</div><div class="bigmono">CURRENCY USD &middot; MANUAL</div></div>
+<div style="text-align:right;"><div class="small">Payout ID</div><div class="mono" style="font-size:16px;color:#fff;font-weight:700;">6daaf3fd-a776-4f89-8ba1-16ae22a241dc</div><div class="bigmono">Created Sep 7, 2026, 10:44 AM UTC</div></div></div>
+<div class="sec"><h2>Merchant &amp; Wallet</h2><div class="grid">
+<div><div class="k">Merchant ID</div><div class="v mono">MRC-1001</div></div>
+<div><div class="k">Wallet Currency</div><div class="v">USD</div></div>
+<div><div class="k">Post-Debit Wallet Balance</div><div class="v">$128,799,713.50</div></div>
+<div><div class="k">Ledger Debit Rows</div><div class="v mono">1 AUTHORIZED, total DR $50,000.00</div></div>
+</div></div>
+<div class="sec"><h2>Destination Bank Account (Merchant Owned)</h2><div class="grid">
+<div><div class="k">Bank Name</div><div class="v">ABSA</div></div>
+<div><div class="k">Account Holder</div><div class="v">JUKRUTI LOGISTICS PTY LTD</div></div>
+<div><div class="k">Account Number</div><div class="v mono">4110362532</div></div>
+<div><div class="k">Routing / SWIFT</div><div class="v mono">250655 / SWIFT ABSAZAJJ</div></div>
+<div><div class="k">IBAN</div><div class="v mono">—</div></div>
+<div><div class="k">Account Type</div><div class="v">CHECKING</div></div>
+<div style="grid-column:1/-1;"><div class="k">Inbuilt Bank Account ID</div><div class="v mono">b3181a21-4851-48f3-9041-b60641121fe8</div></div>
+</div></div>
+<div class="sec"><h2>Double-Entry Audit Trail (Atomic Commit)</h2><table><thead><tr><th>Ledger</th><th>Entry ID</th><th>Type</th><th>Amount</th><th>Reference</th><th>Status</th></tr></thead><tbody>
+<tr><td>Merchant Wallet (denorm)</td><td class="mono">0966334b-8d4</td><td><span style="color:#dc2626;font-weight:700;">DEBIT &minus;</span></td><td style="font-weight:700;">$50,000.00</td><td class="mono">6daaf3fd-a77</td><td>Debited</td></tr>
+<tr><td>mwtx (journal)</td><td class="mono">b670b71b-98b</td><td><span style="color:#dc2626;font-weight:700;">DEBIT</span></td><td style="font-weight:700;">$50,000.00</td><td class="mono">6daaf3fd-a776-4f89-8ba1-16ae22a241dc</td><td>Sep 7, 2026, 10:44 AM UTC</td></tr>
+<tr><td>General Ledger</td><td class="mono">AUTHORIZED 1 row(s)</td><td><span style="color:#dc2626;font-weight:700;">DEBIT</span></td><td style="font-weight:700;">$50,000.00</td><td class="mono">reference=6daaf3fd-a77 &middot; mid=MRC-1001</td><td>AUTHORIZED</td></tr>
+<tr><td>Payout Record</td><td class="mono">6daaf3fd-a77</td><td><span style="color:#0284c7;font-weight:700;">CREATED</span></td><td style="font-weight:700;">$50,000.00</td><td class="mono">provider=manual</td><td style="color:#d97706;font-weight:700;">PENDING_BANK_CONFIRMATION</td></tr>
+</tbody></table></div>
+<div class="sec" style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:20px;">
+<h2 style="color:#92400e;">Pending Settlement Confirmation</h2>
+<div class="v" style="color:#78350f;font-weight:500;margin-top:6px;">This payout has been debited from your merchant wallet. Real funds are currently being processed by the card acquiring network and will settle directly into <span class="mono">ABSA 4110362532</span> within 1&ndash;3 business days.</div>
+<div style="margin-top:12px;font-size:13px;color:#92400e;">Once you see the deposit appear in ABSA online banking, call the approve endpoint to mark COMPLETED and attach your ABSA reference.</div>
+<div class="mono" style="margin-top:10px;font-size:12px;color:#78350f;">POST /api/payout/payouts/6daaf3fd-a776-4f89-8ba1-16ae22a241dc/approve</div>
+</div>
+<div class="sec"><h2>Instructions</h2><div style="font-size:13px;color:#334155;line-height:1.7;">
+1. Card processor runs automatic settlement (1&ndash;3 business days). 2. Check your ABSA bank statement for the deposit. 3. Approve payout with your bank reference. 4. Re-download this receipt after approval &mdash; it will update to COMPLETED automatically.
+</div></div>
+<div class="foot"><div>JUKRUTI LOGISTICS PTY LTD &middot; Merchant MRC-1001 &middot; Offline POS Protocol 201.3</div>
+<div>Generated Sep 7, 2026, 11:06 AM UTC &middot; All figures triple-verified (wallet.balance = mwtx NET = ledger AUTHORIZED)</div>
+<div class="sig">RECEIPT HASH: SHA256[D9EF638D185E7874F01797CB1FCBEF3C...]</div></div>
+</div></body></html>

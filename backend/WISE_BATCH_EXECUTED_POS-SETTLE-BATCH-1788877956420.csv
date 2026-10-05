@@ -1,0 +1,3 @@
+recipient_type,name,email,amount,currency,sourceCurrency,targetCurrency,reference,customerTransactionId,bankAccount,routingNumber,swiftCode,IBAN,sortCode,accountType,address.country,address.city,address.postCode,address.firstLine,paymentPurpose
+business,JUKRUTI LOGISTICS PTY LTD,,50000.00,USD,USD,USD,ABSA-AUTO-SETTLE-1788873034744,6daaf3fd-a776-4f89-8ba1-16ae22a241dc,4110362532,250655,ABSAZAJJ,,,CHECKING,ZA,Johannesburg,,,commercial_payment_goods_services_or_supplier
+business,JUKRUTI LOGISTICS PTY LTD,,50000.00,USD,USD,USD,ABSA-AUTO-SETTLE-1788875393994,13aac090-d6d4-4871-ad292-a81e08c8d470,4110362532,250655,ABSAZAJJ,,,CHECKING,ZA,Johannesburg,,,commercial_payment_goods_services_or_supplier

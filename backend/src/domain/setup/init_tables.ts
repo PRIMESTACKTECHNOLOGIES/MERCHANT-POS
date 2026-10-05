@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { v4 as uuidv4 } from 'uuid';
 
-/** Parse "ALTER TABLE x ADD COLUMN colName TYPE ...DEFAULT..." SQL → [table, colName, fullSQL] */
+/** Parse "ALTER TABLE x ADD COLUMN colName TYPE ...DEFAULT..." SQL â†’ [table, colName, fullSQL] */
 const parseAddCol = (sql: string): [string, string, string] => {
   const m = sql.match(/ALTER\s+TABLE\s+"?([A-Za-z0-9_]+)"?\s+ADD\s+COLUMN\s+"?([A-Za-z0-9_]+)"?/i);
   return m ? [m[1], m[2], sql] : ['', '', sql];
@@ -16,12 +16,12 @@ export const initTables = async () => {
     const skipSeed = process.env.SKIP_SEED === '1' || process.env.SKIP_SEED === 'true';
 
 
-    // ── Run migrations FIRST (add missing columns to existing tables) ─────────
-    // Declarative list of ADD COLUMN migrations — applied only if the target column
-    // is not already present (checked via PRAGMA table_info — avoids "duplicate column"
+    // â”€â”€ Run migrations FIRST (add missing columns to existing tables) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Declarative list of ADD COLUMN migrations â€” applied only if the target column
+    // is not already present (checked via PRAGMA table_info â€” avoids "duplicate column"
     // errors and noisy console output).
     const migrations: Array<[string, string, string]> = [
-      // pos2013_batches — columns added over time
+      // pos2013_batches â€” columns added over time
       parseAddCol(`ALTER TABLE pos2013_batches ADD COLUMN total_amount_minor INTEGER DEFAULT 0`),
       parseAddCol(`ALTER TABLE pos2013_batches ADD COLUMN signature TEXT`),
       parseAddCol(`ALTER TABLE pos2013_batches ADD COLUMN nonce TEXT`),
@@ -32,8 +32,9 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE pos2013_batches ADD COLUMN protocol_version TEXT DEFAULT '201.3'`),
       parseAddCol(`ALTER TABLE pos2013_batches ADD COLUMN settlement_code TEXT`),
       parseAddCol(`ALTER TABLE vault_ledger ADD COLUMN meta TEXT NOT NULL DEFAULT '{}'`),
-      // pos2013_transactions — columns added over time
+      // pos2013_transactions â€” columns added over time
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN auth_code TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN customer_id TEXT`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN local_txn_id TEXT NOT NULL DEFAULT ''`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN txn_type TEXT`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN auth_mode TEXT`),
@@ -43,6 +44,14 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN cvm_result TEXT`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN pin_verified INTEGER DEFAULT 0`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN decline_reason TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN emv_field55_hex TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN iso_mti TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN iso_response_code TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN iso_message_reference TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN token_reference TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN pan_sequence TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN pos_condition_code TEXT`),
+      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN pin_block_kid TEXT`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP`),
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN license_number TEXT`),
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN tax_id TEXT`),
@@ -52,6 +61,7 @@ export const initTables = async () => {
       // merchant_settings extended fields
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN features TEXT`),
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN extended_settings TEXT`),
+      parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN payment_config TEXT`),
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN terminal_id TEXT`),
       // merchant_settings bank account fields (for manual payouts)
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN bank_name TEXT`),
@@ -83,23 +93,23 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE pos_idempotency ADD COLUMN result_json TEXT`),
       parseAddCol(`ALTER TABLE pos_idempotency ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP`),
       parseAddCol(`ALTER TABLE pos_idempotency ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP`),
-      // terminals — offline floor limit + ensure offline_enabled present
+      // terminals â€” offline floor limit + ensure offline_enabled present
       parseAddCol(`ALTER TABLE terminals ADD COLUMN floor_limit REAL DEFAULT 0`),
       parseAddCol(`ALTER TABLE terminals ADD COLUMN offline_enabled INTEGER DEFAULT 0`),
-      // bank_accounts — support merchant-owned accounts (polymorphic owner via merchant_id XOR customer_id)
+      // bank_accounts â€” support merchant-owned accounts (polymorphic owner via merchant_id XOR customer_id)
       parseAddCol(`ALTER TABLE bank_accounts ADD COLUMN merchant_id TEXT`),
       parseAddCol(`ALTER TABLE bank_accounts ADD COLUMN account_type TEXT DEFAULT 'CHECKING'`),
       parseAddCol(`ALTER TABLE bank_accounts ADD COLUMN bank_address TEXT`),
       parseAddCol(`ALTER TABLE bank_accounts ADD COLUMN recipient_address TEXT`),
-      // bank_payouts — add provider_ref for Wise tracking
+      // bank_payouts â€” add provider_ref for Wise tracking
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN provider_ref TEXT`),
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN provider TEXT`),
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP`),
-      // wallet_transactions — native currency column (AED stays AED, USD stays USD)
+      // wallet_transactions â€” native currency column (AED stays AED, USD stays USD)
       parseAddCol(`ALTER TABLE wallet_transactions ADD COLUMN currency TEXT DEFAULT 'USD'`),
-      // merchant_wallet_transactions — native currency column
+      // merchant_wallet_transactions â€” native currency column
       parseAddCol(`ALTER TABLE merchant_wallet_transactions ADD COLUMN currency TEXT DEFAULT 'USD'`),
-      // customer_crypto_wallets_v2 — HD derivation index for BIP-44 wallet generation
+      // customer_crypto_wallets_v2 â€” HD derivation index for BIP-44 wallet generation
       parseAddCol(`ALTER TABLE customer_crypto_wallets_v2 ADD COLUMN derivation_index INTEGER`),
     ];
 
@@ -113,7 +123,7 @@ export const initTables = async () => {
         if (exists) continue;
         await db.query(sql);
       } catch (_) {
-        // any unexpected error on ALTER (e.g. table missing) → silently skip.
+        // any unexpected error on ALTER (e.g. table missing) â†’ silently skip.
       }
     }
 
@@ -149,6 +159,9 @@ export const initTables = async () => {
         test_mode INTEGER DEFAULT 0, -- Boolean
         merchant_name TEXT,
         support_email TEXT,
+        features TEXT,
+        extended_settings TEXT,
+        payment_config TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -185,7 +198,7 @@ export const initTables = async () => {
       );
     `);
 
-    // Batches Table — SQLite-compatible, with all columns the service uses
+    // Batches Table â€” SQLite-compatible, with all columns the service uses
     await db.query(`
       CREATE TABLE IF NOT EXISTS pos2013_batches (
         id TEXT PRIMARY KEY,
@@ -213,6 +226,7 @@ export const initTables = async () => {
       CREATE TABLE IF NOT EXISTS pos2013_transactions (
         id TEXT PRIMARY KEY,
         merchant_id TEXT NOT NULL,
+        customer_id TEXT,
         terminal_id TEXT NOT NULL,
         batch_id TEXT NOT NULL,
         local_txn_id TEXT NOT NULL,
@@ -231,12 +245,25 @@ export const initTables = async () => {
         auth_code TEXT,
         status TEXT,
         emv_data TEXT, -- JSON or String
+        emv_field55_hex TEXT,
+        iso_mti TEXT,
+        iso_response_code TEXT,
+        iso_message_reference TEXT,
+        token_reference TEXT,
+        pan_sequence TEXT,
+        pos_condition_code TEXT,
+        pin_block_kid TEXT,
         txn_timestamp TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    // ── Protocol Rules — constraints per protocol (101.1 / 101.6 / 201.3) ────────
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_scope
+      ON pos2013_transactions (merchant_id, terminal_id, batch_id, local_txn_id);`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_rrn
+      ON pos2013_transactions (merchant_id, rrn) WHERE rrn IS NOT NULL;`);
+
+    // â”€â”€ Protocol Rules â€” constraints per protocol (101.1 / 101.6 / 201.3) â”€â”€â”€â”€â”€â”€â”€â”€
     // Defines what is required for each protocol. Checked BEFORE auth code lookup.
     await db.query(`
       CREATE TABLE IF NOT EXISTS protocol_rules (
@@ -258,9 +285,9 @@ export const initTables = async () => {
     `);
     // Seed the 3 protocol rules
     const protocolRulesSeed = [
-      { id: 'rule-101.1', protocol: '101.1', code_type: 'approval_code', requires_cvv: 0, requires_online: 1, requires_offline: 0, min_amount: 0, max_amount: 9999999999, description: 'Voice Auth — approval code from issuer, no CVV required' },
-      { id: 'rule-101.6', protocol: '101.6', code_type: 'token',          requires_cvv: 0, requires_online: 1, requires_offline: 0, min_amount: 0, max_amount: 9999999999, description: 'EMV Chip / Online token — dynamic code, CVV optional' },
-      { id: 'rule-201.3', protocol: '201.3', code_type: 'auth_code',      requires_cvv: 1, requires_online: 0, requires_offline: 1, min_amount: 0, max_amount: 9999999999, description: 'Offline Batch — pre-auth code + CVV both required' },
+      { id: 'rule-101.1', protocol: '101.1', code_type: 'approval_code', requires_cvv: 0, requires_online: 1, requires_offline: 0, min_amount: 0, max_amount: 9999999999, description: 'Voice Auth â€” approval code from issuer, no CVV required' },
+      { id: 'rule-101.6', protocol: '101.6', code_type: 'token',          requires_cvv: 0, requires_online: 1, requires_offline: 0, min_amount: 0, max_amount: 9999999999, description: 'EMV Chip / Online token â€” dynamic code, CVV optional' },
+      { id: 'rule-201.3', protocol: '201.3', code_type: 'auth_code',      requires_cvv: 1, requires_online: 0, requires_offline: 1, min_amount: 0, max_amount: 9999999999, description: 'Offline Batch â€” pre-auth code + CVV both required' },
     ];
     for (const rule of protocolRulesSeed) {
       try {
@@ -274,7 +301,7 @@ export const initTables = async () => {
       } catch { /* ignore */ }
     }
 
-    // ── Card Authorizations — pre-authorized codes for protocol validation ──
+    // â”€â”€ Card Authorizations â€” pre-authorized codes for protocol validation â”€â”€
     // Stores valid auth codes per card / protocol for 101.1, 101.6, 201.3.
     // When a POS transaction arrives with an auth code, it must match a row here.
     await db.query(`
@@ -484,7 +511,7 @@ export const initTables = async () => {
 
     // Seed Admin User
     const adminUsername = process.env.ADMIN_USERNAME || "admin";
-    const adminPassword = process.env.ADMIN_PASSWORD || "admin1234";
+    const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
     const hash = await bcrypt.hash(adminPassword, 10);
     const userRes = await db.query("SELECT * FROM admin_users WHERE username = ?", [adminUsername]);
 
@@ -492,11 +519,11 @@ export const initTables = async () => {
     if (userRes.rowCount === 0) {
       adminId = uuidv4();
       await db.query("INSERT INTO admin_users (id, username, password_hash, full_name) VALUES (?, ?, ?, ?)", [adminId, adminUsername, hash, "System Administrator"]);
-      console.log(`✅ Default admin user created: ${adminUsername} / ${adminPassword}`);
+      console.log(`âœ… Default admin user created: ${adminUsername} / ${adminPassword}`);
     } else {
       await db.query("UPDATE admin_users SET password_hash = ? WHERE username = ?", [hash, adminUsername]);
       adminId = (userRes.rows[0] as any).id;
-      console.log(`✅ Admin password ensured for ${adminUsername}`);
+      console.log(`âœ… Admin password ensured for ${adminUsername}`);
     }
 
     // Seed Security Roles
@@ -547,7 +574,7 @@ export const initTables = async () => {
             INSERT INTO user_roles (id, name, display_name, description, permissions, priority, is_system_role)
             VALUES (?, ?, ?, ?, ?, ?, ?)
           `, [role.id, role.name, role.display_name, role.description, role.permissions, role.priority, role.is_system_role]);
-          console.log(`✅ Created role: ${role.display_name}`);
+          console.log(`âœ… Created role: ${role.display_name}`);
         }
       }
 
@@ -558,7 +585,7 @@ export const initTables = async () => {
           INSERT INTO user_role_assignments (id, user_id, role_id, assigned_by)
           VALUES (?, ?, ?, ?)
         `, [uuidv4(), adminId, 'role_super_admin', 'system']);
-        console.log(`✅ Assigned Super Admin role to ${adminUsername}`);
+        console.log(`âœ… Assigned Super Admin role to ${adminUsername}`);
       }
 
       // Seed default withdrawal limits for merchants
@@ -568,7 +595,7 @@ export const initTables = async () => {
           INSERT INTO withdrawal_limits (id, merchant_id, entity_type, limit_type, limit_amount, currency, period_type, period_start, period_end)
           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+1 day'))
         `, [uuidv4(), 'MRC-1001', 'merchant', 'daily_limit', 100000.00, 'USD', 'daily']);
-        console.log(`✅ Created default withdrawal limit: $100,000/day for MRC-1001`);
+        console.log(`âœ… Created default withdrawal limit: $100,000/day for MRC-1001`);
       }
     }
 
@@ -600,7 +627,7 @@ export const initTables = async () => {
         console.log("Default terminal created: MRC-1001 / T2013-001");
       }
     } else {
-      console.log('SKIP_SEED is set — skipping merchant and terminal default seeding');
+      console.log('SKIP_SEED is set â€” skipping merchant and terminal default seeding');
     }
 
     // Customers Table
@@ -632,7 +659,7 @@ export const initTables = async () => {
       );
     `);
 
-    // ── KYC migration — safely add columns if the table already exists ────────
+    // â”€â”€ KYC migration â€” safely add columns if the table already exists â”€â”€â”€â”€â”€â”€â”€â”€
     const kycCols = [
       ['id_type',         'TEXT'],
       ['id_number',       'TEXT'],
@@ -654,10 +681,10 @@ export const initTables = async () => {
     for (const [col, def] of kycCols) {
       try {
         await db.query(`ALTER TABLE customers ADD COLUMN ${col} ${def}`);
-      } catch { /* column already exists — ignore */ }
+      } catch { /* column already exists â€” ignore */ }
     }
 
-    // Customer Wallets Table — one wallet per (customer, currency) so AED stays AED, USD stays USD
+    // Customer Wallets Table â€” one wallet per (customer, currency) so AED stays AED, USD stays USD
     await db.query(`
       CREATE TABLE IF NOT EXISTS customer_wallets (
         id TEXT PRIMARY KEY,
@@ -696,7 +723,7 @@ export const initTables = async () => {
       );
     `);
 
-    // Merchant Wallets Table — one wallet per (merchant, currency)
+    // Merchant Wallets Table â€” one wallet per (merchant, currency)
     await db.query(`
       CREATE TABLE IF NOT EXISTS merchant_wallets (
         id TEXT PRIMARY KEY,
@@ -725,6 +752,32 @@ export const initTables = async () => {
         reference TEXT,
         description TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS merchant_wallet_transaction_voids (
+        id TEXT PRIMARY KEY,
+        transaction_id TEXT NOT NULL UNIQUE,
+        merchant_id TEXT NOT NULL,
+        currency TEXT NOT NULL,
+        amount REAL NOT NULL,
+        reason TEXT NOT NULL,
+        original_record TEXT NOT NULL,
+        voided_at TEXT NOT NULL
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS customer_wallet_transaction_voids (
+        id TEXT PRIMARY KEY,
+        transaction_id TEXT NOT NULL UNIQUE,
+        customer_id TEXT NOT NULL,
+        currency TEXT NOT NULL,
+        amount REAL NOT NULL,
+        reason TEXT NOT NULL,
+        original_record TEXT NOT NULL,
+        voided_at TEXT NOT NULL
       );
     `);
 
@@ -856,7 +909,7 @@ export const initTables = async () => {
 
     try {
       await db.query(`ALTER TABLE merchant_crypto_balances ADD COLUMN is_mock INTEGER NOT NULL DEFAULT 0`);
-    } catch (_) { /* column exists — ignore */ }
+    } catch (_) { /* column exists â€” ignore */ }
 
     // Bank Accounts Table (for wallet-to-bank transfers)
     //   Polymorphic ownership: EITHER customer_id (customer account) OR merchant_id (merchant account)
@@ -882,7 +935,7 @@ export const initTables = async () => {
       );
     `);
 
-    // Merchant Payouts Table (merchant wallet → external bank)
+    // Merchant Payouts Table (merchant wallet â†’ external bank)
     //   Tracks manual merchant payout requests (NO AUTO TRANSFER - admin approves manually)
     await db.query(`
       CREATE TABLE IF NOT EXISTS merchant_payouts (
@@ -966,9 +1019,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // BATCH RECONCILIATION TABLES
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // Reconciliation Reports - High-level summary of batch reconciliation
     await db.query(`
@@ -1017,9 +1070,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // MERCHANT SETTLEMENT TABLES
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // Transaction Settlements - Individual transaction settlement records
     await db.query(`
@@ -1062,9 +1115,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // CONFLICT RESOLUTION TABLES
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // Conflict Resolutions - Track all conflict resolution operations
     await db.query(`
@@ -1082,9 +1135,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // AUTHORIZATION ENGINE TABLES
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     // Authorization Requests - Transaction authorization workflow
     await db.query(`
@@ -1160,9 +1213,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // SECURITY TABLES - FOR REAL FUNDS PROTECTION
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     // User Roles - RBAC (Role-Based Access Control)
     await db.query(`
@@ -1391,9 +1444,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // AUDIT TRAIL TABLES
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // Audit Trail - Full transaction lifecycle tracking and compliance audit log
     await db.query(`
@@ -1450,9 +1503,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // ENHANCED CRYPTO WALLET TABLES (v2)
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // Customer Crypto Wallets v2 - Enhanced with network/address tracking
     await db.query(`
@@ -1524,7 +1577,7 @@ export const initTables = async () => {
       );
     `);
 
-    // Customer Crypto Withdrawals — on-chain send records for customer self-serve withdrawals
+    // Customer Crypto Withdrawals â€” on-chain send records for customer self-serve withdrawals
     await db.query(`
       CREATE TABLE IF NOT EXISTS customer_crypto_withdrawals (
         id TEXT PRIMARY KEY,
@@ -1547,7 +1600,7 @@ export const initTables = async () => {
       await db.query(`CREATE INDEX IF NOT EXISTS idx_ccw_customer_status ON customer_crypto_withdrawals(customer_id, status)`);
     } catch (_) {}
 
-    // Merchant Crypto Withdrawals — on-chain send records for merchant payout router
+    // Merchant Crypto Withdrawals â€” on-chain send records for merchant payout router
     await db.query(`
       CREATE TABLE IF NOT EXISTS merchant_crypto_withdrawals (
         id TEXT PRIMARY KEY,
@@ -1589,12 +1642,12 @@ export const initTables = async () => {
       );
     `);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // UNIFIED PAYOUT ENGINE TABLES (HLD Phase 1)
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-    // Unified Payouts Table — replaces scattered merchant_payouts, mt103_payouts, vault_sepa_transfers
-    // Status model: PENDING → QUEUED → EXECUTING → SENT → CONFIRMED | FAILED
+    // Unified Payouts Table â€” replaces scattered merchant_payouts, mt103_payouts, vault_sepa_transfers
+    // Status model: PENDING â†’ QUEUED â†’ EXECUTING â†’ SENT â†’ CONFIRMED | FAILED
     await db.query(`
       CREATE TABLE IF NOT EXISTS payouts (
         id TEXT PRIMARY KEY,
@@ -1630,7 +1683,7 @@ export const initTables = async () => {
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_payouts_uetr ON payouts(uetr)`); } catch(_) {}
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_payouts_internal_ref ON payouts(internal_reference)`); } catch(_) {}
 
-    // Payout Idempotency — server-side cache for Idempotency-Key header
+    // Payout Idempotency â€” server-side cache for Idempotency-Key header
     await db.query(`
       CREATE TABLE IF NOT EXISTS payout_idempotency (
         idempotency_key TEXT PRIMARY KEY,
@@ -1679,6 +1732,18 @@ export const initTables = async () => {
         status TEXT NOT NULL DEFAULT 'QUEUED',
         provider_ref TEXT,
         ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS bank_incoming_receipts (
+        provider_transaction_id TEXT PRIMARY KEY,
+        reference TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL,
+        allocation_status TEXT NOT NULL,
+        merchant_id TEXT,
+        payload_sha256 TEXT NOT NULL,
+        received_at TEXT NOT NULL
       )
     `);
     await db.query(`
@@ -1775,8 +1840,8 @@ export const initTables = async () => {
         SELECT 'batch:' || b.id, b.batch_id, b.merchant_id,
                COALESCE(SUM(t.amount_minor), 0) / 100.0,
                COALESCE(MAX(t.currency), 'USD'),
-               CASE WHEN LOWER(b.status) IN ('accepted', 'settled', 'uploaded') THEN 'SETTLED'
-                    WHEN LOWER(b.status) IN ('declined', 'failed') THEN 'FAILED'
+               CASE WHEN LOWER(b.status) = 'settled' THEN 'SETTLED'
+                    WHEN LOWER(b.status) IN ('declined', 'failed', 'capture_failed') THEN 'FAILED'
                     ELSE 'PENDING' END,
                COALESCE(b.settlement_code, b.batch_id),
                COALESCE(b.processed_at, b.upload_timestamp, b.created_at)
@@ -1784,6 +1849,27 @@ export const initTables = async () => {
           LEFT JOIN pos2013_transactions t ON t.batch_id = b.batch_id
          GROUP BY b.id, b.batch_id, b.merchant_id, b.status, b.settlement_code,
                   b.processed_at, b.upload_timestamp, b.created_at
+      `);
+      await db.query(`
+        UPDATE batch_settlement
+          SET status = 'PENDING'
+         WHERE UPPER(status) = 'SETTLED'
+          AND EXISTS (
+            SELECT 1
+              FROM pos2013_batches b
+             WHERE b.batch_id = batch_settlement.batch_id
+               AND b.merchant_id = batch_settlement.merchant_id
+               AND UPPER(b.status) IN ('RECEIVED', 'PENDING', 'UPLOADED', 'EXPORTED', 'PROCESSED', 'PARTIAL')
+          )
+          AND NOT EXISTS (
+            SELECT 1
+              FROM bank_incoming_receipts r
+             WHERE UPPER(r.allocation_status) = 'ALLOCATED'
+               AND r.merchant_id = batch_settlement.merchant_id
+               AND UPPER(r.currency) = UPPER(batch_settlement.currency)
+               AND ABS(r.amount - batch_settlement.amount) < 0.000001
+               AND (r.reference = batch_settlement.settlement_ref OR r.reference = batch_settlement.batch_id)
+          )
       `);
       await db.query(`
         INSERT OR IGNORE INTO payout_instructions
@@ -1843,7 +1929,7 @@ export const initTables = async () => {
       console.error('[DB] Vault dashboard backfill skipped:', e);
     }
 
-    // Ledger Transactions — parent table grouping double-entry ledger_entries (balanced to 0)
+    // Ledger Transactions â€” parent table grouping double-entry ledger_entries (balanced to 0)
     await db.query(`
       CREATE TABLE IF NOT EXISTS ledger_transactions (
         id TEXT PRIMARY KEY,
@@ -1865,7 +1951,7 @@ export const initTables = async () => {
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_ledgertx_ref ON ledger_transactions(reference)`); } catch(_) {}
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_ledgertx_payout ON ledger_transactions(linked_payout_id)`); } catch(_) {}
 
-    // Account Codes — map vault account ids + logical accounts to ledger codes
+    // Account Codes â€” map vault account ids + logical accounts to ledger codes
     await db.query(`
       CREATE TABLE IF NOT EXISTS account_codes (
         account_code TEXT PRIMARY KEY,
@@ -1910,8 +1996,8 @@ export const initTables = async () => {
       }
     } catch (_) { /* ignore */ }
 
-    // Migration: add transaction_id FK back-reference from ledger_entries → ledger_transactions
-    // (already exists — no-op, but ensure ledger_transaction_id column for explicit link)
+    // Migration: add transaction_id FK back-reference from ledger_entries â†’ ledger_transactions
+    // (already exists â€” no-op, but ensure ledger_transaction_id column for explicit link)
     try {
       const pragma = await db.query(`PRAGMA table_info("ledger_entries")`);
       const has = (pragma?.rows || []).some((r: any) => String(r.name || '').toLowerCase() === 'ledger_transaction_id');
@@ -1934,6 +2020,23 @@ export const initTables = async () => {
       if (!colNames.has('meta')) await db.query(`ALTER TABLE vault_accounts ADD COLUMN meta TEXT`);
       await db.query(`UPDATE vault_accounts SET available_balance = balance WHERE available_balance = 0 AND balance != 0`);
     } catch (_) { /* ignore */ }
+    await db.query(
+      `UPDATE vault_accounts
+          SET balance = 0, available_balance = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND currency = 'USD'
+          AND bic = ?
+          AND iban = ?
+          AND balance = ?
+          AND available_balance = ?`,
+      [
+        'PROC-VAULT-USD-002',
+        'PROCESSOR_BIC_PLACEHOLDER',
+        'PROCESSOR_IBAN_PLACEHOLDER',
+        6499.5,
+        1999.5,
+      ],
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS vault_entries (
@@ -1951,6 +2054,25 @@ export const initTables = async () => {
         created_at TEXT NOT NULL
       )
     `);
+    // Keep known smoke-test payouts for audit, but exclude them from posted balances.
+    await db.query(
+      `UPDATE vault_entries
+          SET status = 'VOIDED'
+        WHERE account_id = ?
+          AND currency = 'USD'
+          AND direction = 'debit'
+          AND amount = ?
+          AND source IN ('vault_card_payout', 'vault_card_payout_settled')
+          AND status = 'POSTED'
+          AND metadata LIKE ?
+          AND metadata LIKE ?`,
+      [
+        'PROC-VAULT-USD-002',
+        0.25,
+        '%"merchant_id":"SMOKE-TEST-MID"%',
+        '%"vault_card_id":"329eadbd-51fd-45cd-990f-f20d420cee80"%',
+      ],
+    );
     await db.query(`
       CREATE TABLE IF NOT EXISTS vault_payout_requests (
         id TEXT PRIMARY KEY,
@@ -1982,15 +2104,25 @@ export const initTables = async () => {
       )
     `);
 
-    // Canonical Wise EUR settlement vault used by MT103 sweep confirmations.
-    try {
-      await db.query(
-        `INSERT OR IGNORE INTO vault_accounts
-          (id, bank_name, bic, iban, currency, balance, reserved_hold, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-        ['VAULT-WISE-EUR-001', 'Wise Europe Bank', 'WISEBANKBIC', 'DE12345678901234567890', 'EUR'],
-      );
-    } catch (_) { /* ignore duplicate/legacy schema issues */ }
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS vault_cards (
+        id              TEXT PRIMARY KEY,
+        vault_account_id TEXT NOT NULL,
+        bin             TEXT NOT NULL,
+        card_number     TEXT NOT NULL,
+        last4           TEXT NOT NULL,
+        scheme          TEXT NOT NULL,
+        product         TEXT NOT NULL,
+        country         TEXT NOT NULL,
+        expiry          TEXT NOT NULL,
+        cvv             TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'ACTIVE',
+        created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_vault_cards_account ON vault_cards(vault_account_id)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_vault_cards_status ON vault_cards(status)`); } catch(_) {}
+    try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_cards_number ON vault_cards(card_number)`); } catch(_) {}
 
     // Migration: extend vault_beneficiaries with type + address_json + metadata if missing
     try {
@@ -1999,11 +2131,14 @@ export const initTables = async () => {
       if (!colNames.has('type')) await db.query(`ALTER TABLE vault_beneficiaries ADD COLUMN type TEXT DEFAULT 'corporate'`);
       if (!colNames.has('address_json')) await db.query(`ALTER TABLE vault_beneficiaries ADD COLUMN address_json TEXT`);
       if (!colNames.has('metadata')) await db.query(`ALTER TABLE vault_beneficiaries ADD COLUMN metadata TEXT`);
+      if (!colNames.has('account_number')) await db.query(`ALTER TABLE vault_beneficiaries ADD COLUMN account_number TEXT`);
+      if (!colNames.has('routing_number')) await db.query(`ALTER TABLE vault_beneficiaries ADD COLUMN routing_number TEXT`);
+      if (!colNames.has('account_type')) await db.query(`ALTER TABLE vault_beneficiaries ADD COLUMN account_type TEXT`);
     } catch (_) { /* ignore */ }
 
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // CORE PAYOUTS API TABLES (spec-aligned standalone tables)
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS accounts (
@@ -2016,6 +2151,22 @@ export const initTables = async () => {
         meta          TEXT NULL
       );
     `);
+    await db.query(
+      `UPDATE accounts
+          SET balance = 0
+        WHERE ((id = ? AND currency = 'EUR') OR (id = ? AND currency = 'USD'))
+          AND bic = ?
+          AND iban = ?
+          AND meta LIKE ?
+          AND balance <> 0`,
+      [
+        'PROC-VAULT-EUR-001',
+        'PROC-VAULT-USD-002',
+        'PROCESSOR_BIC_PLACEHOLDER',
+        'PROCESSOR_IBAN_PLACEHOLDER',
+        '%"seeded":true%',
+      ],
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS beneficiaries (
@@ -2064,9 +2215,9 @@ export const initTables = async () => {
       );
     `);
 
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // WALLET VIRTUAL CARDS (Luhn-valid Visa / Mastercard PANs)
-    // ───────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS wallet_cards (
@@ -2097,25 +2248,6 @@ export const initTables = async () => {
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_wallet_cards_customer ON wallet_cards(customer_id, status)`); } catch(_) {}
     try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_cards_pan ON wallet_cards(card_number)`); } catch(_) {}
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_wallet_cards_wallet ON wallet_cards(wallet_id)`); } catch(_) {}
-
-    // Seed sample vault accounts for testing only if they don't exist
-    try {
-      const now = new Date().toISOString();
-      const acc1 = await db.query(`SELECT COUNT(*) c FROM accounts WHERE id = ?`, ['PROC-VAULT-EUR-001']);
-      if ((acc1.rows?.[0]?.c || 0) === 0) {
-        await db.query(
-          `INSERT INTO accounts (id, currency, bic, iban, bank_name, balance, meta) VALUES (?,?,?,?,?,?,?)`,
-          ['PROC-VAULT-EUR-001', 'EUR', 'PROCESSOR_BIC_PLACEHOLDER', 'PROCESSOR_IBAN_PLACEHOLDER', 'Protocol 201.3 Settlement Bank', 510000000, JSON.stringify({ seeded: true, at: now })]
-        );
-      }
-      const acc2 = await db.query(`SELECT COUNT(*) c FROM accounts WHERE id = ?`, ['PROC-VAULT-USD-002']);
-      if ((acc2.rows?.[0]?.c || 0) === 0) {
-        await db.query(
-          `INSERT INTO accounts (id, currency, bic, iban, bank_name, balance, meta) VALUES (?,?,?,?,?,?,?)`,
-          ['PROC-VAULT-USD-002', 'USD', 'PROCESSOR_BIC_PLACEHOLDER', 'PROCESSOR_IBAN_PLACEHOLDER', 'Protocol 201.3 Settlement Bank', 4998363, JSON.stringify({ seeded: true, at: now })]
-        );
-      }
-    } catch (_) { /* ignore race */ }
 
     console.log("Tables initialized successfully (SQLite)");
   } catch (error) {

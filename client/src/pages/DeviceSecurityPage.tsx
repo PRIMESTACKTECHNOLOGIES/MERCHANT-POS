@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useToast } from "../components/ui/Toast";
-import { useNotifications } from "../contexts/NotificationContext";
+import { useToast } from "../components/ui/toastContext";
+import { useNotifications } from "../contexts/useNotifications";
 import { ConfirmModal } from "../components/ui/Modal";
 import { Skeleton } from "../components/ui/Skeleton";
 import { fetchTerminals, regenerateTerminalSecret } from "../lib/api";
-import type { Terminal } from "../types";
+import type { Terminal } from "../lib/api";
 
 // --- Icons ---
 const Icons = {
@@ -35,7 +35,7 @@ export const DeviceSecurityPage = () => {
         if (!cancelled) {
           setTerminals(data);
         }
-      } catch (e) {
+      } catch {
         showToast("Failed to load terminals", "error");
       } finally {
         if (!cancelled) setLoading(false);
@@ -72,7 +72,7 @@ export const DeviceSecurityPage = () => {
           } else {
             showToast("Secret key generated, but not returned by server", "error");
           }
-        } catch (e) {
+        } catch {
           showToast("Failed to regenerate secret key", "error");
         } finally {
           setProcessing(false);

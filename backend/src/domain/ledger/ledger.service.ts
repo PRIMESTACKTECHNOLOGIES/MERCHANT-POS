@@ -7,6 +7,7 @@ export interface LedgerEntry {
   id: string;
   transactionId: string;
   merchantId?: string;
+  customerId?: string | null;
   type: 'credit' | 'debit';
   amount: number;
   currency: string;
@@ -66,6 +67,49 @@ export function createLedgerEntry(
     description,
     createdAt: new Date().toISOString(),
   };
+}
+
+export async function ensureLedgerFiatSchema(
+  query: (text: string, params?: any[]) => Promise<any> = db.query.bind(db)
+): Promise<void> {
+  await query(`
+    CREATE TABLE IF NOT EXISTS ledger_fiat_rates (
+      from_currency TEXT NOT NULL,
+      to_currency TEXT NOT NULL,
+      rate REAL NOT NULL DEFAULT 1,
+      PRIMARY KEY (from_currency, to_currency)
+    )
+  `);
+
+  const defaults = [
+    ['USD', 'USD', 1],
+    ['USD', 'EUR', 0.92],
+    ['USD', 'GBP', 0.79],
+    ['USD', 'NGN', 1573.31],
+  ];
+
+  for (const [fromCurrency, toCurrency, rate] of defaults) {
+    await query(
+      `INSERT OR IGNORE INTO ledger_fiat_rates (from_currency, to_currency, rate) VALUES (?, ?, ?)`,
+      [fromCurrency, toCurrency, rate]
+    );
+  }
+}
+
+export function getFxRate(fromCurrency: string, toCurrency: string): number {
+  const from = (fromCurrency || 'USD').toUpperCase().trim();
+  const to = (toCurrency || 'USD').toUpperCase().trim();
+
+  if (!from || !to || from === to) return 1;
+
+  const staticRates: Record<string, Record<string, number>> = {
+    USD: { USD: 1, EUR: 0.92, GBP: 0.79, NGN: 1573.31 },
+    EUR: { USD: 1.09, EUR: 1, GBP: 0.86, NGN: 1713.72 },
+    GBP: { USD: 1.27, EUR: 1.16, GBP: 1, NGN: 1990.56 },
+    NGN: { USD: 0.00064, EUR: 0.00058, GBP: 0.0005, NGN: 1 },
+  };
+
+  return staticRates[from]?.[to] ?? 1;
 }
 
 export async function persistLedgerEntry(

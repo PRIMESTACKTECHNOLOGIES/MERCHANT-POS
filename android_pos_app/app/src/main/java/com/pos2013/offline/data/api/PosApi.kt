@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 // Request / Response models
 // ════════════════════════════════════════════════════════════════════════════
 
-data class HealthResponse(val status: String)
+data class HealthResponse(val status: String, val timestamp: String? = null)
 
 data class OfflineSaleResponse(
     val ok: Boolean,
@@ -26,6 +26,64 @@ data class RedeemRequest(
     val code: String,
     val amount: Double,
     val merchantId: String
+)
+
+// ── Dashboard / Stats ─────────────────────────────────────────────────────────
+data class VaultStatsResponse(
+    val totalVaultBalance: Double? = null,
+    val totalMerchantBalances: Double? = null,
+    val totalPendingSettlement: Double? = null,
+    val totalPendingPayouts: Double? = null,
+    val totalOfflineApprovals: Int? = null,
+    val vaultBalancesByCurrency: Map<String, Double>? = null
+)
+
+data class MerchantBalanceResponse(
+    val balance: Double,
+    val currency: String
+)
+
+// ── Transactions from backend ─────────────────────────────────────────────────
+data class BackendTransactionResponse(
+    val id: String,
+    val merchantId: String? = null,
+    val terminalId: String? = null,
+    val stan: String? = null,
+    val amountMinor: Long? = null,
+    val currency: String? = null,
+    val panMasked: String? = null,
+    val txnType: String? = null,
+    val authMode: String? = null,
+    val entryMode: String? = null,
+    val authCode: String? = null,
+    val status: String? = null,
+    val txnTimestamp: String? = null,
+    val createdAt: String? = null
+)
+
+data class BackendTransactionsResponse(
+    val transactions: List<BackendTransactionResponse>? = null,
+    val total: Int? = null
+)
+
+// ── Receipt ───────────────────────────────────────────────────────────────────
+data class ReceiptGenerateResponse(
+    val receiptId: String? = null,
+    val browserCustomer: String? = null,
+    val browserMerchant: String? = null,
+    val plainCustomer: String? = null,
+    val plainMerchant: String? = null
+)
+
+// ── Settings sync ─────────────────────────────────────────────────────────────
+data class MerchantSettingsResponse(
+    val merchantId: String? = null,
+    val merchantName: String? = null,
+    val terminalId: String? = null,
+    val apiKey: String? = null,
+    val offlineMode: Boolean? = null,
+    val floorLimit: Double? = null,
+    val currency: String? = null
 )
 
 data class RedeemResponse(
@@ -113,6 +171,7 @@ data class PosChargeRequest(
     val pan: String? = null,
     val expiry: String? = null,
     val cvv: String? = null,
+    val authCode: String? = null,
     val emv: Map<String, Any?>? = null,
     val tlvRaw: String? = null,
     val stan: String? = null
@@ -191,6 +250,36 @@ interface WalletsApi {
     suspend fun getTransactions(@Path("customerId") customerId: String): Response<List<WalletTransactionResponse>>
 }
 
+/** Dashboard / Stats endpoints — requires JWT */
+interface DashboardApi {
+    @GET("api/vault/stats")
+    suspend fun getVaultStats(): Response<VaultStatsResponse>
+
+    @GET("wallet/merchant-balance/{merchantId}")
+    suspend fun getMerchantBalance(@Path("merchantId") merchantId: String): Response<MerchantBalanceResponse>
+
+    @GET("merchant/v1/transactions")
+    suspend fun getTransactions(
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0
+    ): Response<BackendTransactionsResponse>
+}
+
+/** Receipt endpoints — requires JWT */
+interface ReceiptApi {
+    @POST("merchant/v1/receipts/generate/{transactionId}")
+    suspend fun generateReceipt(@Path("transactionId") transactionId: String): Response<ReceiptGenerateResponse>
+
+    @GET("merchant/v1/receipts/{receiptId}")
+    suspend fun getReceipt(@Path("receiptId") receiptId: String): Response<ReceiptGenerateResponse>
+}
+
+/** Settings sync endpoint — requires JWT */
+interface SettingsApi {
+    @GET("merchant/v1/settings")
+    suspend fun getSettings(): Response<MerchantSettingsResponse>
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Retrofit client factory
 // ════════════════════════════════════════════════════════════════════════════
@@ -198,13 +287,16 @@ interface WalletsApi {
 object ApiClient {
 
     /**
-     * Default backend base URL.
-     *   Emulator      → http://10.0.2.2:7000/
-    *   Real device (same Wi-Fi as PC) → http://10.0.1.156:7000/
-     *   Cloud / Render → https://pos-offline-api.onrender.com/
+     * Default backend base URL — primary server IP.
+     *   Mobile 1 (172.16.0.121) → http://172.16.0.121:7000/
+     *   Mobile 2 (172.16.0.140) → http://172.16.0.140:7000/  (same backend)
+     *   Emulator                → http://10.0.2.2:7000/
+     *   Cloud / Render          → https://pos-offline-api.onrender.com/
      * Override via Settings screen on the device.
+     * PosApplication.resolveServerUrl() auto-probes both IPs at startup.
      */
-    const val DEFAULT_URL = "https://pos-offline-api.onrender.com/"
+    const val DEFAULT_URL  = "http://172.16.0.210:7000/"
+    const val FALLBACK_URL = "http://172.16.0.121:7000/"
 
     /** OkHttpClient — attaches JWT bearer token when provided */
     private fun buildOkHttp(jwtToken: String? = null): OkHttpClient {
@@ -250,4 +342,13 @@ object ApiClient {
 
     fun createTerminalsApi(baseUrl: String = DEFAULT_URL): TerminalsApi =
         retrofit(baseUrl).create(TerminalsApi::class.java)
+
+    fun createDashboardApi(baseUrl: String = DEFAULT_URL, jwtToken: String? = null): DashboardApi =
+        retrofit(baseUrl, jwtToken).create(DashboardApi::class.java)
+
+    fun createReceiptApi(baseUrl: String = DEFAULT_URL, jwtToken: String? = null): ReceiptApi =
+        retrofit(baseUrl, jwtToken).create(ReceiptApi::class.java)
+
+    fun createSettingsApi(baseUrl: String = DEFAULT_URL, jwtToken: String? = null): SettingsApi =
+        retrofit(baseUrl, jwtToken).create(SettingsApi::class.java)
 }

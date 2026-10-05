@@ -152,6 +152,9 @@ export class BatchesController {
       }
 
       const result = await batchesService.syncOfflineFundsReceipts(merchantId, terminalId);
+      if (result.blocked) {
+        return res.status(409).json(result);
+      }
       res.json(result);
     } catch (e: any) {
       console.error('Error syncing offline receipts:', e);
@@ -432,15 +435,15 @@ export class BatchesController {
       const merchantId = (req.headers['x-merchant-id'] as string) || req.body.merchantId;
       const batchId = req.params.batchId || req.body.batchId;
       if (!batchId) return res.status(400).json({ error: 'batchId required' });
-      const { externalRef, processor, uploadTimestamp, status } = req.body || {};
+      const { externalRef, processor, uploadTimestamp } = req.body || {};
       const result = await batchesService.markBatchUploaded({
         batchId,
         merchantId,
         externalRef,
         processor,
         uploadTimestamp,
-        status,
       });
+      if (result.affected === 0) return res.status(404).json({ error: 'Batch not found' });
       res.json({ success: true, ...result });
     } catch (e: any) {
       console.error('markBatchUploaded error:', e);

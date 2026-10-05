@@ -1,0 +1,3 @@
+source currency,target currency,amount (source),amount (target),target account,target account type,target bank code,target branch code,beneficiary name,beneficiary address1,reference,id
+USD,ZAR,50000.00,,4110362532,checking,ABSA,250655,"JUKRUTI LOGISTICS PTY LTD","PRETORIA, GAUTENG, SOUTH AFRICA","13aac090-d6d4-4871-a | ABSA43247835137617",POS-SETTLE-BATCH-1788926532763-1
+# EXECUTED @ 2026-09-09T11:30:00.000Z  OPERATOR=processor-push-today@jukruti-logistics.internal  SIG=5D20D3117F4D5EB7780689DC

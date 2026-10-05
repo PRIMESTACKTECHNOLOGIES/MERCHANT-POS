@@ -1,13 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { useNotifications } from "../contexts/NotificationContext";
-import type { NotificationType } from "../contexts/NotificationContext";
-import { useNavigate } from "react-router-dom";
+import { useNotifications } from "../contexts/useNotifications";
+import type { NotificationType } from "../contexts/notification-context";
 
 export const NotificationMenu = () => {
   const [open, setOpen] = useState(false);
   const { notifications, unreadCount, markAsRead, markAllAsRead, clearNotifications } = useNotifications();
   const menuRef = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
 
   // Close menu when clicking outside
   useEffect(() => {

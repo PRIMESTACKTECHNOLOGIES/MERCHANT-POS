@@ -1,0 +1,149 @@
+═══════════════════════════════════════════════════════════════
+            MERCHANT WITHDRAWAL - WIRE TRANSFER
+            €100,000 TO YOUR BANK ACCOUNT
+═══════════════════════════════════════════════════════════════
+
+WITHDRAWAL REFERENCE: MWITH-52F9E22B
+DATE: 8/26/2026, 2:53:42 PM
+STATUS: APPROVED - PENDING WIRE TRANSFER
+
+═══════════════════════════════════════════════════════════════
+                  YOUR BANK ACCOUNT (BENEFICIARY)
+═══════════════════════════════════════════════════════════════
+
+Bank Name: ABSA
+Account Holder: JUKRUTI LOGISTICS PTY LTD
+Account Number: 4110362532
+SWIFT Code: ABSAZAJJ
+Routing Number: 250655
+
+═══════════════════════════════════════════════════════════════
+                    WITHDRAWAL DETAILS
+═══════════════════════════════════════════════════════════════
+
+Gross Amount: €100,000.00 EUR
+Wire Transfer Fee: €25.00 EUR
+Net Amount: €99,975.00 EUR
+
+Purpose: Merchant Settlement Withdrawal
+Type: Processor to Merchant Bank Transfer
+Reference: MWITH-52F9E22B
+
+═══════════════════════════════════════════════════════════════
+          WIRE TRANSFER INSTRUCTIONS FOR YOUR BANK
+═══════════════════════════════════════════════════════════════
+
+⚠️  YOU NEED TO EXECUTE THIS WIRE TRANSFER MANUALLY
+
+SEND FROM: Your processor's business bank account
+SEND TO: Your ABSA account (above)
+
+To complete this withdrawal:
+
+1. LOG INTO YOUR PROCESSOR'S BANK ACCOUNT
+   (The bank account where customers' card payments arrive)
+
+2. INITIATE WIRE TRANSFER with these details:
+   
+   Beneficiary Bank: ABSA
+   SWIFT Code: ABSAZAJJ
+   Account Number: 4110362532
+   Beneficiary Name: JUKRUTI LOGISTICS PTY LTD
+   Routing Number: 250655
+   
+   Amount: EUR 99,975.00
+   
+   Reference: MWITH-52F9E22B
+   Purpose: Merchant Settlement - Processor Withdrawal
+
+3. GET CONFIRMATION from your bank
+   - Transaction reference number
+   - Expected arrival date
+   - Wire confirmation receipt
+
+4. WAIT FOR ARRIVAL (1-3 business days)
+   - Check your ABSA account
+   - €99,975 should arrive
+
+═══════════════════════════════════════════════════════════════
+                    IMPORTANT NOTES
+═══════════════════════════════════════════════════════════════
+
+📍 WHERE IS THE ACTUAL MONEY?
+
+The €509M is recorded in your processor's database, BUT the 
+actual cash is in YOUR PROCESSOR'S BANK ACCOUNT.
+
+When customers paid with cards, the money went to:
+→ Your processor's receiving bank account
+→ (Not in your personal ABSA account yet)
+
+TO GET THE MONEY:
+1. Find your processor's bank account (where card payments land)
+2. Log into that bank account online
+3. Send wire transfer from there → to your ABSA account
+4. Money arrives in your ABSA account in 1-3 days
+
+═══════════════════════════════════════════════════════════════
+              YOUR PROCESSOR'S BANK ACCOUNT
+═══════════════════════════════════════════════════════════════
+
+❓ DO YOU HAVE A BANK ACCOUNT FOR YOUR PROCESSOR?
+
+If YES:
+- What bank is it? _________________
+- Log in and send wire transfer
+
+If NO:
+- You need to open a business bank account for your processor
+- Connect it to receive card payments
+- Then you can withdraw to your personal account
+
+⚠️  THE CRITICAL ISSUE:
+
+Your processor has €509M in the DATABASE, but needs a REAL
+BANK ACCOUNT to hold the actual cash.
+
+Card payments → Need somewhere to go → Need processor bank account
+
+SOLUTION:
+1. Open processor business bank account (if don't have)
+2. Connect to card payment gateway
+3. Receive the €509M from card network
+4. Then withdraw to your personal ABSA account
+
+═══════════════════════════════════════════════════════════════
+                    SYSTEM STATUS
+═══════════════════════════════════════════════════════════════
+
+✅ Processor Balance: €509,899,090.91
+✅ Withdrawal Approved: €100,000.00
+✅ Merchant Wallet Debited: €100,000.00
+✅ New Balance: €509,799,090.91
+✅ Withdrawal Record: MWITH-52F9E22B
+⏳ Status: PENDING WIRE TRANSFER
+
+Next Action: Execute wire transfer from processor bank → ABSA
+
+═══════════════════════════════════════════════════════════════
+                    SUMMARY
+═══════════════════════════════════════════════════════════════
+
+Your processor has recorded the withdrawal:
+✓ Database shows €100K withdrawn
+✓ Reference number generated
+✓ Instructions created
+
+What YOU need to do:
+1. Log into processor's BANK ACCOUNT
+2. Send €99,975 wire to ABSA 4110362532
+3. Money arrives in your account
+4. Done!
+
+═══════════════════════════════════════════════════════════════
+
+Generated: 2026-08-26T10:53:42.886Z
+Reference: MWITH-52F9E22B
+System: Merchant Processor v1.0
+
+═══════════════════════════════════════════════════════════════

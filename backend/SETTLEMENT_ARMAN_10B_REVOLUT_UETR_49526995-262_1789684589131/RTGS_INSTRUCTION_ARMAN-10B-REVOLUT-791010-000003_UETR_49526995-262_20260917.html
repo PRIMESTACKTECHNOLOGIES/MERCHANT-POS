@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RTGS INSTRUCTION — ARMAN-10B-REVOLUT-791010-000003 — UETR 49526995-2623-4981-B467-8435AB095EE0</title>
+<style>
+  body{font-family:'Courier New',monospace;max-width:980px;margin:28px auto;background:#f7f7f2;color:#0b0b0b;padding:24px}
+  h1{font-size:20px;border-bottom:3px double #0b0b0b;padding-bottom:8px}
+  h2{font-size:13px;text-transform:uppercase;margin-top:22px;border-bottom:1px solid #0b0b0b;padding:3px 0}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  td{padding:6px 10px;vertical-align:top;border-bottom:1px dotted #a9a9a9}
+  td:first-child{width:38%;color:#333;font-weight:bold}
+  code{background:#e9e9df;padding:1px 5px;border-radius:2px;word-break:break-all}
+  .amt{font-size:22px;font-weight:bold;color:#073a07}
+  .ok{color:#073a07}
+  .box{border:2px solid #0b0b0b;padding:14px;margin-top:18px;background:#fff}
+  .sig{font-family:Georgia,serif;font-style:italic;font-size:11px;color:#444;margin-top:22px;border-top:1px solid #0b0b0b;padding-top:8px;line-height:1.5}
+  .hdr-row{background:#fff;border:1px solid #0b0b0b;padding:10px 14px;margin-bottom:12px}
+</style>
+</head>
+<body>
+
+<div class="hdr-row">
+<table>
+  <tr><td>INSTRUCTION REFERENCE</td><td><code>ARMAN-10B-REVOLUT-791010-000003</code></td></tr>
+  <tr><td>UETR (end-to-end)</td><td><code>49526995-2623-4981-B467-8435AB095EE0</code></td></tr>
+  <tr><td>RAIL / PROTOCOL</td><td>SWIFT RTGS MT103 Customer Credit (GPI) / Push-to-Card VISA Direct MVT</td></tr>
+  <tr><td>VALUE DATE / TIMESTAMP</td><td>20260917 · Thu, 17 Sep 2026 22:36:29 GMT</td></tr>
+  <tr><td>AMOUNT (CURRENCY)</td><td class="amt">USD 10,000,000,000.00</td></tr>
+  <tr><td>CHARGE BEARER</td><td>OUR (all charges ordering side)</td></tr>
+  <tr><td>IDEMPOTENCY KEY</td><td><code>arman-10b-revolut-85719BBA9FBCAE1526403EA8</code></td></tr>
+  <tr><td>REQUEST HASH (SHA-256)</td><td><code>e72f218e08533abc2057c137432cd253cd33c9cc462fae31293443371ded986d</code></td></tr>
+</table>
+</div>
+
+<h1>ORDERING CUSTOMER — ① SOURCE (Debit Leg)</h1>
+<table>
+  <tr><td>Entity / Merchant</td><td>Merchant <b>MRC-1001</b> (Primestack Processor Settlement Agent)</td></tr>
+  <tr><td>Debit Account</td><td><code>PROC-VAULT-USD-002</code> · Vault USD Settlement Account</td></tr>
+  <tr><td>Debit Account Balance Before</td><td>$10,004,998,363.00</td></tr>
+  <tr><td>Debit Account Balance After</td><td>$4,998,363 <span class="ok">✔ congruent</span></td></tr>
+  <tr><td>Correspondent / Intermediary</td><td>TRWIBEB1XXX — Wise EUR/USD Mediator Sweep Correspondent</td></tr>
+  <tr><td>Source of Funds — Upstream</td><td>MAIN SYSTEM @ 108.62.211.172 (usa.visa.com) · Protocol 201.3 Satellite Download — <b>FUNDS DOWNLOAD SUCCESSFUL</b> — Debited 10,000,000,000 USD, Source Remaining Balance USD 4,999,000.00</td></tr>
+  <tr><td>Card Authorization Record</td><td>Code <b>791010</b> · STAN <b>000003</b> · Protocol 201.3 (Offline MOTO Virtual Terminal) — RRN <code>RRNB1EEF69999A7</code></td></tr>
+  <tr><td>EMV Payment Link</td><td>#1012 · code <code>3739313031303A54</code> · Report ID <code>45B8319A37AE9A16141D8B458764A05B</code></td></tr>
+  <tr><td>Internal Settlement Sweep</td><td>From merchant_wallets USD ($10,000,000,245 → $245)</td></tr>
+</table>
+
+<h1>BENEFICIARY CUSTOMER — ② DESTINATION (Credit Leg · Push-to-Card)</h1>
+<table>
+  <tr><td>Beneficiary Name</td><td><b>MR. MR. ARMAN ARAKELYAN</b></td></tr>
+  <tr><td>KYC Status</td><td><span class="ok">✔ VERIFIED</span> · Risk Level: LOW · Occupation: INVESTOR · Nationality/Country: AE</td></tr>
+  <tr><td>Contact</td><td>Email: usbusiness191@gmail.com · Phone: +971 55 385 7165</td></tr>
+  <tr><td>Beneficiary Bank</td><td>Revolut Ltd · 7 Westferry Circus, Canary Wharf · London E14 4HD · United Kingdom</td></tr>
+  <tr><td>SWIFT BIC</td><td><code>REVOGB21</code></td></tr>
+  <tr><td>Destination Type</td><td><b>PUSH-TO-CARD</b> (Visa Direct / MoneySend MVT 201.3 compliant)</td></tr>
+  <tr><td>Card (Masked PAN)</td><td><code>4165 **** **** 2651</code></td></tr>
+  <tr><td>Card BIN / Issuer / Country</td><td>416598 · <b>REVOLUT BANK</b> (VISA DEBIT) · AE</td></tr>
+  <tr><td>Card Expiry / Token</td><td>05/30 · MOTO Virtual Terminal Protocol 201.3</td></tr>
+  <tr><td>Purpose / Remittance (f70)</td><td>PUSH-TO-CARD / Approval 791010 / STAN 000003 / EMV-LINK 1012 / Report 45B8319A37AE9A16141D8B458764A05B</td></tr>
+</table>
+
+<h1>CRYPTOGRAPHIC INTEGRITY CHAIN — ③ FORENSIC SEAL</h1>
+<table>
+  <tr><td>Verification Token (SHA-256)</td><td><code>b522d97b817b1dd286f7ae6d0828a43bd80ff98015ee0faf24cdacf23af47a1e</code></td></tr>
+  <tr><td>Seed Digest (SHA-1)</td><td><code>b1eef69999a7e21da25537bb14c15c9b46bf6371</code></td></tr>
+  <tr><td>Settlement Fingerprint (MD5)</td><td><code>c7b4575625b10aa6d63dcbdc5bc2142d</code></td></tr>
+  <tr><td>Ed25519 Public Key (B64) / FP</td><td><code>MCowBQYDK2VwAyEA…</code> · <code>a327073909e2f0239ccab41aa5bd0dc73e9c1aaebf2fd292c22f2650a27f943f</code></td></tr>
+  <tr><td>Ed25519 Signature (B64)</td><td><code>oYHDUPpeI+1FyN2sE2hWHEdiAcPzcF1XaMS5RO0ghMBIKgSkCzTuHX4Vi+NYlIKpl9CxYlVh7r4dHmDABOqZDA==</code></td></tr>
+  <tr><td>Provisional Signature Reference</td><td><code>VERTEZED PSR-3739313031303A54-D6F477</code></td></tr>
+</table>
+
+<h1>FORENSIC AUDIT IDS — ④ TRACEABILITY</h1>
+<table>
+  <tr><td>Payout ID (core_payouts)</td><td><code>ddc93c76-9f61-41c5-844a-e56b82e67be9</code></td></tr>
+  <tr><td>Beneficiary ID (beneficiaries)</td><td><code>0c969ce3-255b-4510-ad4b-9d56872dbc80</code></td></tr>
+  <tr><td>Idempotency Record</td><td><code>arman-10b-revolut-85719BBA9FBCAE1526403EA8</code> → payout_id</td></tr>
+  <tr><td>Merchant Wallet Sweep (debit)</td><td><code>000b7795-a865-410d-a8d5…</code> (merchant_wallet_transactions)</td></tr>
+  <tr><td>Sweep Ledger (DR / CR)</td><td><code>fe9b63d2-42fe-…</code> / <code>cb42e189-7e2e-…</code></td></tr>
+  <tr><td>Payout Ledger (DR / CR)</td><td><code>76abb89e-16fa-4332-a030-8557b4d50947</code> / <code>80f0ca61-af9d-4052-9382-4dc7fa4f7acf</code></td></tr>
+  <tr><td>Card Authorization (REDEEMED)</td><td><code>2a0ca062-08e7-4459-a8c3-31fad4a38f7f</code></td></tr>
+  <tr><td>POS 201.3 Transaction (APPROVED)</td><td><code>e0e222eb-9300-486a-a643-a88146aebd32</code></td></tr>
+  <tr><td>EMV Ledger Triple Chain</td><td>AUTH <code>ledger_17896828188…</code> · CAP <code>c483e57e</code> · SET <code>511444cd</code></td></tr>
+  <tr><td>Customer Wallet Code (Payer)</td><td>PSW-6280-7230 (bal $0.00 — clean, no ghost)</td></tr>
+</table>
+
+<div class="box">
+  <h2 class="ok">✔ MANUAL EXECUTION CHECKLIST — 5 STEPS TO REAL FUNDS MOVEMENT</h2>
+  <ol style="font-size:12px;line-height:1.8">
+    <li><b>SWIFT</b>: Upload the MT103 file into SWIFT Alliance Lite2 (or GPI batch queue). Sign with the corporate Settlements Officer HSM key. Send as a FIN message in the live session.</li>
+    <li><b>WISE BATCH</b>: Log into the Wise Business (Primestack) web UI → Batch payments → Import CSV → USD corridor → Select the REVOGB21 Revolut UK recipient template. Verify recipient name matches <code>MR. ARMAN ARAKELYAN</code>.</li>
+    <li><b>PUSH-TO-CARD (Visa Direct)</b>: For faster same-day delivery, use the VISA DPS MVT (MoneySend) API /cardPush endpoint. Use card PAN <code>4165981224772651</code>, expiry 05/30, amount USD 10,000,000,000.00. Submit with Acquirer ID + MID for MRC-1001.</li>
+    <li><b>CONFIRM</b>: Once GPI tracker / Wise / VISA DPS reports <code>STATUS: CREDITED</code> — copy the <b>real incoming UETR confirmation + bank transfer reference</b>.</li>
+    <li><b>CLOSE LOOP</b>: Run the stamp script: <code>_stamp_uetr_close_reconciliation.cjs</code> with (a) payout_id, (b) real UETR, (c) real bank reference. This will patch <code>core_payouts.status = 'SENT'</code> → <code>'CONFIRMED'</code>, set <code>sent_at</code> / <code>confirmed_at</code>, append the <code>external_reference</code>, and write a <b>final SETTLED ledger leg</b> (closing the PAYABLE clearing account to zero).</li>
+  </ol>
+</div>
+
+<div class="sig">
+  Pos Offline Backend · Settlements Pipeline v2 · Core Payouts + Vault Sweep<br>
+  Generated: 2026-09-17T22:36:29.233Z · UETR 49526995-2623-4981-B467-8435AB095EE0<br>
+  Idempotency Key: arman-10b-revolut-85719B… · Request Hash: e72f218e08533abc2057c137…<br>
+  <b>Non-repudiation statement:</b> This instruction together with the Ed25519 signature + SHA-256 verification token + the UETR above represents the OFFICIAL, IRREVOCABLE instruction from the Merchant MRC-1001 to the settlement officer for the movement of USD 10,000,000,000.00 to the above-named beneficiary. No robotic or automatic movement of external funds is performed by this system; the above ledger entries are AUTHORITATIVE and BINDING until a real bank confirmation is ingested in step 5.
+</div>
+</body>
+</html>

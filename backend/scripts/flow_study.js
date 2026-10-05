@@ -58,7 +58,7 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   // ─── Step 0: Login admin ───
   log('\n[Step 0] Login admin /auth/login');
-  const l = await post('/auth/login', { username: 'admin', password: 'admin1234' });
+  const l = await post('/auth/login', { username: 'admin', password: 'admin123' });
   log('  status: ' + l.status + ' ok=' + l.ok);
   if (!l.ok || !l.json?.token) { log('  FAIL: ' + l.text); console.log(out.join('\n')); return; }
   const token = l.json.token;

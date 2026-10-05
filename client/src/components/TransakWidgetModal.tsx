@@ -13,6 +13,20 @@ import { Transak, type TransakConfig } from '@transak/ui-js-sdk';
 
 export type TransakFlow = 'BUY' | 'SELL' | 'BUY,SELL';
 
+export interface TransakOrder {
+  id?: string | number;
+  orderId?: string | number;
+  fiatAmount?: number;
+  fiatCurrency?: string;
+  cryptoCurrency?: string;
+  cryptoAmount?: number;
+  network?: string;
+  status?: string;
+  statusMessage?: string;
+  errorMessage?: string;
+  [key: string]: unknown;
+}
+
 export interface TransakWidgetModalProps {
   open: boolean;
   onClose: () => void;
@@ -26,11 +40,11 @@ export interface TransakWidgetModalProps {
   partnerCustomerId?: string;
   walletAddress?: string;
   redirectURL?: string;
-  partnerMetaData?: Record<string, any> | string;
-  onOrderCreated?: (order: any) => void;
-  onOrderSuccessful?: (order: any) => void;
-  onOrderFailed?: (order: any) => void;
-  onOrderCancelled?: (order: any) => void;
+  partnerMetaData?: Record<string, unknown> | string;
+  onOrderCreated?: (order: TransakOrder) => void;
+  onOrderSuccessful?: (order: TransakOrder) => void;
+  onOrderFailed?: (order: TransakOrder) => void;
+  onOrderCancelled?: (order: TransakOrder) => void;
   onWidgetClose?: () => void;
   onWidgetOpen?: () => void;
   size?: 'lg' | 'xl';
@@ -46,6 +60,19 @@ type TransakSdkEventName =
   | typeof Transak.EVENTS.TRANSAK_WIDGET_CLOSE_REQUEST
   | typeof Transak.EVENTS.TRANSAK_WALLET_REDIRECTION
   | typeof Transak.EVENTS.TRANSAK_WIDGET_CLOSE;
+
+type TransakEventApi = typeof Transak & {
+  off?: (event: TransakSdkEventName, handler: (data: unknown) => void) => void;
+};
+
+function getEventPayload(data: unknown): TransakOrder {
+  if (typeof data !== 'object' || data === null) return {};
+  const event = data as Record<string, unknown>;
+  const payload = event.data;
+  return typeof payload === 'object' && payload !== null
+    ? payload as TransakOrder
+    : event as TransakOrder;
+}
 
 export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
   open,
@@ -83,7 +110,7 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
   const [stage, setStage] = useState<'loading' | 'ready' | 'sdk_error' | 'config_error'>('loading');
   const [retryNonce, setRetryNonce] = useState(0);
   const [widgetStatus, setWidgetStatus] = useState<TransakSdkEventName | string>('Loading widget...');
-  const [lastOrder, setLastOrder] = useState<any>(null);
+  const [lastOrder, setLastOrder] = useState<TransakOrder | null>(null);
 
   const [countriesResponse, setCountriesResponse] = useState<TransakCountriesResponse | null>(null);
   const [countriesLoading, setCountriesLoading] = useState(false);
@@ -253,24 +280,16 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
           const instance = new TransakClass(sdkConfig);
           sdkRef.current = instance;
 
-          try {
-            TransakClass.on?.('*', (data: any) => {
-              const eventName =
-                (data && (data.eventName || data.name)) ||
-                (typeof data === 'string' ? data : '');
-              if (eventName) setWidgetStatus(String(eventName));
-            });
-          } catch { /* ignore */ }
-
-          type Handler = (data: any) => void;
+          type Handler = (data: unknown) => void;
           const addListener = (evt: TransakSdkEventName, handler: Handler) => {
             try {
               if (typeof TransakClass.on === 'function') {
                 TransakClass.on(evt, handler);
                 unsubscribesRef.current.push(() => {
                   try {
-                    if (typeof (TransakClass as any).off === 'function') {
-                      (TransakClass as any).off(evt, handler);
+                    const eventApi = TransakClass as TransakEventApi;
+                    if (typeof eventApi.off === 'function') {
+                      eventApi.off(evt, handler);
                     }
                   } catch { /* ignore */ }
                 });
@@ -278,40 +297,36 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
             } catch { /* ignore */ }
           };
 
-          addListener(Transak.EVENTS.TRANSAK_WIDGET_INITIALISED, (d: any) => {
+          addListener(Transak.EVENTS.TRANSAK_WIDGET_INITIALISED, () => {
             setStage('ready');
             setWidgetStatus(Transak.EVENTS.TRANSAK_WIDGET_INITIALISED);
             onWidgetOpen?.();
-            const order = d?.data || d;
-            if (order && order.id) {
-              // no-op; init event carries widget params only
-            }
           });
 
-          addListener(Transak.EVENTS.TRANSAK_ORDER_CREATED, (d: any) => {
-            const order = d?.data || d;
+          addListener(Transak.EVENTS.TRANSAK_ORDER_CREATED, (d) => {
+            const order = getEventPayload(d);
             setLastOrder(order);
             setWidgetStatus('Order created');
             onOrderCreated?.(order);
           });
 
-          addListener(Transak.EVENTS.TRANSAK_ORDER_SUCCESSFUL, (d: any) => {
-            const order = d?.data || d;
+          addListener(Transak.EVENTS.TRANSAK_ORDER_SUCCESSFUL, (d) => {
+            const order = getEventPayload(d);
             setLastOrder(order);
             setWidgetStatus('Order successful');
             onOrderSuccessful?.(order);
             try { instance.close?.(); } catch { /* ignore */ }
           });
 
-          addListener(Transak.EVENTS.TRANSAK_ORDER_FAILED, (d: any) => {
-            const order = d?.data || d;
+          addListener(Transak.EVENTS.TRANSAK_ORDER_FAILED, (d) => {
+            const order = getEventPayload(d);
             setLastOrder(order);
             setWidgetStatus('Order failed');
             onOrderFailed?.(order);
           });
 
-          addListener(Transak.EVENTS.TRANSAK_ORDER_CANCELLED, (d: any) => {
-            const order = d?.data || d;
+          addListener(Transak.EVENTS.TRANSAK_ORDER_CANCELLED, (d) => {
+            const order = getEventPayload(d);
             setLastOrder(order);
             setWidgetStatus('Order cancelled');
             onOrderCancelled?.(order);
@@ -322,9 +337,9 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
             // Let user dismiss; TRANSAK_WIDGET_CLOSE will run actual close() + onClose()
           });
 
-          addListener(Transak.EVENTS.TRANSAK_WALLET_REDIRECTION, (d: any) => {
-            const info = d?.data || d;
-            setWidgetStatus('Wallet redirection: ' + (info?.wallet || info?.provider || ''));
+          addListener(Transak.EVENTS.TRANSAK_WALLET_REDIRECTION, (d) => {
+            const info = getEventPayload(d);
+            setWidgetStatus('Wallet redirection: ' + (info.wallet || info.provider || ''));
           });
 
           addListener(Transak.EVENTS.TRANSAK_WIDGET_CLOSE, () => {
@@ -336,14 +351,14 @@ export const TransakWidgetModal: React.FC<TransakWidgetModalProps> = ({
 
           try {
             instance.init();
-          } catch (e: any) {
+          } catch (e: unknown) {
             setStage('sdk_error');
-            setError(e?.message || 'Widget init() threw');
+            setError(e instanceof Error ? e.message : 'Widget init() threw');
             return;
           }
-        } catch (e: any) {
+        } catch (e: unknown) {
           setStage('sdk_error');
-          setError(e?.message || 'Failed to initialise Transak SDK');
+          setError(e instanceof Error ? e.message : 'Failed to initialise Transak SDK');
         }
       })
       .catch((e) => {

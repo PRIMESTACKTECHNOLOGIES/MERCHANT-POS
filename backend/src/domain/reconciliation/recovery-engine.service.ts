@@ -555,9 +555,17 @@ export class RecoveryEngineService {
           const refForDb = refTx;
           try {
             const entry = createLedgerEntry(
-              refTx, 'credit', amountFloat, ccy, 'CAPTURED',
+              refTx,
+              'credit',
+              amountFloat,
+              ccy,
+              'CAPTURED',
               `[RECOVERY-${classification.shortCode}] ${classification.description} — txn=${auditRow.txn_id} RRN=${snap.rrn || '-'} AUTH=${snap.authCode || '-'}`,
-              { walletRef: String(auditRow.wallet_ref || '').trim() || undefined, fiatCurrency: defaultFiat }
+              String(auditRow.merchant_id || snap.merchantId || 'UNKNOWN'),
+              'manual',
+              String(auditRow.wallet_ref || '').trim() || undefined,
+              undefined,
+              refForDb
             );
             validateTransition('PENDING', 'CAPTURED');
             await persistLedgerEntry(entry, db.query.bind(db));
@@ -574,7 +582,7 @@ export class RecoveryEngineService {
                 refForDb,
                 ccy
               );
-              walletOperationId = res.transactionId || res.id || null;
+              walletOperationId = (res as any)?.transactionId || (res as any)?.id || null;
             } catch (err: any) {
               console.warn(`[Recovery] merchant wallet credit skipped (may already exist): ${err?.message || err}`);
               walletOperationId = `dup:${refForDb}`;
@@ -588,7 +596,7 @@ export class RecoveryEngineService {
                 refForDb,
                 ccy
               );
-              walletOperationId = res.transactionId || null;
+              walletOperationId = (res as any)?.transactionId || (res as any)?.id || null;
             } catch (err: any) {
               console.warn(`[Recovery] customer wallet credit skipped (may already exist): ${err?.message || err}`);
               walletOperationId = `dup:${refForDb}`;
@@ -601,9 +609,17 @@ export class RecoveryEngineService {
           const refTx = `RECOVERY-REVERSE-${auditRow.id || auditRow.txn_id}`.toUpperCase();
           try {
             const entry = createLedgerEntry(
-              refTx, 'credit', amountFloat, ccy, 'REVERSED',
+              refTx,
+              'credit',
+              amountFloat,
+              ccy,
+              'REVERSED',
               `[RECOVERY-${classification.shortCode}] Type B reversal — phantom debit reversal txn=${auditRow.txn_id} RRN=${snap.rrn || '-'}`,
-              { walletRef: String(auditRow.wallet_ref || '').trim() || undefined, fiatCurrency: defaultFiat }
+              String(auditRow.merchant_id || snap.merchantId || 'UNKNOWN'),
+              'manual',
+              String(auditRow.wallet_ref || '').trim() || undefined,
+              undefined,
+              refTx
             );
             try { validateTransition('PENDING', 'REVERSED'); } catch { /* ignore */ }
             await persistLedgerEntry(entry, db.query.bind(db));
@@ -620,7 +636,7 @@ export class RecoveryEngineService {
                 refTx,
                 ccy
               );
-              walletOperationId = res.transactionId || res.id || null;
+              walletOperationId = (res as any)?.transactionId || (res as any)?.id || null;
             } catch (err: any) {
               console.warn(`[Recovery] merchant reversal credit skipped: ${err?.message || err}`);
               walletOperationId = `dup:${refTx}`;
@@ -634,7 +650,7 @@ export class RecoveryEngineService {
                 refTx,
                 ccy
               );
-              walletOperationId = res.transactionId || null;
+              walletOperationId = (res as any)?.transactionId || (res as any)?.id || null;
             } catch (err: any) {
               console.warn(`[Recovery] customer reversal credit skipped: ${err?.message || err}`);
               walletOperationId = `dup:${refTx}`;

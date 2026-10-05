@@ -25,7 +25,7 @@ export class ICCReader {
     try {
       await this.bridge.connect();
       this.ready = true;
-    } catch (err) {
+    } catch {
       this.ready = false;
       throw new Error('ICC reader failed to open');
     }
@@ -66,7 +66,7 @@ export class ICCReader {
 
     try {
       return await this.bridge.transmit(apdu);
-    } catch (err) {
+    } catch {
       return {
         data: new Uint8Array([]),
         sw1: 0x6F,

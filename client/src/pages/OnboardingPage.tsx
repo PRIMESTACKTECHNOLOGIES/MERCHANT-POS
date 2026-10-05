@@ -162,12 +162,12 @@ export const OnboardingPage = () => {
             {/* Step 1: Business Info */}
             {step === 1 && (
               <div className="space-y-4 animate-slide-in-right">
-                <Input label="Legal Business Name" value={data.business.legalName} onChange={(e: any) => updateData('business', 'legalName', e.target.value)} placeholder="Acme Corp LLC" />
-                <Input label="Tax ID / EIN" value={data.business.taxId} onChange={(e: any) => updateData('business', 'taxId', e.target.value)} placeholder="12-3456789" />
-                <Input label="Business Address" value={data.business.address} onChange={(e: any) => updateData('business', 'address', e.target.value)} placeholder="123 Main St" />
+                <Input label="Legal Business Name" value={data.business.legalName} onChange={(e) => updateData('business', 'legalName', e.target.value)} placeholder="Acme Corp LLC" />
+                <Input label="Tax ID / EIN" value={data.business.taxId} onChange={(e) => updateData('business', 'taxId', e.target.value)} placeholder="12-3456789" />
+                <Input label="Business Address" value={data.business.address} onChange={(e) => updateData('business', 'address', e.target.value)} placeholder="123 Main St" />
                 <div className="grid grid-cols-2 gap-4">
-                  <Input label="City" value={data.business.city} onChange={(e: any) => updateData('business', 'city', e.target.value)} placeholder="San Francisco" />
-                  <Input label="Zip Code" value={data.business.zip} onChange={(e: any) => updateData('business', 'zip', e.target.value)} placeholder="94105" />
+                  <Input label="City" value={data.business.city} onChange={(e) => updateData('business', 'city', e.target.value)} placeholder="San Francisco" />
+                  <Input label="Zip Code" value={data.business.zip} onChange={(e) => updateData('business', 'zip', e.target.value)} placeholder="94105" />
                 </div>
               </div>
             )}
@@ -175,17 +175,17 @@ export const OnboardingPage = () => {
             {/* Step 2: Banking */}
             {step === 2 && (
               <div className="space-y-4 animate-slide-in-right">
-                <Input label="Account Holder Name" value={data.banking.accountHolder} onChange={(e: any) => updateData('banking', 'accountHolder', e.target.value)} placeholder="Acme Corp LLC" />
-                <Input label="Bank Name" value={data.banking.bankName} onChange={(e: any) => updateData('banking', 'bankName', e.target.value)} placeholder="Chase Bank" />
-                <Input label="Account Number" value={data.banking.accountNumber} onChange={(e: any) => updateData('banking', 'accountNumber', e.target.value)} placeholder="0000 0000 0000" type="password" />
-                <Input label="Routing Number" value={data.banking.routingNumber} onChange={(e: any) => updateData('banking', 'routingNumber', e.target.value)} placeholder="000000000" />
+                <Input label="Account Holder Name" value={data.banking.accountHolder} onChange={(e) => updateData('banking', 'accountHolder', e.target.value)} placeholder="Acme Corp LLC" />
+                <Input label="Bank Name" value={data.banking.bankName} onChange={(e) => updateData('banking', 'bankName', e.target.value)} placeholder="Chase Bank" />
+                <Input label="Account Number" value={data.banking.accountNumber} onChange={(e) => updateData('banking', 'accountNumber', e.target.value)} placeholder="0000 0000 0000" type="password" />
+                <Input label="Routing Number" value={data.banking.routingNumber} onChange={(e) => updateData('banking', 'routingNumber', e.target.value)} placeholder="000000000" />
               </div>
             )}
 
             {/* Step 3: Terminal */}
             {step === 3 && (
               <div className="space-y-6 animate-slide-in-right">
-                <Input label="Location Name" value={data.terminal.locationName} onChange={(e: any) => updateData('terminal', 'locationName', e.target.value)} placeholder="Main Store" />
+                <Input label="Location Name" value={data.terminal.locationName} onChange={(e) => updateData('terminal', 'locationName', e.target.value)} placeholder="Main Store" />
                 
                 <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
                   <div>
@@ -228,7 +228,7 @@ export const OnboardingPage = () => {
 
                 {data.developer.enableApi && (
                    <div className="animate-fade-in">
-                     <Input label="Webhook URL" value={data.developer.webhookUrl} onChange={(e: any) => updateData('developer', 'webhookUrl', e.target.value)} placeholder="https://api.yoursite.com/webhooks" />
+                     <Input label="Webhook URL" value={data.developer.webhookUrl} onChange={(e) => updateData('developer', 'webhookUrl', e.target.value)} placeholder="https://api.yoursite.com/webhooks" />
                      <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
                         API Keys will be generated automatically upon completion.
                      </div>

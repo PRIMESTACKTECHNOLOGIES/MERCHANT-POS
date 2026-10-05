@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+﻿import { NavLink, useNavigate } from "react-router-dom";
 import { useDarkMode } from "../hooks/useDarkMode";
 
 const Icons = {
@@ -165,13 +165,13 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
           <Icons.Wallet />
           Customer Wallets
         </NavLink>
+        <NavLink to="/merchant-wallet" className={linkClass} onClick={() => onClose?.()}>
+          <Icons.Wallet />
+          Merchant Wallet
+        </NavLink>
         <NavLink to="/hot-wallet" className={linkClass} onClick={() => onClose?.()}>
           <Icons.HotWallet />
           Hot Wallet
-        </NavLink>
-        <NavLink to="/vault" className={linkClass} onClick={() => onClose?.()}>
-          <Icons.Wallet />
-          Processor Vault
         </NavLink>
         <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '8px 16px' }}></div>
 

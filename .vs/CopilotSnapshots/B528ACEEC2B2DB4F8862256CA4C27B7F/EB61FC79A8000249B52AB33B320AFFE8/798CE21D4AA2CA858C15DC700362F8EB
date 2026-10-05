@@ -1,0 +1,18 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="856" height="539" viewBox="0 0 856 539">
+  <rect rx="24" width="856" height="539" fill="#0b4776" />
+  <rect x="28" y="28" width="800" height="200" rx="18" fill="#0e5d99" opacity="0.95" />
+  <!-- Bank name -->
+  <text x="56" y="80" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700">VAULT BANK</text>
+  <!-- Card holder -->
+  <text x="56" y="140" fill="#dbeeff" font-family="Arial, Helvetica, sans-serif" font-size="20">AJI ALOSIOUS</text>
+  <!-- Card number -->
+  <text id="card-number" x="56" y="220" fill="#ffffff" font-family="'Courier New', monospace" font-size="36" letter-spacing="6">4508 7540 1767 9268</text>
+  <!-- Expiry and CVV -->
+  <text x="56" y="280" fill="#dbeeff" font-family="Arial, Helvetica, sans-serif" font-size="18">Expiry 02/29</text>
+  <text x="240" y="280" fill="#dbeeff" font-family="Arial, Helvetica, sans-serif" font-size="18">CVV 922</text>
+  <!-- Scheme marker -->
+  <g transform="translate(640,60)">
+	<rect x="0" y="0" width="170" height="100" rx="12" fill="#fff" />
+	<text x="18" y="60" font-family="Arial, Helvetica, sans-serif" font-size="36" fill="#1a1a1a">VISA</text>
+  </g>
+</svg>

@@ -2,7 +2,7 @@ const axios = require('axios');
 (async () => {
   const base = 'http://127.0.0.1:7000';
   try {
-    const r = await axios.post(base + '/auth/login', { username: 'admin', password: 'admin1234' });
+    const r = await axios.post(base + '/auth/login', { username: 'admin', password: 'admin123' });
     const tok = r.data.token;
     const auth = { headers: { Authorization: 'Bearer ' + tok } };
 

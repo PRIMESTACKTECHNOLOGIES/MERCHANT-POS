@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { CardSkeleton, TableSkeleton } from "../components/ui/Skeleton";
-import { cashoutBraintree, fetchBatches, fetchSettings, getCashouts, createCashout, processCashout, getMerchantBalance, merchantBankPayout } from "../lib/api";
-import type { Cashout } from "../lib/api";
-import { useToast } from "../components/ui/Toast";
+import { cashoutBraintree, fetchBatches, fetchSettings, getMerchantBalance, merchantBankPayout } from "../lib/api";
+import { useToast } from "../components/ui/toastContext";
 import { resolveApiBaseUrl } from "../lib/backendUrl";
 
 // --- Types ---
@@ -58,16 +57,6 @@ interface Settlement {
   cardBrandBreakdown: Record<string, number>;
   transactions: SettlementTransaction[];
 }
-
-// --- Mock Data ---
-
-const generateMockBatches = (count: number): Batch[] => {
-  return []; // Fixed: Removed mock batches
-};
-
-const generateMockSettlements = (count: number): Settlement[] => {
-  return []; // Fixed: Removed mock settlements
-};
 
 // --- Icons ---
 
@@ -356,7 +345,7 @@ export function SettlementsPage() {
 
       // Generate settlements from processed/settled batches
       const settledBatches = transformedBatches.filter(b => b.status === 'ACCEPTED' || b.status === 'UPLOADED');
-      const generatedSettlements: Settlement[] = settledBatches.map((b: Batch, i: number) => {
+      const generatedSettlements: Settlement[] = settledBatches.map((b: Batch) => {
         const dateStr = b.uploadTime ? new Date(b.uploadTime).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
         const fees = b.totalAmount * 0.015; // 1.5% processing fee
         return {

@@ -8,6 +8,9 @@ const router = Router();
 router.post("/read-acr122u", paymentsController.readAcr122uCard.bind(paymentsController));
 router.get("/read-acr122u/status", paymentsController.getAcr122uStatus.bind(paymentsController));
 router.get("/status", paymentsController.getAcr122uStatus.bind(paymentsController));
+// ─── Processor enablement / configuration diagnostics ─────────────────────────
+router.get("/processor-status", paymentsController.getProcessorStatus.bind(paymentsController));
+router.get("/payments/processor-status", paymentsController.getProcessorStatus.bind(paymentsController));
 // Backward-compatible aliases for older callers
 router.post("/payments/read-acr122u", paymentsController.readAcr122uCard.bind(paymentsController));
 router.get("/payments/read-acr122u/status", paymentsController.getAcr122uStatus.bind(paymentsController));
@@ -28,5 +31,13 @@ router.post("/transak/webhook", paymentsController.handleTransakWebhook.bind(pay
 // Transak headless card endpoints
 router.post("/transak/transaction-session", paymentsController.createTransactionSession.bind(paymentsController));
 router.get("/transak/transaction-request-status/:requestId", paymentsController.getTransactionRequestStatus.bind(paymentsController));
+
+// ─── Inbound Transaction Registration & Fund Verification (101.1 DTC flow) ──
+router.get("/inbound", authenticateToken, paymentsController.listInboundRegistrations.bind(paymentsController));
+router.get("/inbound/lookup", authenticateToken, paymentsController.findInboundByAuthCode.bind(paymentsController));
+router.get("/inbound/:id", authenticateToken, paymentsController.getInboundRegistration.bind(paymentsController));
+router.post("/inbound", authenticateToken, paymentsController.registerInboundTransaction.bind(paymentsController));
+router.post("/inbound/:id/link-card", authenticateToken, paymentsController.linkInboundCardDetails.bind(paymentsController));
+router.post("/inbound/:id/verify-funds", authenticateToken, paymentsController.verifyInboundFunds.bind(paymentsController));
 
 export { router as paymentsRouter };

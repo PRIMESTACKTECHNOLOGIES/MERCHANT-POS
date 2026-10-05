@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Modal } from './ui/Modal';
-import { useToast } from './ui/Toast';
+import { useToast } from './ui/toastContext';
 import { changePassword } from '../lib/api';
 
 interface ChangePasswordModalProps {
@@ -39,8 +39,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
       } else {
         showToast(res.message || 'Failed to update password', 'error');
       }
-    } catch (error: any) {
-      showToast(error.message || 'An error occurred', 'error');
+    } catch (error: unknown) {
+      showToast(error instanceof Error ? error.message : 'An error occurred', 'error');
     } finally {
       setLoading(false);
     }

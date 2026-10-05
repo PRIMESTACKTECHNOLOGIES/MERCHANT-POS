@@ -1,0 +1,61 @@
+{1:F01ABSAZAJJ0000000000}
+{2:I103ABSAZAJJN}
+{3:{108:POS201-260909-50}}
+{4:
+:20:POS201-260909-50
+:23B:CRED
+:32A:260909USD50000,00
+:50K:/4110362532
+JUKRUTI LOGISTICS PTY LTD
+MERCHANT POS PROCESSOR MRC-1001
+PROTOCOL 201.3 GOLD SALE SETTLEMENT
+:52A:ABSAZAJJ
+:57A:ABSAZAJJ
+:59:/4110362532
+JUKRUTI LOGISTICS PTY LTD
+ABSA Towers, 160 Main Street, Johannesburg, 2001, South Africa
+:70:/POS-SETTLE/POS201-260909-50K-R22XTQ
+GOLD SALE PARTIAL SETTLEMENT 50K
+POS 201.3 MRC-1001
+:71A:SHA
+-}
+
+====================================================
+         MT103 SWIFT WIRE — $50,000.00 USD
+====================================================
+Date            : 2026-09-09
+Reference       : POS201-260909-50K-R22XTQ
+Amount          : USD 50,000.00
+Currency        : USD
+----------------------------------------------------
+BENEFICIARY (RECEIVER):
+  Name          : JUKRUTI LOGISTICS PTY LTD
+  Bank          : ABSA BANK LIMITED
+  Account No    : 4110362532
+  Branch Code   : 250655
+  SWIFT / BIC   : ABSAZAJJ
+  Country       : South Africa
+----------------------------------------------------
+ORDERING PARTY (SENDER):
+  Name          : JUKRUTI LOGISTICS PTY LTD
+  Account No    : 4110362532
+  SWIFT / BIC   : ABSAZAJJ
+----------------------------------------------------
+PURPOSE         : Gold Sale Settlement — Partial $50,000
+POS MERCHANT    : MRC-1001
+PROTOCOL        : 201.3
+GENERATED       : 2026-09-09T10:47:21.479Z
+====================================================
+HOW TO USE:
+  1. Log into ABSA Business Online (ib.absa.co.za)
+  2. Go to: International Payments → SWIFT Transfer
+  3. Upload this file  OR  enter details manually:
+     - Beneficiary : JUKRUTI LOGISTICS PTY LTD
+     - Account     : 4110362532
+     - Branch Code : 250655
+     - SWIFT       : ABSAZAJJ
+     - Amount      : USD 50,000.00
+     - Reference   : POS201-260909-50K-R22XTQ
+  4. Authorize with your OTP
+  5. Funds arrive in ABSA 4110362532 within 1 business day
+====================================================

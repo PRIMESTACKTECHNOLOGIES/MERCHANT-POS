@@ -1,9 +1,35 @@
 import { useState, useEffect } from 'react';
 import { fetchProducts, createProduct, type Product } from '../lib/api';
-
+import { getErrorMessage } from '../utils/errorMessage';
+import type { ReactNode } from 'react';
 
 // Components
-const StatCard = ({ title, value, icon, color, subtext }: any) => (
+interface StatCardProps {
+  title: string;
+  value: string | number;
+  icon: ReactNode;
+  color: string;
+  subtext?: string;
+}
+
+interface ProductRow {
+  id: string;
+  name: string;
+  sku: string;
+  category: string;
+  price: number;
+  stock: number;
+  minStock: number;
+  status: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+  lastUpdated: string;
+}
+
+function statusForStock(stock: number): ProductRow['status'] {
+  if (stock === 0) return 'OUT_OF_STOCK';
+  return stock < 10 ? 'LOW_STOCK' : 'IN_STOCK';
+}
+
+const StatCard = ({ title, value, icon, color, subtext }: StatCardProps) => (
   <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all duration-300 relative overflow-hidden group">
     <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity transform group-hover:scale-110 duration-500">
       {icon}
@@ -40,7 +66,7 @@ const StatusBadge = ({ status }: { status: string }) => {
 };
 
 export const InventoryPage = () => {
-  const [products, setProducts] = useState<any[]>([]);
+  const [products, setProducts] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL'); // ALL, LOW_STOCK, OUT_OF_STOCK
   const [searchTerm, setSearchTerm] = useState('');
@@ -63,7 +89,7 @@ export const InventoryPage = () => {
           price: (p.price_minor || 0) / 100,
           stock: p.stock || 0,
           minStock: 10,
-          status: (p.stock || 0) === 0 ? 'OUT_OF_STOCK' : (p.stock || 0) < 10 ? 'LOW_STOCK' : 'IN_STOCK',
+          status: statusForStock(p.stock || 0),
           lastUpdated: p.updated_at || new Date().toISOString()
         }));
         setProducts(mapped);
@@ -308,13 +334,13 @@ export const InventoryPage = () => {
                     const mapped = res.map((p: Product) => ({
                       id: p.id, name: p.name, sku: p.sku || '', category: '',
                       price: (p.price_minor || 0) / 100, stock: p.stock || 0, minStock: 10,
-                      status: (p.stock || 0) === 0 ? 'OUT_OF_STOCK' : (p.stock || 0) < 10 ? 'LOW_STOCK' : 'IN_STOCK',
+                      status: statusForStock(p.stock || 0),
                       lastUpdated: p.updated_at || new Date().toISOString()
                     }));
                     setProducts(mapped);
-                  } catch (e: any) {
+                  } catch (e: unknown) {
                     console.error('Failed to create product', e);
-                    alert('Failed to create product: ' + (e.message || 'Unknown error'));
+                    alert('Failed to create product: ' + getErrorMessage(e, 'Unknown error'));
                   } finally {
                     setSaving(false);
                   }

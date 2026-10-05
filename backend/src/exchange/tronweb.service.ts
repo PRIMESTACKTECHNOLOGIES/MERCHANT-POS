@@ -539,23 +539,23 @@ export async function submitCustomerSignedTransfer(
  * Call this BEFORE sendUsdt() or other broadcast-requiring operations.
  *
  * If the SENDER wallet (hot or treasury) has less than 20 TRX:
- *   1. Debit merchant USD wallet for ~$5 (25 TRX buffer at ~0.20 $/TRX + safety margin)
- *   2. Binance SPOT BUY → buy TRX using merchant wallet USD via buyAssetWithUsd()
+ *   1. Debit vault USD for ~$5 (25 TRX buffer at ~0.20 $/TRX + safety margin)
+ *   2. Binance SPOT BUY → buy TRX using vault USD via buyAssetWithUsd()
  *      (real quoteOrderQty MARKET buy → real TRX lands in Binance SPOT wallet, NOT internal numbers)
  *   3. Binance Withdraw → send the purchased TRX from Binance spot → hot/treasury Tron wallet
  *   4. Poll TronGrid up to 3 minutes waiting for the TRX withdrawal to confirm on-chain
  *   5. Re-check sender TRX balance; if >= 20 → return OK; else throw pending_manual.
  *
- * FAILURE SAFETY: If Binance buy/withdraw fails AFTER merchant USD was debited, the USD is
- *                 AUTOMATICALLY credited back (rolled back) so the merchant never loses funds.
+ * FAILURE SAFETY: If Binance buy/withdraw fails AFTER vault USD was debited, the USD is
+ *                 AUTOMATICALLY credited back (rolled back).
  *                 The credit reference uses the same reference as the debit for auditability.
  *
  * Returns enriched info object including whether auto-topup was attempted + results.
  *
  * Requires:
  *   - Binance API keys LIVE & SET in .env (BINANCE_API_KEY + BINANCE_API_SECRET)
- *   - merchantId passed by caller so we can debit their internal USD wallet
- *   - merchant wallet has sufficient USD balance ($5 minimum buffer)
+ *   - merchantId passed by caller for vault audit attribution
+ *   - vault has sufficient USD balance ($5 minimum buffer)
  */
 export type GasAutoFundResult = {
   ok: boolean;
@@ -576,11 +576,10 @@ export type GasAutoFundResult = {
  * ensureHotWalletGasOrFail — CANONICAL ENTRY POINT.
  *
  * When hot/treasury wallet TRX < minTrx (default 20):
- *   → FALLBACK: Debit merchant USD → Binance SPOT BUY 25 TRX (quoteOrderQty real MARKET)
+ *   → FALLBACK: Debit vault USD → Binance SPOT BUY 25 TRX (quoteOrderQty real MARKET)
  *               → Binance Withdraw TRX → sender wallet → poll chain until settled.
  *
- * On any failure AFTER USD debit: merchant USD is AUTOMATICALLY refunded (rollback credit).
- * Merchant never loses funds. No more "go outside to buy TRX".
+ * On any failure AFTER USD debit: vault USD is AUTOMATICALLY refunded (rollback credit).
  */
 export async function ensureHotWalletGasOrFail(opts: {
   merchantId: string;
@@ -618,16 +617,14 @@ export async function ensureHotWalletGasOrFail(opts: {
   let debitReference: string | undefined;
   const startedAt = Date.now();
 
-  let debitHelper: any = null;
   let priceSnapshot: any = null;
 
   try {
-    const [_debitHelper, bs, priceInfo] = await Promise.all([
-      import('../domain/payouts/payoutHelpers'),
+    const [vaultBank, bs, priceInfo] = await Promise.all([
+      import('../domain/vault/merchantVaultTransfer.service'),
       import('./binance.service'),
       import('./binance.service').then(m => m.getLatestPrice('TRXUSDT')).catch(() => ({ price: 0.20 })),
     ]);
-    debitHelper = _debitHelper;
     priceSnapshot = { target: senderAddress, trxTarget, trxSpotPriceUsd: Number(priceInfo.price || 0.20) || 0.20 };
 
     const trxPrice = Number(priceInfo.price || 0.20) || 0.20;
@@ -636,13 +633,15 @@ export async function ensureHotWalletGasOrFail(opts: {
     rollbackAmount = buyUsdAmount;
     debitReference = `trx_gas_${opts.senderRole}_${Date.now()}`;
 
-    await debitHelper.debitMerchantWallet(
-      opts.merchantId,
-      buyUsdAmount,
-      'tron_auto_gas_topup',
-      debitReference,
-      { source: 'ensureHotWalletGasOrFail', ...priceSnapshot }
-    );
+    await vaultBank.callVaultBankLedger({
+      direction: 'debit',
+      amount: buyUsdAmount,
+      currency: 'USD',
+      reference: debitReference,
+      merchantId: opts.merchantId,
+      type: 'VAULT_RESERVE',
+      meta: { source: 'ensureHotWalletGasOrFail', ...priceSnapshot },
+    });
 
     const buyResult = await bs.buyAssetWithUsd('TRX', buyUsdAmount);
     if (!buyResult || !buyResult.ok) throw new Error('Binance TRX buy returned not-ok');
@@ -689,24 +688,27 @@ export async function ensureHotWalletGasOrFail(opts: {
         `On-chain balance after settle: ${lastPollBal.toFixed(4)} TRX (confirmed after ${((settledAfterMs||0)/1000).toFixed(1)}s). Broadcast can proceed.`,
     };
   } catch (gasErr: any) {
-    if (topupUsdSpent !== undefined && debitHelper && debitReference) {
+    if (topupUsdSpent !== undefined && debitReference) {
       try {
-        await debitHelper.creditMerchantWallet(
-          opts.merchantId,
-          topupUsdSpent,
-          'tron_auto_gas_topup_rollback',
-          `rollback_${debitReference}`,
-          {
+        const vaultBank = await import('../domain/vault/merchantVaultTransfer.service');
+        await vaultBank.callVaultBankLedger({
+          direction: 'credit',
+          amount: topupUsdSpent,
+          currency: 'USD',
+          reference: `rollback_${debitReference}`,
+          merchantId: opts.merchantId,
+          type: 'ADJUSTMENT',
+          meta: {
             source: 'ensureHotWalletGasOrFail',
             rollbackReason: String(gasErr?.message || String(gasErr)).slice(0, 300),
             originalDebit: debitReference,
             ...priceSnapshot,
-          }
-        );
+          },
+        });
         rollbackApplied = true;
       } catch (rbErr: any) {
         console.error(
-          `[ensureHotWalletGasOrFail:ROLLBACK_FAIL] Merchant ${opts.merchantId} was debited $${topupUsdSpent.toFixed(2)} ` +
+          `[ensureHotWalletGasOrFail:ROLLBACK_FAIL] Vault was debited $${topupUsdSpent.toFixed(2)} ` +
           `for TRX gas topup but ROLLBACK CREDIT FAILED. Manual reconciliation REQUIRED. ` +
           `debitRef=${debitReference} rollbackErr=${rbErr?.message || String(rbErr)}`
         );
@@ -778,7 +780,7 @@ export type HotWalletUsdtFundResult = {
 /**
  * AUTO-BUY USDT TO HOT WALLET (Tron / BSC / Polygon)
  *
- * When hot wallet USDT balance < minUsdt → uses MERCHANT USD wallet to BUY real USDT
+ * When hot wallet USDT balance < minUsdt → uses VAULT USD balance to BUY real USDT
  * via Binance SPOT and withdraw to the hot wallet on the chosen chain.
  *
  *   • USDT purchase uses 2-step real SPOT conversion (USD→BTC→USDT) since USDTUSDT is invalid)
@@ -790,7 +792,7 @@ export type HotWalletUsdtFundResult = {
  *
  * Polls on-chain balance until USDT >= minUsdt (default up to maxWaitMs.
  *
- * This is the EXACT feature the merchant requested: merchant USD ⇒ auto buy real USDT ⇒ send to hot wallet
+ * This is the vault-funded feature: vault USD ⇒ auto buy real USDT ⇒ send to hot wallet
  * — no more "manually go outside.
  */
 export async function autobuyAndTopupHotWalletUsdt(opts: {
@@ -847,28 +849,27 @@ export async function autobuyAndTopupHotWalletUsdt(opts: {
   let debitReference: string | undefined;
   const startedAt = Date.now();
 
-  let debitHelper: any = null;
-
   try {
-    const [_debitHelper, bs, bsPriceUsdt] = await Promise.all([
-      import('../domain/payouts/payoutHelpers'),
+    const [vaultBank, bs, bsPriceUsdt] = await Promise.all([
+      import('../domain/vault/merchantVaultTransfer.service'),
       import('./binance.service'),
       import('./binance.service').then(m => m.getLatestPrice('USDTUSDT')).catch(() => ({ price: 1.00 })),
     ]);
-    debitHelper = _debitHelper;
 
     const usdtPrice = Number(bsPriceUsdt.price ?? 1.00) || 1.00;
     usdSpent = Math.max(targetUsdt * usdtPrice * 1.03 + 1, targetUsdt * 1.03 + 1);
     rollbackAmount = usdSpent;
     debitReference = `hot_usdt_${network}_${Date.now()}`;
 
-    await debitHelper.debitMerchantWallet(
-      opts.merchantId,
-      usdSpent,
-      'hotwallet_usdt_auto_topup',
-      debitReference,
-      { source: 'autobuyAndTopupHotWalletUsdt', targetHotWallet: hotAddress, network, targetUsdt, usdtSpotPriceUsd: usdtPrice }
-    );
+    await vaultBank.callVaultBankLedger({
+      direction: 'debit',
+      amount: usdSpent,
+      currency: 'USD',
+      reference: debitReference,
+      merchantId: opts.merchantId,
+      type: 'VAULT_RESERVE',
+      meta: { source: 'autobuyAndTopupHotWalletUsdt', targetHotWallet: hotAddress, network, targetUsdt, usdtSpotPriceUsd: usdtPrice },
+    });
 
     const buyResult = await bs.buyAssetWithUsd('USDT', usdSpent);
     if (!buyResult?.ok) throw new Error('Binance USDT buy returned not-ok');
@@ -923,20 +924,23 @@ export async function autobuyAndTopupHotWalletUsdt(opts: {
         `On-chain balance after settle: ${lastPollBal.toFixed(4)} USDT (confirmed after ${((settledAfterMs||0)/1000).toFixed(1)}s). Payouts can proceed.`,
     };
   } catch (topupErr: any) {
-    if (usdSpent !== undefined && debitHelper && debitReference) {
+    if (usdSpent !== undefined && debitReference) {
       try {
-        await debitHelper.creditMerchantWallet(
-          opts.merchantId,
-          usdSpent,
-          'hotwallet_usdt_auto_topup_rollback',
-          `rollback_${debitReference}`,
-          {
+        const vaultBank = await import('../domain/vault/merchantVaultTransfer.service');
+        await vaultBank.callVaultBankLedger({
+          direction: 'credit',
+          amount: usdSpent,
+          currency: 'USD',
+          reference: `rollback_${debitReference}`,
+          merchantId: opts.merchantId,
+          type: 'ADJUSTMENT',
+          meta: {
             source: 'autobuyAndTopupHotWalletUsdt',
             rollbackReason: String(topupErr?.message || String(topupErr)).slice(0, 300),
             originalDebit: debitReference,
             targetHotWallet: hotAddress, network, targetUsdt,
-          }
-        );
+          },
+        });
         rollbackApplied = true;
       } catch (rbErr: any) {
           console.error(

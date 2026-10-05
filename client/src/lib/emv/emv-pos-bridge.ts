@@ -31,6 +31,7 @@ const engine = new EMVOfflineTransactionEngine([
     index: '01',
     modulus: '00' + 'A'.repeat(128),
     exponent: '010001',
+    hash: 'BA4C13BDC36B4D16320A037383C7CA37065A0DB8',
     hashAlgorithm: 'SHA-1',
     algorithm: 'RSA',
     expiryDate: '2030-12-31',
@@ -40,6 +41,7 @@ const engine = new EMVOfflineTransactionEngine([
     index: '01',
     modulus: '00' + 'B'.repeat(128),
     exponent: '010001',
+    hash: '744E98CB68FDD927BF8A00A7C55BB2B4534EAA14',
     hashAlgorithm: 'SHA-1',
     algorithm: 'RSA',
     expiryDate: '2030-12-31',
@@ -141,7 +143,8 @@ export async function processEMVOffline(
   currency:   string = 'USD',
   terminalId: string = 'WEB-TERMINAL',
   mcc:        string = '5999',
-  countryCode?: string
+  countryCode?: string,
+  customerId?: string,
 ): Promise<EMVResult> {
 
   const cur     = getCurrency(currency);
@@ -178,13 +181,15 @@ export async function processEMVOffline(
 
   // 4. Run EMV steps 1-8 (risk, CVM, action codes)
   const emvResult: EMVTransactionResult = await engine.processTransaction(input);
+  if (customerId && emvResult.offlineTransaction) {
+    engine.getStorage().setCustomerId(emvResult.offlineTransaction.id, customerId);
+  }
 
   // 5. Determine final decision
-  let decision: 'TC' | 'AAC' | 'ARQC' =
+  const decision: 'TC' | 'AAC' | 'ARQC' =
     emvResult.decline       ? 'AAC'  :
     emvResult.requiresOnline ? 'ARQC' : 'TC';
 
-  const now = new Date();
   const txData = {
     amount,
     currencyCode:        cur.numericCode,
@@ -213,11 +218,12 @@ export async function processEMVOffline(
         cardLast4: last4, cardBrand: brand,
         offlineRef: ref, capturedAt: ts,
         terminalId, stan, decision,
+        customerId,
         cryptogram: cryptResult.cryptogram,
         atc: cryptResult.applicationTransactionCounter
       });
       localStorage.setItem('emv_offline_queue', JSON.stringify(queue));
-    } catch (_) { /* storage full or private mode */ }
+    } catch { /* storage full or private mode */ }
   }
 
   // 8. Generate offline auth code for TC (approved offline)
@@ -281,11 +287,11 @@ export async function syncEMVTransactions(
   let queueItems: any[] = [];
   try {
     queueItems = JSON.parse(localStorage.getItem('emv_offline_queue') || '[]');
-  } catch (_) {}
+  } catch {}
 
-  const allItems = [
-    ...pending.map(tx => ({
+  const pendingItems = pending.map(tx => ({
       localTxnId: tx.id,
+      customerId: tx.customerId,
       stan: `SYNC-${tx.id.slice(-6)}`,
       amountMinor: Math.round(tx.amount * 100),
       currency: tx.currency,
@@ -294,19 +300,35 @@ export async function syncEMVTransactions(
       txnTimestamp: tx.timestamp.toISOString(),
       authMode: tx.offlineApproved ? 'OFFLINE_APPROVED' : 'OFFLINE_DECLINED',
       entryMode: 'MANUAL',
-    })),
-    ...queueItems.map((q: any) => ({
+    }));
+  const pendingCounts = new Map<string, number>();
+  for (const item of pendingItems) {
+    if (!item.customerId) continue;
+    const key = `${item.customerId}:${item.amountMinor}:${item.currency}`;
+    pendingCounts.set(key, (pendingCounts.get(key) || 0) + 1);
+  }
+  const queueOnlyItems = queueItems.flatMap((q: any) => {
+    const amountMinor = Math.round(Number(q.amount) * 100);
+    const key = `${q.customerId || ''}:${amountMinor}:${q.currency || 'USD'}`;
+    const matchingPending = pendingCounts.get(key) || 0;
+    if (matchingPending > 0) {
+      pendingCounts.set(key, matchingPending - 1);
+      return [];
+    }
+    return [{
       localTxnId: q.offlineRef,
+      customerId: q.customerId,
       stan: q.stan || '000000',
-      amountMinor: Math.round(q.amount * 100),
+      amountMinor,
       currency: q.currency || 'USD',
       panMasked: `****${q.cardLast4}`,
       txnType: 'SALE',
       txnTimestamp: q.capturedAt,
       authMode: q.decision === 'TC' ? 'OFFLINE_APPROVED' : 'OFFLINE_DECLINED',
       entryMode: 'MANUAL',
-    }))
-  ];
+    }];
+  });
+  const allItems = [...pendingItems, ...queueOnlyItems];
 
   if (allItems.length === 0) return { synced: 0, failed: 0 };
 
@@ -319,7 +341,7 @@ export async function syncEMVTransactions(
     events.forEach(recordProtocolEvent);
 
     const signature = await generateHmacSignature(
-      '201.3', merchantId, terminalId, batchId, ts, nonce, allItems.length, secretKey
+      '201.3', merchantId, terminalId, batchId, Date.parse(ts), nonce, allItems.length, secretKey
     );
 
     const BASE_URL = resolveApiBaseUrl({ envValue: import.meta.env.VITE_API_URL, currentOrigin: window.location.origin });
@@ -344,11 +366,12 @@ export async function syncEMVTransactions(
       const result = await res.json();
       const capturedCount = Number(result?.capturedCount || 0);
       const failedCount  = Number(result?.failedCount || 0);
-      let finalCode: string = result?.protocolLastCode || (capturedCount === allItems.length ? P2013.BATCH_UPLOAD_SUCCESS : (capturedCount > 0 ? P2013.BATCH_RECONCILE_SUCCESS : P2013.BATCH_UPLOAD_FAILED));
+      const finalCode: string = result?.protocolLastCode || (capturedCount === allItems.length ? P2013.BATCH_UPLOAD_SUCCESS : (capturedCount > 0 ? P2013.BATCH_RECONCILE_SUCCESS : P2013.BATCH_UPLOAD_FAILED));
       events.push({ code: finalCode, at: stamp(), ref: result?.settlementCode, message: `captured=${capturedCount} failed=${failedCount}` });
       events.forEach(recordProtocolEvent);
       pending.forEach(tx => storage.markTransactionUploaded(tx.id, true));
       localStorage.setItem('emv_offline_queue', '[]');
+      localStorage.setItem('pos_offline_pin_sales', '[]');
       return {
         synced: capturedCount > 0 ? capturedCount : allItems.length,
         failed: failedCount,

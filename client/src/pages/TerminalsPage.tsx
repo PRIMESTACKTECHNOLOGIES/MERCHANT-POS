@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { useToast } from "../components/ui/Toast";
+import { useState, useEffect } from "react";
+import { useToast } from "../components/ui/toastContext";
 import { TableSkeleton } from "../components/ui/Skeleton";
 import { deleteTerminal, fetchTerminals, forceTerminalReboot, regenerateTerminalSecret, registerTerminal } from "../lib/api";
 import type { Terminal } from "../types"; // Changed to type-only import
@@ -22,7 +22,7 @@ const Icons = {
 };
 
 // --- Helper Components ---
-const StatusBadge = ({ status, onReboot }: { status: string | undefined, onReboot?: () => void }) => {
+const StatusBadge = ({ status }: { status: string | undefined }) => {
   const s = status || 'OFFLINE';
   const styles: Record<string, string> = {
     ONLINE: "bg-green-100 text-green-800 border-green-200",
@@ -64,8 +64,8 @@ export const TerminalsPage = () => {
       setLoading(true);
       setLoadError(null);
       const data = await fetchTerminals();
-      setTerminals((Array.isArray(data) ? data : []).filter(Boolean).map((t: any) => {
-        let status = 'REGISTERED'; // default — any terminal in DB is registered
+      setTerminals((Array.isArray(data) ? data : []).filter(Boolean).map((t) => {
+        let status: NonNullable<Terminal['status']> = 'REGISTERED'; // default — any terminal in DB is registered
         if (t.lastBatchAt) {
           // Has synced at least once — check if recently active
           const lastSeen = new Date(t.lastBatchAt).getTime();
@@ -74,14 +74,14 @@ export const TerminalsPage = () => {
         }
         return {
           ...t,
-          status: status as any,
+          status,
           ipAddress: '-',
           appVersion: 'v1.0'
         };
       }));
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      const message = e?.message || "Failed to load terminals";
+      const message = e instanceof Error ? e.message : "Failed to load terminals";
       setLoadError(message);
       showToast(message, "error");
     } finally {
@@ -104,7 +104,7 @@ export const TerminalsPage = () => {
       setShowRegisterModal(false);
       setNewTerminalName("");
       loadTerminals();
-    } catch (e) {
+    } catch {
       showToast("Failed to register terminal", "error");
     }
   };
@@ -123,7 +123,7 @@ export const TerminalsPage = () => {
       } else {
         showToast("Secret key generated, but not returned by server", "error");
       }
-    } catch (e) {
+    } catch {
       showToast("Failed to regenerate key", "error");
     }
   };
@@ -135,7 +135,7 @@ export const TerminalsPage = () => {
       await forceTerminalReboot(merchantId, showConfigureModal.terminalId);
       showToast("Reboot command sent to terminal", "success");
       loadTerminals();
-    } catch (e) {
+    } catch {
       showToast("Failed to send reboot command", "error");
     }
   };
@@ -152,7 +152,7 @@ export const TerminalsPage = () => {
       showToast("Terminal deleted", "success");
       setShowConfigureModal(null);
       loadTerminals();
-    } catch (e) {
+    } catch {
       showToast("Failed to delete terminal", "error");
     }
   };
@@ -165,7 +165,7 @@ export const TerminalsPage = () => {
       await deleteTerminal(terminal.merchantId || "MRC-1001", terminal.terminalId);
       showToast("Terminal deleted", "success");
       loadTerminals();
-    } catch (e) {
+    } catch {
       showToast("Failed to delete terminal", "error");
     }
   };

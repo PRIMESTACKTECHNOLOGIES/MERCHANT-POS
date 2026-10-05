@@ -9,14 +9,15 @@ import {
   topupWalletWithCard,
   saveOfflinePinSale,
   getOfflinePinSales,
-  syncOfflinePinSales,
   checkBackendHealth,
   type Customer,
 } from '../lib/api';
 import { generateLocalTxnId, generateStan } from '../lib/crypto';
 import { processEMVOffline, syncEMVTransactions } from '../lib/emv/emv-pos-bridge';
-import { useToast } from '../components/ui/Toast';
+import { useToast } from '../components/ui/toastContext';
 import { CURRENCIES, getCurrency, getTerminalCurrency, setTerminalCurrency } from '../lib/currencies';
+
+type PosProtocol = 'NORMAL' | '101.1' | '101.6' | '201.3';
 
 interface TransactionRecord {
   localTxnId: string;
@@ -25,11 +26,28 @@ interface TransactionRecord {
   cardLast4: string;
   entryMode: 'MANUAL' | 'NFC';
   status: 'PENDING' | 'SYNCED' | 'FAILED';
+  protocolVersion?: PosProtocol;
   channel?: 'ONLINE' | 'OFFLINE';
   settlementCode?: string;
   timestamp: number;
   error?: string;
 }
+
+const getReceiptOutcome = (transaction: TransactionRecord) => {
+  if (transaction.status === 'FAILED') {
+    return transaction.channel ? `${transaction.channel} · DECLINED` : 'DECLINED';
+  }
+  if (transaction.status === 'PENDING') {
+    return transaction.channel ? `${transaction.channel} · PENDING` : 'PENDING';
+  }
+  if (transaction.status === 'SYNCED' && transaction.channel === 'ONLINE') {
+    return 'ONLINE · PROVIDER APPROVED';
+  }
+  if (transaction.status === 'SYNCED' && transaction.channel === 'OFFLINE') {
+    return 'OFFLINE · SYNCED';
+  }
+  return 'SYNCED · CHANNEL UNKNOWN';
+};
 
 export const POSPageSecure = () => {
   const [amount, setAmount] = useState("0");
@@ -45,6 +63,10 @@ export const POSPageSecure = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [cardEntryMode, setCardEntryMode] = useState<'MANUAL' | 'NFC'>('MANUAL');
   const [forceOffline, setForceOffline] = useState(false);
+  const [terminalSettings, setTerminalSettings] = useState({
+    offlineMode: false,
+    manualEntry: false
+  });
   const [nfcStatus, setNfcStatus] = useState({ enabled: false, connected: false, loading: true });
   const [merchantConfig, setMerchantConfig] = useState({
     merchantId: 'MRC-1001',
@@ -71,7 +93,7 @@ export const POSPageSecure = () => {
   });
   const [voiceAuth, setVoiceAuth] = useState(false);
   const [voiceAuthCode, setVoiceAuthCode] = useState("");
-  const [posProtocol, setPosProtocol] = useState<'NORMAL' | '101.1' | '101.6' | '201.3'>('NORMAL');
+  const [posProtocol, setPosProtocol] = useState<PosProtocol>('NORMAL');
   
   const { showToast } = useToast();
 
@@ -132,6 +154,10 @@ export const POSPageSecure = () => {
           support_email?: string;
           license_number?: string;
           tax_id?: string;
+          terminal?: {
+            offlineMode?: boolean;
+            features?: { manualEntry?: boolean };
+          };
           business?: {
             licenseNumber?: string;
             taxId?: string;
@@ -153,6 +179,10 @@ export const POSPageSecure = () => {
           supportEmail: typedSettings.support_email || '',
           licenseNumber: typedSettings.license_number || business?.licenseNumber || '',
           taxId: typedSettings.tax_id || business?.taxId || business?.tax_id || '',
+        });
+        setTerminalSettings({
+          offlineMode: typedSettings.terminal?.offlineMode ?? false,
+          manualEntry: typedSettings.terminal?.features?.manualEntry ?? false
         });
       }
     } catch (error) {
@@ -216,19 +246,6 @@ export const POSPageSecure = () => {
     const errors: string[] = [];
 
     try {
-      const offlineResult = await syncOfflinePinSales();
-      if (offlineResult.synced > 0) {
-        synced += offlineResult.synced;
-      }
-      if (offlineResult.failed > 0) {
-        errors.push(`Offline PIN upload failed for ${offlineResult.failed}`);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push(message || 'Offline PIN sync failed');
-    }
-
-    try {
       const emvResult = await syncEMVTransactions(
         merchantConfig.merchantId,
         merchantConfig.terminalId,
@@ -260,12 +277,13 @@ export const POSPageSecure = () => {
 
   const buildReceiptText = (txn: TransactionRecord) => {
     const dt = new Date(txn.timestamp);
-    const statusLabel = txn.status === "SYNCED" ? "APPROVED" : txn.status === "FAILED" ? "FAILED" : "PENDING";
-    const authMode = txn.status === "SYNCED" ? "ONLINE_APPROVED" : txn.status === "FAILED" ? "DECLINED" : "OFFLINE_PENDING";
+    const statusLabel = txn.status === "SYNCED" && txn.channel === 'ONLINE'
+      ? 'PROVIDER APPROVED'
+      : txn.status;
     const entryMode = txn.entryMode || "MANUAL";
     const merchantId = merchantConfig.merchantId;
     const terminalId = merchantConfig.terminalId;
-    const currency = "USD";
+    const currencyCode = getCurrency(currency).code;
 
     const lines: string[] = [];
     const line = (s: string) => lines.push(s);
@@ -285,21 +303,22 @@ export const POSPageSecure = () => {
     if (merchantReceiptInfo.supportEmail) line(`Email: ${merchantReceiptInfo.supportEmail}`);
     line(`Date: ${dt.toLocaleDateString()} ${dt.toLocaleTimeString()}`);
     sep();
+    line(`Protocol: ${txn.protocolVersion || "NOT RECORDED"}`);
+    line(`Channel: ${txn.channel || "UNKNOWN"}`);
     line(`Txn ID: ${txn.localTxnId}`);
     line(`STAN: ${txn.stan}`);
-    line(`Channel: ${txn.channel || (txn.status === "SYNCED" ? "ONLINE" : "OFFLINE")}`);
     sep();
     line(`Card: **** **** **** ${txn.cardLast4}`);
     line(`Entry: ${entryMode}`);
-    line(`Auth: ${authMode}`);
+    line(`Outcome: ${getReceiptOutcome(txn)}`);
     sep();
-    line(`Amount: $${txn.amount.toFixed(2)} ${currency}`);
+    line(`Amount: ${getCurrency(currency).symbol}${txn.amount.toFixed(getCurrency(currency).decimals)} ${currencyCode}`);
     line(`Status: ${statusLabel}`);
     if (txn.settlementCode) {
-      if (txn.status === "SYNCED") {
+      if (txn.status === "SYNCED" && txn.channel === "ONLINE") {
         line(`Settlement: ${txn.settlementCode}`);
       } else if (txn.status === "PENDING") {
-        line(`Offline Code: ${txn.settlementCode}`);
+        line(`Reference: ${txn.settlementCode}`);
       } else {
         line(`Ref: ${txn.settlementCode}`);
       }
@@ -412,6 +431,10 @@ export const POSPageSecure = () => {
       showToast('Enter a valid amount', 'error');
       return;
     }
+    if (!terminalSettings.manualEntry) {
+      showToast('Manual card entry is disabled in Terminal Settings', 'error');
+      return;
+    }
     setShowCardForm(true);
   };
 
@@ -448,6 +471,11 @@ export const POSPageSecure = () => {
       return;
     }
     if (!validateCard()) {
+      return;
+    }
+
+    if (!selectedCustomerId) {
+      showToast('Select the customer wallet to receive captured funds', 'error');
       return;
     }
 
@@ -492,8 +520,16 @@ export const POSPageSecure = () => {
       return;
     }
 
+    if ((!isOnline || forceOffline) && !terminalSettings.offlineMode) {
+      showToast('Offline processing is disabled in Terminal Settings', 'error');
+      return;
+    }
+
     setLoading(true);
     setShowCardForm(false);
+
+    const selectedProtocol = posProtocol;
+    const transactionChannel = isOnline && !forceOffline ? 'ONLINE' : 'OFFLINE';
 
     try {
       // Generate required IDs
@@ -509,11 +545,13 @@ export const POSPageSecure = () => {
         cardLast4: cardData.pan.slice(-4),
         entryMode: cardEntryMode,
         status: 'PENDING',
+        protocolVersion: selectedProtocol,
+        channel: transactionChannel,
         timestamp: Date.now()
       };
 
       // Decide whether to process online or offline
-      if (isOnline && !forceOffline) {
+      if (transactionChannel === 'ONLINE') {
         // Online card payments must go through the configured processor. The
         // backend credits the internal vault only after processor approval.
         const result = await chargePayment(
@@ -523,29 +561,47 @@ export const POSPageSecure = () => {
           {
             pan: cardData.pan.replace(/\s/g, ''),
             expiry: cardData.expiry,
-            cvv: posProtocol === '101.1' ? undefined : cardData.cvv,
+            cvv: selectedProtocol === '101.1' ? undefined : cardData.cvv,
             customerId: selectedCustomerId || undefined,
             terminalId: merchantConfig.terminalId,
             stan,
-            entryMode: posProtocol === '201.3' ? 'OFFLINE_201_3' : posProtocol === '101.1' ? 'VOICE_AUTH' : posProtocol === '101.6' ? '101.6' : cardEntryMode,
-            authCode: posProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined,
-            protocolVersion: posProtocol,
+            entryMode: selectedProtocol === '201.3' ? 'OFFLINE_201_3' : selectedProtocol === '101.1' ? 'VOICE_AUTH' : selectedProtocol === '101.6' ? '101.6' : cardEntryMode,
+            authCode: selectedProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined,
+            protocolVersion: selectedProtocol,
           }
         );
 
-        if (result.status === 'APPROVED' || result.success === true) {
-          transaction.channel = 'ONLINE';
+        const processorStatus = String(result.status || '').toUpperCase();
+        const actualChannel = result.channel === 'ONLINE' || result.channel === 'OFFLINE'
+          ? result.channel
+          : null;
+        transaction.channel = actualChannel || transactionChannel;
+        transaction.settlementCode = result.settlementId || result.paymentIntentId || result.authCode;
+
+        if (processorStatus === 'APPROVED' && result.success === true && actualChannel === 'ONLINE') {
           transaction.status = 'SYNCED';
-          transaction.settlementCode = result.settlementId || result.paymentIntentId || result.authCode;
           showToast(
             `Payment Approved! ${transaction.settlementCode || 'Processor confirmed'}`,
             'success'
           );
           setLastTransaction(transaction);
           setShowReceipt(true);
+        } else if (
+          processorStatus === 'PENDING' ||
+          (processorStatus === 'APPROVED' && actualChannel !== 'ONLINE') ||
+          (!processorStatus && result.success === true)
+        ) {
+          transaction.status = 'PENDING';
+          showToast(
+            actualChannel === 'OFFLINE' && processorStatus === 'APPROVED'
+              ? 'Offline authorization recorded; pending settlement. This is not provider approval.'
+              : result.reason || result.error || 'Payment is pending provider confirmation.',
+            'warning'
+          );
+          setLastTransaction(transaction);
+          setShowReceipt(true);
         } else {
           transaction.status = 'FAILED';
-          transaction.channel = 'ONLINE';
           transaction.error = result.error || result.reason || 'Payment failed';
           showToast(transaction.error || 'Payment failed', 'error');
         }
@@ -555,16 +611,20 @@ export const POSPageSecure = () => {
           { pan: cardData.pan.replace(/\s/g, ''), expiry: cardData.expiry, cvv: voiceAuth ? '' : cardData.cvv },
           amountVal,
           currency,
-          merchantConfig.terminalId
+          merchantConfig.terminalId,
+          undefined,
+          undefined,
+          selectedCustomerId
         );
 
         if (emvResult.approved) {
           transaction.channel = 'OFFLINE';
           transaction.status = 'PENDING';
           transaction.settlementCode = voiceAuthCode.trim();
-          showToast(`Offline Approved — STAN: ${emvResult.stan}`, 'success');
+          showToast(`Offline transaction queued — pending provider capture (STAN: ${emvResult.stan}).`, 'warning');
           saveOfflinePinSale({
             merchantId: merchantConfig.merchantId,
+            customerId: selectedCustomerId,
             terminalId: merchantConfig.terminalId,
             amountMinor,
             currency,
@@ -595,6 +655,7 @@ export const POSPageSecure = () => {
           showToast('Queued for online auth', 'warning');
           saveOfflinePinSale({
             merchantId: merchantConfig.merchantId,
+            customerId: selectedCustomerId,
             terminalId: merchantConfig.terminalId,
             amountMinor,
             currency,
@@ -637,6 +698,8 @@ export const POSPageSecure = () => {
         cardLast4: cardData.pan.slice(-4),
         entryMode: cardEntryMode,
         status: 'FAILED',
+        protocolVersion: selectedProtocol,
+        channel: transactionChannel,
         timestamp: Date.now(),
         error: error instanceof Error ? error.message : String(error)
       };
@@ -681,9 +744,9 @@ export const POSPageSecure = () => {
         <div className="flex items-center gap-4">
           {/* Status and Toggle */}
           <div 
-            className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-full cursor-pointer hover:bg-white/20 transition-colors"
-            onClick={() => setForceOffline(!forceOffline)}
-            title={forceOffline ? "Click to resume automatic status" : "Click to force offline mode"}
+            onClick={() => terminalSettings.offlineMode && setForceOffline(!forceOffline)}
+            title={!terminalSettings.offlineMode ? "Offline processing is disabled in Terminal Settings" : forceOffline ? "Click to resume automatic status" : "Click to force offline mode"}
+            className={`flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-full transition-colors ${terminalSettings.offlineMode ? 'cursor-pointer hover:bg-white/20' : 'cursor-not-allowed opacity-60'}`}
           >
             <div className="relative">
               <span className={`block w-3 h-3 rounded-full ${isOnline && !forceOffline ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]' : 'bg-red-400'}`}></span>
@@ -695,7 +758,7 @@ export const POSPageSecure = () => {
               )}
             </div>
             <span className={`text-xs font-bold tracking-wider ${forceOffline ? 'animate-pulse-red' : ''}`}>
-              {forceOffline ? 'FORCED OFFLINE' : (isOnline ? 'ONLINE' : 'OFFLINE')}
+              {!terminalSettings.offlineMode ? 'OFFLINE DISABLED' : forceOffline ? 'FORCED OFFLINE' : (isOnline ? 'ONLINE' : 'OFFLINE')}
             </span>
             <div className={`w-8 h-4 rounded-full relative transition-colors ${forceOffline ? 'bg-red-500' : 'bg-green-500'}`}>
               <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${forceOffline ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -759,12 +822,12 @@ export const POSPageSecure = () => {
             disabled={loading || parseFloat(amount) === 0}
             className={`
               w-full py-4 rounded-xl text-lg font-bold text-white shadow-lg transition-all
-              ${loading || parseFloat(amount) === 0 
+              ${loading || parseFloat(amount) === 0 || !terminalSettings.manualEntry
                 ? 'bg-gray-300 cursor-not-allowed' 
                 : 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98]'}
             `}
           >
-            {loading ? 'Processing...' : `Charge ${getCurrency(currency).symbol}${amount}`}
+            {loading ? 'Processing...' : terminalSettings.manualEntry ? `Charge ${getCurrency(currency).symbol}${amount}` : 'Manual Entry Disabled'}
           </button>
         </div>
 
@@ -1002,7 +1065,7 @@ export const POSPageSecure = () => {
                     <input
                       type="text"
                       value={voiceAuthCode}
-                      onChange={(e) => setVoiceAuthCode(e.target.value.replace(/[^a-zA-Z0-9\-]/g, '').substring(0, 32))}
+                      onChange={(e) => setVoiceAuthCode(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').substring(0, 32))}
                       className={`w-full px-4 py-2 border-2 rounded-lg outline-none text-center font-mono tracking-widest font-bold
                         ${posProtocol === '201.3'
                           ? 'border-purple-300 focus:border-purple-500 bg-purple-50 text-purple-900'
@@ -1049,16 +1112,18 @@ export const POSPageSecure = () => {
                   </div>
                   <div className="text-[11px] text-white/70 mt-1">Merchant ID: {merchantConfig.merchantId}</div>
                   <div className="text-[11px] text-white/70">Terminal ID: {merchantConfig.terminalId}</div>
-                  <div className="text-[11px] text-white/70">Channel: {lastTransaction.channel || (lastTransaction.status === "SYNCED" ? "ONLINE" : "OFFLINE")}</div>
+                  <div className="text-[11px] text-white/70">Channel: {lastTransaction.channel || "Unknown"}</div>
                 </div>
-                <div className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                  lastTransaction.status === "SYNCED"
-                    ? "bg-green-500/20 text-green-200 ring-1 ring-green-400/30"
-                    : lastTransaction.status === "FAILED"
-                      ? "bg-red-500/20 text-red-200 ring-1 ring-red-400/30"
-                      : "bg-amber-500/20 text-amber-200 ring-1 ring-amber-400/30"
+                <div className={`max-w-[150px] px-2.5 py-1 rounded-full text-[11px] font-bold text-center ${
+                  lastTransaction.status === "FAILED"
+                    ? "bg-red-500/20 text-red-200 ring-1 ring-red-400/30"
+                    : lastTransaction.status === "PENDING"
+                      ? "bg-amber-500/20 text-amber-200 ring-1 ring-amber-400/30"
+                      : lastTransaction.status === "SYNCED" && lastTransaction.channel === "ONLINE"
+                        ? "bg-green-500/20 text-green-200 ring-1 ring-green-400/30"
+                        : "bg-white/15 text-white ring-1 ring-white/30"
                 }`}>
-                  {lastTransaction.status === "SYNCED" ? "APPROVED" : lastTransaction.status === "FAILED" ? "FAILED" : "PENDING"}
+                  {getReceiptOutcome(lastTransaction)}
                 </div>
               </div>
             </div>
@@ -1118,6 +1183,10 @@ export const POSPageSecure = () => {
                     <span className="font-mono font-bold text-gray-900">{lastTransaction.stan}</span>
                   </div>
                   <div className="flex justify-between gap-3">
+                    <span className="text-gray-500">Protocol</span>
+                    <span className="font-medium text-gray-900">{lastTransaction.protocolVersion || 'Not recorded'}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
                     <span className="text-gray-500">Card</span>
                     <span className="font-mono text-gray-900">**** **** **** {lastTransaction.cardLast4}</span>
                   </div>
@@ -1126,29 +1195,27 @@ export const POSPageSecure = () => {
                     <span className="font-medium text-gray-900">{lastTransaction.entryMode || 'MANUAL'}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-gray-500">Auth Mode</span>
-                    <span className="font-medium text-gray-900">
-                      {lastTransaction.channel === "OFFLINE"
-                        ? "OFFLINE_PENDING"
-                        : lastTransaction.status === "SYNCED"
-                          ? "ONLINE_APPROVED"
-                          : "DECLINED"}
-                    </span>
+                    <span className="text-gray-500">Outcome</span>
+                    <span className="font-semibold text-gray-900 text-right">{getReceiptOutcome(lastTransaction)}</span>
                   </div>
                 </div>
 
                 {lastTransaction.settlementCode && (
                   <div className="p-4 border-t border-gray-100 bg-amber-50">
                     <div className="text-[11px] text-amber-800 font-semibold uppercase tracking-widest">
-                      {lastTransaction.status === "SYNCED" ? "Settlement Code" : "Offline Reference"}
+                      {lastTransaction.status === "SYNCED" && lastTransaction.channel === "ONLINE" ? "Settlement Code" : "Transaction Reference"}
                     </div>
                     <div className="mt-1 text-2xl font-mono font-extrabold tracking-wider text-amber-900 break-all">
                       {lastTransaction.settlementCode}
                     </div>
                     <div className="text-[11px] text-amber-800 mt-1">
-                      {lastTransaction.status === "SYNCED"
+                      {lastTransaction.status === "SYNCED" && lastTransaction.channel === "ONLINE"
                         ? "Save this code for reconciliation."
-                        : "Pending settlement. Sync when internet returns."}
+                        : lastTransaction.status === "PENDING" && lastTransaction.channel === "OFFLINE"
+                          ? "Offline transaction is pending sync or settlement; it has not been provider-approved."
+                          : lastTransaction.status === "PENDING"
+                            ? "Submitted online and awaiting provider confirmation; it is not approved yet."
+                            : "Keep this reference for reconciliation."}
                     </div>
                   </div>
                 )}

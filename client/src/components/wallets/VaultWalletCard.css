@@ -1,0 +1,224 @@
+.vault-wallet-card-wrap {
+  width: min(100%, 420px);
+  margin: 0 auto;
+}
+
+.vault-wallet-card-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 420 / 260;
+  perspective: 1200px;
+}
+
+.vault-wallet-card {
+  position: absolute;
+  inset: 0;
+  padding: 24px 28px;
+  border-radius: 18px;
+  color: #252525;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, .35);
+  backface-visibility: hidden;
+  transition: transform .45s ease;
+}
+
+.vault-wallet-card-front {
+  background: linear-gradient(135deg, #d9d5cc, #b8b3a8 40%, #f0ede6 80%);
+}
+
+.vault-wallet-card-back {
+  background: linear-gradient(135deg, #c3beb3, #a39e93);
+  transform: rotateY(180deg);
+}
+
+.vault-wallet-card-stage.is-back .vault-wallet-card-front {
+  transform: rotateY(180deg);
+}
+
+.vault-wallet-card-stage.is-back .vault-wallet-card-back {
+  transform: rotateY(360deg);
+}
+
+.vault-card-logo {
+  font-size: clamp(16px, 4vw, 22px);
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.vault-card-chip {
+  position: absolute;
+  top: 31%;
+  left: 7%;
+  width: 17%;
+  aspect-ratio: 70 / 50;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f5f2e9, #c9c4b8);
+  box-shadow: inset 0 0 0 2px rgba(120, 110, 90, .6);
+}
+
+.vault-card-chip span {
+  position: absolute;
+  background: rgba(120, 110, 90, .55);
+}
+
+.vault-card-chip span:nth-child(1),
+.vault-card-chip span:nth-child(2) {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+
+.vault-card-chip span:nth-child(1) { left: 35%; }
+.vault-card-chip span:nth-child(2) { left: 67%; }
+.vault-card-chip span:nth-child(3),
+.vault-card-chip span:nth-child(4) {
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+
+.vault-card-chip span:nth-child(3) { top: 37%; }
+.vault-card-chip span:nth-child(4) { top: 68%; }
+
+.vault-card-nfc {
+  position: absolute;
+  top: 14%;
+  right: 7%;
+  width: 7%;
+  aspect-ratio: 1;
+  border: 2px solid rgba(60, 60, 60, .7);
+  border-left-color: transparent;
+  border-radius: 50%;
+  transform: rotate(45deg);
+}
+
+.vault-card-nfc span {
+  position: absolute;
+  border: 2px solid rgba(60, 60, 60, .65);
+  border-left-color: transparent;
+  border-radius: 50%;
+  transform: rotate(45deg);
+}
+
+.vault-card-nfc span:nth-child(1) { inset: 16%; }
+.vault-card-nfc span:nth-child(2) { inset: 32%; }
+.vault-card-nfc span:nth-child(3) { inset: 48%; }
+
+.vault-card-number {
+  position: absolute;
+  top: 57%;
+  left: 7%;
+  right: 7%;
+  font-size: clamp(14px, 4vw, 20px);
+  letter-spacing: 2px;
+  white-space: nowrap;
+}
+
+.vault-card-row {
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  display: flex;
+  justify-content: space-between;
+}
+
+.vault-card-label-row {
+  top: 71%;
+  font-size: 10px;
+  letter-spacing: 1px;
+  opacity: .7;
+}
+
+.vault-card-value-row {
+  top: 79%;
+  font-size: clamp(10px, 2.5vw, 14px);
+}
+
+.vault-card-hologram {
+  position: absolute;
+  bottom: 9%;
+  left: 7%;
+  width: 19%;
+  aspect-ratio: 80 / 50;
+  border-radius: 10px;
+  background: radial-gradient(circle at 10% 10%, #fff, #c0b8aa);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vault-card-hologram span,
+.vault-card-operator {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.vault-card-visa {
+  position: absolute;
+  right: 7%;
+  bottom: 8%;
+  font-size: clamp(20px, 6vw, 28px);
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.vault-card-strip {
+  position: absolute;
+  top: 14%;
+  left: 0;
+  right: 0;
+  height: 19%;
+  background: linear-gradient(180deg, #2b2b2b, #111);
+}
+
+.vault-card-signature {
+  position: absolute;
+  top: 43%;
+  left: 7%;
+  right: 7%;
+  height: 19%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f5f5f5;
+  font-size: clamp(9px, 2.5vw, 12px);
+  font-style: italic;
+}
+
+.vault-card-operator {
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  bottom: 9%;
+  text-align: center;
+  opacity: .8;
+}
+
+.vault-wallet-card-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.vault-wallet-card-actions button {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: white;
+  padding: 8px 12px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.vault-wallet-card-actions button:hover {
+  background: #f8fafc;
+}
+
+.vault-wallet-card-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}

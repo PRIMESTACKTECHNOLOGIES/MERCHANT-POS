@@ -9,7 +9,7 @@ export interface CryptoWallet {
   quantity: number;
   value_usd: number;
   address: string; // blockchain address
-  source: string; // transak, stripe, swap, etc.
+  source: string; // transak, wallet_balance, swap, etc.
   updated_at: string;
 }
 

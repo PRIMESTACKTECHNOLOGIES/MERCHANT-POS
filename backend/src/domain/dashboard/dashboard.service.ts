@@ -77,20 +77,15 @@ export async function getPendingTransactions(
     let query = `
       SELECT DISTINCT
         t.id,
-        t.pan,
-        t.amount,
+        t.pan_masked AS pan,
+        t.amount_minor / 100.0 AS amount,
         t.status,
         t.terminal_id,
         t.created_at,
-        t.auth_at as approved_at
+        t.txn_timestamp as approved_at
       FROM pos2013_transactions t
-      LEFT JOIN reconciliation_discrepancies rd ON t.id = rd.offline_txn_id
       WHERE t.merchant_id = ?
-        AND t.status IN ('approved', 'pending')
-        AND t.id NOT IN (
-          SELECT transaction_id FROM transaction_settlements
-          WHERE status IN ('SETTLED', 'REVERSED')
-        )
+        AND UPPER(t.status) IN ('PENDING_CAPTURE', 'CAPTURE_FAILED', 'PENDING')
     `;
 
     const params: any[] = [merchantId];
@@ -202,14 +197,11 @@ export async function getDashboardSummary(
   try {
     // Pending transactions
     const pending = await db.query(
-      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
+      `SELECT COUNT(*) as count, COALESCE(SUM(amount_minor), 0) / 100.0 as total
        FROM pos2013_transactions
-       WHERE merchant_id = ? AND status IN ('approved', 'pending')
+       WHERE merchant_id = ? AND UPPER(status) IN ('PENDING_CAPTURE', 'CAPTURE_FAILED', 'PENDING')
          ${terminalId ? 'AND terminal_id = ?' : ''}
-         AND id NOT IN (
-           SELECT transaction_id FROM transaction_settlements
-           WHERE status IN ('SETTLED', 'REVERSED')
-         )`,
+       `,
       terminalId ? [merchantId, terminalId] : [merchantId]
     );
 
@@ -464,63 +456,51 @@ export async function broadcastDashboardUpdate(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UNPROCESSED TRANSACTIONS SUMMARY
-// Returns the $46k+ sitting in pos2013_transactions that has never been
-// credited to any merchant wallet (no processed batch, no wallet credit).
+// Pending card captures that must not be treated as available wallet funds.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface UnprocessedSummary {
   totalTransactions: number;
-  totalAmountUSD: number;
-  byCurrency: { currency: string; count: number; totalUSD: number }[];
+  byCurrency: { currency: string; count: number; totalAmount: number }[];
   oldestTransactionAt: string | null;
   newestTransactionAt: string | null;
 }
 
 export async function getUnprocessedSummary(merchantId?: string): Promise<UnprocessedSummary> {
-  // Transactions that were never credited to a merchant wallet:
-  // - batch status != PROCESSED  OR no batch row at all
-  // - AND transaction not in any settled merchant_pos_settlement
-  const whereClause = merchantId ? `WHERE t.merchant_id = ?` : '';
+  const whereClause = merchantId ? `WHERE t.merchant_id = ? AND` : `WHERE`;
   const params: any[] = merchantId ? [merchantId] : [];
 
   const byCurrency = await db.query(
     `SELECT
        t.currency,
        COUNT(*) as count,
-       ROUND(SUM(t.amount_minor) / 100.0, 2) as total_usd
+       ROUND(SUM(t.amount_minor) / 100.0, 2) as total_amount
      FROM pos2013_transactions t
-     LEFT JOIN pos2013_batches b ON b.batch_id = t.batch_id
-       AND b.merchant_id = t.merchant_id
      ${whereClause}
-     AND (b.status IS NULL OR b.status != 'PROCESSED')
+       UPPER(t.status) IN ('PENDING_CAPTURE', 'CAPTURE_FAILED')
      GROUP BY t.currency
-     ORDER BY total_usd DESC`,
+     ORDER BY total_amount DESC`,
     params
   );
 
   const totals = await db.query(
     `SELECT
        COUNT(*) as count,
-       ROUND(SUM(t.amount_minor) / 100.0, 2) as total_usd,
        MIN(t.created_at) as oldest,
        MAX(t.created_at) as newest
      FROM pos2013_transactions t
-     LEFT JOIN pos2013_batches b ON b.batch_id = t.batch_id
-       AND b.merchant_id = t.merchant_id
      ${whereClause}
-     AND (b.status IS NULL OR b.status != 'PROCESSED')`,
+       UPPER(t.status) IN ('PENDING_CAPTURE', 'CAPTURE_FAILED')`,
     params
   );
 
   const row = totals.rows[0] as any;
   return {
     totalTransactions: Number(row?.count || 0),
-    totalAmountUSD: Number(row?.total_usd || 0),
     byCurrency: (byCurrency.rows || []).map((r: any) => ({
       currency: r.currency,
       count: Number(r.count),
-      totalUSD: Number(r.total_usd),
+      totalAmount: Number(r.total_amount),
     })),
     oldestTransactionAt: row?.oldest || null,
     newestTransactionAt: row?.newest || null,
@@ -546,140 +526,8 @@ export interface ProcessResult {
 }
 
 export async function processUnprocessedTransactions(merchantId: string): Promise<ProcessResult> {
+  void merchantId;
   throw new Error(
-    'LIVE_PROCESSOR_REQUIRED: dashboard batch settlement is disabled. Upload a signed Protocol 201.3 batch so each transaction is authorized and captured by the live processor before wallet settlement.'
+    'LIVE_PROCESSOR_REQUIRED: wallet credits cannot be created by manually processing POS transactions. Wait for a confirmed processor capture or signed bank settlement.',
   );
-
-  const { v4: uuidv4 } = await import('uuid');
-
-  // 1. Get all unprocessed transactions for this merchant
-  const txnRes = await db.query(
-    `SELECT t.id, t.amount_minor, t.currency, t.batch_id
-     FROM pos2013_transactions t
-     LEFT JOIN pos2013_batches b ON b.batch_id = t.batch_id
-       AND b.merchant_id = t.merchant_id
-     WHERE t.merchant_id = ?
-       AND (b.status IS NULL OR b.status != 'PROCESSED')`,
-    [merchantId]
-  );
-
-  const transactions = txnRes.rows as any[];
-  if (transactions.length === 0) {
-    return {
-      success: false,
-      merchantId,
-      transactionsProcessed: 0,
-      totalAmountCredited: 0,
-      currency: 'USD',
-      settlementCode: '',
-      walletBalanceAfter: 0,
-      cryptoCredited: 0,
-      message: 'No unprocessed transactions found.',
-    };
-  }
-
-  // 2. Sum all amounts (treat all as USD equivalent)
-  const totalMinor = transactions.reduce((s: number, t: any) => s + Number(t.amount_minor || 0), 0);
-  const totalUSD = totalMinor / 100;
-  const settlementCode = `SETTLE-${Date.now()}`;
-  const now = new Date().toISOString();
-
-  // ── BLOCKED: Do NOT auto-credit merchant wallet from batch settlement ──────
-  // The merchant wallet is credited directly from real card captures (BATCH_TO_VAULT).
-  // Auto-crediting from dashboard batch sync creates fake balances.
-  // Only real processor captures (pos_voice_auth, pos_card_charge, card_capture) count.
-  console.log(`[Dashboard] Batch sync: ${transactions.length} txns, ${totalUSD} USD — wallet credit BLOCKED (use real card captures only)`);
-
-  // Skip the wallet credit entirely
-  if (false) {
-  // 3. Credit merchant wallet (virtual USD) — DISABLED
-  const walletRes = await db.query(
-    'SELECT * FROM merchant_wallets WHERE merchant_id = ? AND currency = ?',
-    [merchantId, 'USD']
-  );
-  let wallet = walletRes.rows[0] as any;
-  if (!wallet) {
-    const wid = uuidv4();
-    await db.query(
-      'INSERT INTO merchant_wallets (id, merchant_id, balance, currency) VALUES (?, ?, 0, ?)',
-      [wid, merchantId, 'USD']
-    );
-    wallet = (await db.query('SELECT * FROM merchant_wallets WHERE id = ?', [wid])).rows[0] as any;
-  }
-
-  await db.query(
-    'UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?',
-    [totalUSD, now, wallet.id]
-  );
-
-  await db.query(
-    `INSERT INTO merchant_wallet_transactions
-     (id, wallet_id, type, amount, currency, source, reference, description)
-     VALUES (?, ?, 'credit', ?, 'USD', 'batch_settlement', ?, ?)`,
-    [uuidv4(), wallet.id, totalUSD, settlementCode,
-     `Batch settlement: ${transactions.length} transactions processed`]
-  );
-
-  // 4. Auto-credit USDT crypto balance (1:1 USD = USDT)
-  const cryptoRes = await db.query(
-    'SELECT * FROM customer_crypto_wallets WHERE customer_id = ? AND crypto_coin = ?',
-    [merchantId, 'USDT']
-  );
-  if (cryptoRes.rows.length > 0) {
-    await db.query(
-      'UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ? AND crypto_coin = ?',
-      [totalUSD, merchantId, 'USDT']
-    );
-  } else {
-    await db.query(
-      'INSERT INTO customer_crypto_wallets (id, customer_id, crypto_coin, balance, status) VALUES (?, ?, ?, ?, ?)',
-      [uuidv4(), merchantId, 'USDT', totalUSD, 'active']
-    );
-  }
-
-  // 5. Mark transactions SYNCED
-  const txnIds = transactions.map((t: any) => t.id);
-  for (const id of txnIds) {
-    await db.query(
-      `UPDATE pos2013_transactions SET status = 'SYNCED', auth_code = ? WHERE id = ?`,
-      [settlementCode, id]
-    );
-  }
-  } // end if(false) — wallet credit disabled
-
-
-  // 6. Mark all related batches PROCESSED
-  const batchIds = [...new Set(transactions.map((t: any) => t.batch_id).filter(Boolean))];
-  for (const bid of batchIds) {
-    await db.query(
-      `UPDATE pos2013_batches SET status = 'PROCESSED', settlement_code = ?, processed_at = ?, updated_at = ?
-       WHERE batch_id = ? AND merchant_id = ?`,
-      [settlementCode, now, now, bid, merchantId]
-    );
-  }
-
-  // 7. Record merchant_pos_settlements as settled
-  await db.query(
-    `UPDATE merchant_pos_settlements SET status = 'settled', settled_at = ?, updated_at = ?
-     WHERE merchant_id = ? AND status = 'unsettled'`,
-    [now, now, merchantId]
-  );
-
-  // Return without crediting wallet — real funds only from processor captures
-  const currentWalletBal = (await db.query(
-    'SELECT balance FROM merchant_wallets WHERE merchant_id = ? AND currency = ?',
-    [merchantId, 'USD']
-  )).rows[0] as any;
-
-  return {
-    success: true,
-    merchantId,
-    transactionsProcessed: transactions.length,
-    totalAmountCredited: 0, // not credited — only real processor captures count
-    currency: 'USD',
-    settlementCode,
-    walletBalanceAfter: Number(currentWalletBal?.balance || 0),
-    cryptoCredited: 0,
-    message: `${transactions.length} transactions recorded. Wallet credit BLOCKED — only real card captures credited (pos_voice_auth / card_capture).`,
-  };
 }

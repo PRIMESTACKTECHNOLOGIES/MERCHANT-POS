@@ -10,7 +10,6 @@ import {
   getCryptoWallets,
   getCryptoPrice,
   getMerchantBalance,
-  getMerchantTransactions,
   type Transaction, 
   type Terminal,
   type Product,
@@ -19,12 +18,11 @@ import {
   type Cashout,
   type CryptoWallet,
   type MerchantWallet,
-  type MerchantWalletTransaction,
   exportTransactionsToCSV 
 } from "../lib/api";
 import { resolveApiBaseUrl } from "../lib/backendUrl";
 import { Link, useNavigate } from "react-router-dom";
-import { useNotifications } from "../contexts/NotificationContext";
+import { useNotifications } from "../contexts/useNotifications";
 
 const BASE_URL = resolveApiBaseUrl({
   envValue: import.meta.env.VITE_API_URL,
@@ -249,8 +247,8 @@ export const OverviewPage = () => {
   const [lastTransactionCount, setLastTransactionCount] = useState(0);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
-  // Unprocessed batch state
-  const [unprocessed, setUnprocessed] = useState<{ totalTransactions: number; totalAmountUSD: number; byCurrency: { currency: string; count: number; totalUSD: number }[] } | null>(null);
+  // These records are awaiting provider or bank confirmation; they are not wallet funds.
+  const [unprocessed, setUnprocessed] = useState<{ totalTransactions: number; byCurrency: { currency: string; count: number; totalAmount: number }[] } | null>(null);
   const [processing, setProcessing] = useState(false);
   const [processResult, setProcessResult] = useState<{ success: boolean; message: string; totalAmountCredited: number } | null>(null);
 
@@ -290,17 +288,31 @@ export const OverviewPage = () => {
         },
         body: JSON.stringify({ merchantId }),
       });
-      const data = await res.json();
-      setProcessResult(data);
-      if (data.success) {
-        addNotification('Batch Processed', data.message, 'success', true);
+      const data = await res.json().catch(() => ({}));
+      const message = typeof data.message === 'string'
+        ? data.message
+        : typeof data.error === 'string'
+          ? data.error
+          : `Settlement request failed with HTTP ${res.status}.`;
+      const result = {
+        success: data.success === true && res.ok,
+        message,
+        totalAmountCredited: Number(data.totalAmountCredited || 0),
+      };
+      setProcessResult(result);
+      if (result.success) {
+        addNotification('Batch Processed', result.message, 'success', true);
         await loadUnprocessed();
         await loadData();
       } else {
-        addNotification('Process Failed', data.message || 'No transactions to process', 'error', true);
+        addNotification('Process Failed', result.message, 'error', true);
       }
-    } catch (err: any) {
-      addNotification('Error', err.message || 'Batch processing failed', 'error', true);
+    } catch (err: unknown) {
+      const message = err instanceof Error && err.message
+        ? err.message
+        : 'Batch processing failed.';
+      setProcessResult({ success: false, message, totalAmountCredited: 0 });
+      addNotification('Error', message, 'error', true);
     } finally {
       setProcessing(false);
     }
@@ -471,7 +483,6 @@ export const OverviewPage = () => {
   const chargebacks = transactions.filter(t => t.status && t.status.toUpperCase().includes('CHARGEBACK')).length;
   const avgTicket = transactions.length > 0 ? (totalSales / transactions.length) : 0;
   const offlineCount = transactions.filter(t => t.authMode === 'OFFLINE_APPROVED').length;
-  const onlineCount = transactions.length - offlineCount;
   const offlinePct = transactions.length > 0 ? Math.round((offlineCount / transactions.length) * 100) : 0;
   const onlinePct = 100 - offlinePct;
 
@@ -487,7 +498,6 @@ export const OverviewPage = () => {
   // Settlement / Cashout Metrics
   const pendingCashouts = cashouts.filter(c => c.status === 'PENDING' || c.status === 'PROCESSING').length;
   const completedCashouts = cashouts.filter(c => c.status === 'COMPLETED').length;
-  const totalCashoutsAmount = cashouts.reduce((sum, c) => sum + (c.net_amount_minor || c.amount_minor || 0), 0) / 100;
   const pendingSettlementBatches = batches.filter(b => b.status === 'PENDING_UPLOAD' || b.status === 'UPLOADED' || b.status === 'OPEN').length;
 
   // Crypto Portfolio Metrics
@@ -595,29 +605,18 @@ export const OverviewPage = () => {
               </div>
               <div>
                 <h3 className="text-base font-semibold text-amber-900">
-                  Unprocessed Transactions Pending Settlement
+                  POS Transactions Awaiting Settlement Confirmation
                 </h3>
                 <p className="text-sm text-amber-700 mt-0.5">
-                  <span className="font-bold text-amber-900">{unprocessed.totalTransactions} transactions</span> totalling{' '}
-                  <span className="font-bold text-amber-900">
-                    ${unprocessed.totalAmountUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                  </span>{' '}
-                  have not been credited to your merchant wallet yet.
+                  <span className="font-bold text-amber-900">{unprocessed.totalTransactions} transactions</span> are awaiting external provider or bank confirmation. They are not available to credit to the merchant wallet.
                 </p>
                 {unprocessed.byCurrency.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
                     {unprocessed.byCurrency.map((c) => (
                       <span key={c.currency} className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                        {c.currency}: {c.count} txns · ${c.totalUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {c.currency}: {c.count} txns · {new Intl.NumberFormat('en-US', { style: 'currency', currency: c.currency }).format(c.totalAmount)}
                       </span>
                     ))}
-                  </div>
-                )}
-                {processResult && (
-                  <div className={`mt-2 text-sm font-medium ${processResult.success ? 'text-green-700' : 'text-red-600'}`}>
-                    {processResult.success
-                      ? `✅ ${processResult.message}`
-                      : `❌ ${processResult.message}`}
                   </div>
                 )}
               </div>
@@ -649,41 +648,20 @@ export const OverviewPage = () => {
                 </svg>
                 MT103 SWIFT
               </a>
-              {/* Process & Credit */}
-              <button
-                onClick={handleProcessBatch}
-                disabled={processing}
-                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-semibold shadow-sm hover:shadow-md transition-all duration-200 disabled:cursor-not-allowed"
-              >
-                {processing ? (
-                  <>
-                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                    </svg>
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                    </svg>
-                    Process & Credit Wallet
-                  </>
-                )}
-              </button>
+              <p className="max-w-xs text-xs font-medium text-amber-800">
+                Manual wallet credit is disabled. Funds post only after provider or signed bank confirmation.
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── All-clear message after processing ──────────────────────────── */}
-      {unprocessed && unprocessed.totalTransactions === 0 && processResult?.success && (
+      {unprocessed && unprocessed.totalTransactions === 0 && (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-green-50 border border-green-200 text-green-800 text-sm font-medium">
           <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
-          All transactions settled. ${processResult.totalAmountCredited.toLocaleString('en-US', { minimumFractionDigits: 2 })} credited to your wallet.
+          No POS transactions are currently awaiting settlement confirmation.
         </div>
       )}
 

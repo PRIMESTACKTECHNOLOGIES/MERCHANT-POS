@@ -13,6 +13,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { redeemPaymentCode } from '../lib/api';
 import { processEMVOffline } from '../lib/emv/emv-pos-bridge';
+import { getErrorMessage } from '../utils/errorMessage';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Mode = 'select' | 'card' | 'code' | 'processing' | 'approved' | 'declined';
@@ -60,7 +61,7 @@ export function CustomerEntryPage() {
 
   // 6-digit code state
   const [code, setCode]       = useState('');
-  const codeRefs              = Array.from({ length: 6 }, () => useRef<HTMLInputElement>(null));
+  const codeRefs              = useRef<Array<HTMLInputElement | null>>([]);
 
   // Auto-reset to cashier after 30s on result screen
   useEffect(() => {
@@ -109,11 +110,11 @@ export function CustomerEntryPage() {
         });
         setMode('declined');
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       setResult({
         success: false,
         title: 'Processing Error',
-        subtitle: e.message || 'Unknown error',
+        subtitle: getErrorMessage(e, 'Unknown error'),
         detail: 'Please try again'
       });
       setMode('declined');
@@ -144,11 +145,11 @@ export function CustomerEntryPage() {
         });
         setMode('declined');
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       setResult({
         success: false,
         title: 'Redemption Failed',
-        subtitle: e.message || 'Network error',
+        subtitle: getErrorMessage(e, 'Network error'),
         detail: 'Please try again'
       });
       setMode('declined');
@@ -170,7 +171,7 @@ export function CustomerEntryPage() {
     const clean = (code.slice(0, index) + digit + code.slice(index + 1)).slice(0, 6);
     setCode(clean);
 
-    if (digit && index < 5) codeRefs[index + 1]?.current?.focus();
+    if (digit && index < 5) codeRefs.current[index + 1]?.focus();
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -296,7 +297,7 @@ export function CustomerEntryPage() {
             {Array.from({ length: 6 }).map((_, i) => (
               <input
                 key={i}
-                ref={codeRefs[i]}
+                ref={element => { codeRefs.current[i] = element; }}
                 style={styles.digitBox}
                 type="text"
                 inputMode="numeric"
@@ -305,7 +306,7 @@ export function CustomerEntryPage() {
                 onChange={e => handleCodeDigit(i, e.target.value)}
                 onKeyDown={e => {
                   if (e.key === 'Backspace' && !code[i] && i > 0) {
-                    codeRefs[i - 1]?.current?.focus();
+                    codeRefs.current[i - 1]?.focus();
                     const c = code.slice(0, i - 1) + ' ' + code.slice(i);
                     setCode(c.trimEnd());
                   }

@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { fetchBatches, fetchBatchDetails, updateOfflineTransactionAuthCode } from "../lib/api";
 import type { Batch } from "../lib/api";
-import { useToast } from "../components/ui/Toast";
+import { useToast } from "../components/ui/toastContext";
 
 // --- Extended Types for Premium UI ---
 
@@ -65,34 +65,34 @@ const isValidConnection = (v: unknown): v is BatchUI["connectionType"] => {
 const enhanceBatchData = (b: Batch): BatchUI => {
   // Prefer real amount from batch payload (total_amount_minor) over any hardcoded default.
   const amountMinor =
-    typeof (b as any).total_amount_minor === "number"
-      ? (b as any).total_amount_minor
+    typeof b.total_amount_minor === "number"
+      ? b.total_amount_minor
       : typeof b.totalAmount === "number"
       ? Math.round(b.totalAmount * 100)
       : 0;
   const derivedTotalAmount = amountMinor / 100;
 
-  const rawConnection = (b as any).connectionType ?? (b as any).connection_type;
-  const rawFirmware = (b as any).firmwareVersion ?? (b as any).firmware_version;
-  const rawIp = (b as any).ipAddress ?? (b as any).ip_address;
+  const rawConnection = b.connectionType ?? b.connection_type;
+  const rawFirmware = b.firmwareVersion ?? b.firmware_version;
+  const rawIp = b.ipAddress ?? b.ip_address;
 
   return {
     ...b,
     status: b.status || "RECEIVED",
-    terminalName: b.terminalName || (b as any).terminal_name || `Terminal ${b.terminalId}`,
-    transactionCount: typeof b.transactionCount === "number" ? b.transactionCount : (b as any).txn_count ?? 0,
+    terminalName: b.terminalName || b.terminal_name || `Terminal ${b.terminalId}`,
+    transactionCount: typeof b.transactionCount === "number" ? b.transactionCount : b.txn_count ?? 0,
     totalAmount: derivedTotalAmount,
-    currency: b.currency || (b as any).currency || "USD",
+    currency: b.currency || b.currency || "USD",
 
-    approvedCount: typeof b.approvedCount === "number" ? b.approvedCount : (b as any).approved_count ?? 0,
-    declinedCount: typeof b.declinedCount === "number" ? b.declinedCount : (b as any).declined_count ?? 0,
-    duplicateCount: (b as any).duplicate_count ?? 0,
-    offlineApprovedCount: (b as any).offline_approved_count ?? 0,
-    storedCount: (b as any).stored_count ?? 0,
+    approvedCount: typeof b.approvedCount === "number" ? b.approvedCount : b.approved_count ?? 0,
+    declinedCount: typeof b.declinedCount === "number" ? b.declinedCount : b.declined_count ?? 0,
+    duplicateCount: b.duplicate_count ?? 0,
+    offlineApprovedCount: b.offline_approved_count ?? 0,
+    storedCount: b.stored_count ?? 0,
 
     uploadDuration: computeUploadDuration(
-      (b as any).uploadTimestamp ?? (b as any).upload_timestamp,
-      (b as any).createdAt ?? (b as any).created_at
+      b.uploadTimestamp ?? b.upload_timestamp,
+      b.createdAt ?? b.created_at
     ),
     firmwareVersion: typeof rawFirmware === "string" && rawFirmware.length > 0 ? rawFirmware : "",
     connectionType: isValidConnection(rawConnection) ? rawConnection : "",
@@ -211,10 +211,17 @@ const StatusBadge = ({ status }: { status: string }) => {
   };
 
   const s = status?.toUpperCase() || 'PENDING';
-  const label = s === 'PROCESSED' ? 'Success' : s.charAt(0) + s.slice(1).toLowerCase();
+  const label = s === 'PROCESSED'
+    ? 'Success'
+    : s === 'UPLOADED'
+    ? 'Uploaded · not settled'
+    : s.charAt(0) + s.slice(1).toLowerCase();
 
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[s] || styles.PENDING}`}>
+    <span
+      title={s === 'UPLOADED' ? 'The batch was uploaded. This does not confirm bank settlement.' : undefined}
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[s] || styles.PENDING}`}
+    >
       <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${dotColors[s] || dotColors.PENDING}`}></span>
       {label}
     </span>
@@ -274,10 +281,10 @@ const BatchDetailDrawer = ({ batch, isOpen, onClose, onReprocess }: { batch: Bat
 
         {/* Tabs */}
         <div className="px-6 border-b border-gray-100 flex space-x-6">
-          {['overview', 'transactions', 'metadata'].map((tab) => (
+          {(['overview', 'transactions', 'metadata'] as const).map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab as any)}
+              onClick={() => setActiveTab(tab)}
               className={`py-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab 
                   ? 'border-blue-600 text-blue-600' 
@@ -476,10 +483,10 @@ const BatchDetailDrawer = ({ batch, isOpen, onClose, onReprocess }: { batch: Bat
               <div className="divide-y divide-gray-100">
 
                 {/* Settlement Code — most important field for reconciliation */}
-                {(batch as any).settlementCode && (
+                {batch.settlementCode && (
                   <div className="p-4 bg-green-50">
                     <div className="text-xs text-green-700 uppercase tracking-wider mb-1 font-semibold">Settlement Code</div>
-                    <div className="font-mono text-2xl font-extrabold text-green-800 tracking-widest">{(batch as any).settlementCode}</div>
+                    <div className="font-mono text-2xl font-extrabold text-green-800 tracking-widest">{batch.settlementCode}</div>
                     <div className="text-xs text-green-600 mt-1">Use this code for reconciliation and customer redemption</div>
                   </div>
                 )}
@@ -634,7 +641,7 @@ export const BatchesPage = () => {
       b.declinedCount,
       (b.totalAmount || 0).toFixed(2),
       b.currency || 'USD',
-      (b as any).settlementCode || '',
+      b.settlementCode || '',
       b.status
     ]);
     
@@ -881,7 +888,7 @@ export const BatchesPage = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="font-mono text-sm font-bold text-blue-700">
-                        {(batch as any).settlementCode || "Not issued"}
+                        {batch.settlementCode || "Not issued"}
                       </div>
                       <div className="text-[10px] text-gray-400">Required for authorization</div>
                     </td>

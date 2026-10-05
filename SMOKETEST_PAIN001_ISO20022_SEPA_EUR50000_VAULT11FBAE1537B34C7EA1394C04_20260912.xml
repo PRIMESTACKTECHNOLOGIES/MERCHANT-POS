@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.13">
+  <CstmrCdtTrfInitn>
+    <GrpHdr>
+      <MsgId>VAULT11FBAE1537B34C7EA1394C04</MsgId>
+      <CreDtTm>2026-09-12T11:02:43.921Z</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <CtrlSum>50000.00</CtrlSum>
+      <InitgPty>
+        <Nm>Protocol 201.3 Settlement Bank</Nm>
+      </InitgPty>
+    </GrpHdr>
+    <PmtInf>
+      <PmtInfId>VAULT11FBAE1537B34C7EA1394C04</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <BtchBookg>true</BtchBookg>
+      <NbOfTxs>1</NbOfTxs>
+      <CtrlSum>50000.00</CtrlSum>
+      <ReqdExctnDt>
+        <Dt>2026-09-12</Dt>
+      </ReqdExctnDt>
+      <Dbtr>
+        <Nm>Protocol 201.3 Settlement Bank</Nm>
+      </Dbtr>
+      <DbtrAcct>
+        <Id>
+          <IBAN>PROCESSOR_IBAN_PLACEHOLDER</IBAN>
+        </Id>
+      </DbtrAcct>
+      <DbtrAgt>
+        <FinInstnId>
+          <BIC>PROCESSOR_BIC_PLACEHOLDER</BIC>
+        </FinInstnId>
+      </DbtrAgt>
+      <ChrgBr>SLEV</ChrgBr>
+      <CdtTrfTxInf>
+        <PmtId>
+          <InstrId>INSTR-11FBAE15-37B3-4C</InstrId>
+          <EndToEndId>INTL-MRC-1001-SMOKE7SUW1AWS</EndToEndId>
+        </PmtId>
+        <PmtTpInf>
+          <SvcLvl>
+            <Cd>SEPA</Cd>
+          </SvcLvl>
+        </PmtTpInf>
+        <Amt>
+          <InstdAmt Ccy="EUR">50000.00</InstdAmt>
+        </Amt>
+        <ChrgBr>SLEV</ChrgBr>
+        <CdtrAgt>
+          <FinInstnId>
+            <BIC>TRWIBEB1XXX</BIC>
+          </FinInstnId>
+        </CdtrAgt>
+        <Cdtr>
+          <Nm>PRIMESTACK TECHNOLOGIES LLC</Nm>
+        </Cdtr>
+        <CdtrAcct>
+          <Id>
+            <IBAN>BE19905861593312</IBAN>
+          </Id>
+        </CdtrAcct>
+        <RmtInf>
+          <Ustrd>SEPA Transfer INTL-MRC-1001-SMOKE7SUW1AWS | Amount EUR 50000.00 | Internal note: Vault smoke test - EUR 50k to Wise mediator | Vault Protocol 201.3</Ustrd>
+        </RmtInf>
+      </CdtTrfTxInf>
+    </PmtInf>
+  </CstmrCdtTrfInitn>
+</Document>

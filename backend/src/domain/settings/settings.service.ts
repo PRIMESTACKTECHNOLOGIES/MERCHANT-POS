@@ -2,6 +2,16 @@ import { db } from "../../config/db";
 import dotenv from "dotenv";
 dotenv.config();
 
+const DEFAULT_TERMINAL_SETTINGS = {
+  offlineMode: true,
+  autoUpdate: false,
+  features: {
+    manualEntry: true,
+    refunds: false,
+    tips: false
+  }
+};
+
 export class SettingsService {
   async getSettings(merchantId: string) {
     try {
@@ -11,6 +21,7 @@ export class SettingsService {
         
         // Parse JSON fields
         const features = row.features ? JSON.parse(row.features) : { manualEntry: false, refunds: false, tips: false };
+        features.manualEntry = true;
         const extended = row.extended_settings ? JSON.parse(row.extended_settings) : {};
         const paymentConfig = row.payment_config ? JSON.parse(row.payment_config) : [];
 
@@ -22,10 +33,15 @@ export class SettingsService {
           banking: extended.banking || {},
           notifications: extended.notifications || { email: false, sms: false, alerts: {} },
           security: extended.security || { twoFactorEnabled: false, activeDevices: [] },
-          terminal: extended.terminal || {
-            offlineMode: true,
-            autoUpdate: true,
-            features: { manualEntry: false, refunds: true, tips: true }
+          terminal: {
+            ...DEFAULT_TERMINAL_SETTINGS,
+            ...(extended.terminal || {}),
+            offlineMode: extended.terminal?.offlineMode === false ? false : (extended.terminal?.offlineMode ?? true),
+            features: {
+              ...DEFAULT_TERMINAL_SETTINGS.features,
+              ...(extended.terminal?.features || {}),
+              manualEntry: true,
+            }
           },
           paymentConfig
         };
@@ -42,16 +58,12 @@ export class SettingsService {
         test_mode: false,
         merchant_name: "",
         support_email: "",
-        features: { manualEntry: false, refunds: false, tips: false },
+        features: { manualEntry: true, refunds: false, tips: false },
         business: {},
         banking: {},
         notifications: {},
         security: {},
-        terminal: {
-          offlineMode: true,
-          autoUpdate: true,
-          features: { manualEntry: false, refunds: false, tips: false }
-        },
+        terminal: { ...DEFAULT_TERMINAL_SETTINGS, features: { ...DEFAULT_TERMINAL_SETTINGS.features, manualEntry: true } },
         paymentConfig: []
     };
   }
@@ -60,10 +72,12 @@ export class SettingsService {
     try {
       const { 
         api_key, webhook_url, test_mode, merchant_name, support_email, features,
-        business, banking, notifications, security, paymentConfig
+        business, banking, notifications,         security, paymentConfig, terminal
       } = data;
       
-      const featuresJson = JSON.stringify(features || { manualEntry: false, refunds: false, tips: false });
+      const rawFeatures = features || { manualEntry: false, refunds: false, tips: false };
+      const forcedFeatures = { ...rawFeatures, manualEntry: true };
+      const featuresJson = JSON.stringify(forcedFeatures);
       
       // Store complex objects in extended_settings
       const extendedSettings = {
@@ -71,10 +85,16 @@ export class SettingsService {
         banking: banking || {},
         notifications: notifications || {},
         security: security || {},
-        terminal: data.terminal || {
-          offlineMode: true,
-          autoUpdate: true,
-          features: { manualEntry: false, refunds: true, tips: true }
+        terminal: {
+          ...DEFAULT_TERMINAL_SETTINGS,
+          ...(terminal || {}),
+          offlineMode: typeof terminal?.offlineMode === 'boolean' ? terminal.offlineMode : true,
+          offlineModeConfigVersion: 1,
+          features: {
+            ...DEFAULT_TERMINAL_SETTINGS.features,
+            ...(terminal?.features || {}),
+            manualEntry: true,
+          }
         }
       };
       const extendedJson = JSON.stringify(extendedSettings);
@@ -102,26 +122,36 @@ export class SettingsService {
         RETURNING *
       `, [merchantId, api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson]);
       
+      if (!res.rows || res.rows.length === 0) {
+        return { merchant_id: merchantId, ...data, features: features || {}, business: business || {}, banking: banking || {}, notifications: notifications || {}, security: security || {}, terminal: extendedSettings.terminal, paymentConfig: paymentConfig || [] };
+      }
       const row = res.rows[0];
       const extended = row.extended_settings ? JSON.parse(row.extended_settings) : {};
+      const parsedFeatures = JSON.parse(row.features || '{}');
+      parsedFeatures.manualEntry = true;
       
       return { 
         ...row, 
-        features: JSON.parse(row.features),
-        business: extended.business,
-        banking: extended.banking,
-        notifications: extended.notifications,
-        security: extended.security,
-        terminal: extended.terminal || {
-          offlineMode: true,
-          autoUpdate: true,
-          features: { manualEntry: false, refunds: true, tips: true }
+        features: parsedFeatures,
+        business: extended.business || {},
+        banking: extended.banking || {},
+        notifications: extended.notifications || {},
+        security: extended.security || {},
+        terminal: {
+          ...DEFAULT_TERMINAL_SETTINGS,
+          ...(extended.terminal || {}),
+          offlineMode: extended.terminal?.offlineMode === false ? false : (extended.terminal?.offlineMode ?? true),
+          features: {
+            ...DEFAULT_TERMINAL_SETTINGS.features,
+            ...(extended.terminal?.features || {}),
+            manualEntry: true,
+          }
         },
         paymentConfig: row.payment_config ? JSON.parse(row.payment_config) : []
       };
     } catch (e) {
-      console.warn("DB Error in updateSettings, returning input data", e);
-      return { merchant_id: merchantId, ...data };
+      console.error("DB Error in updateSettings", e);
+      throw e;
     }
   }
 

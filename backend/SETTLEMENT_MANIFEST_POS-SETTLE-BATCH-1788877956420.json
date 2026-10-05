@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "batch_id": "POS-SETTLE-BATCH-1788877956420",
+  "batch_signature": "0c3407da0c544e2e682724487452510c",
+  "created_at": "2026-09-08T14:32:36.565Z",
+  "operator": "PRIMESTACK TECHNOLOGIES LLC / POS-SYSTEM",
+  "operator_signature": "system-auto-signed-primestack-settlement-569613177eec",
+  "source_system": "POS-OFFLINE-201.3 / PRIMESTACK",
+  "merchant_id": "MRC-1001",
+  "summary": {
+    "total_wires": 2,
+    "totals_by_currency": {
+      "USD": 100000
+    },
+    "currencies": [
+      "USD"
+    ]
+  },
+  "destination_banks": [
+    "ABSA"
+  ],
+  "wires": [
+    {
+      "sequence": 1,
+      "payout_id": "6daaf3fd-a776-4f89-8ba1-16ae22a241dc",
+      "transaction_id": null,
+      "provider_reference": "ABSA-AUTO-SETTLE-1788873034744",
+      "status_before_batch": "COMPLETED",
+      "amount": 50000,
+      "currency": "USD",
+      "value_date_utc": "2026-09-08",
+      "beneficiary": {
+        "name": "JUKRUTI LOGISTICS PTY LTD",
+        "bank_name": "ABSA",
+        "account_number": "4110362532",
+        "routing_number": "250655",
+        "swift_bic": "ABSAZAJJ",
+        "iban": null,
+        "account_type": "CHECKING",
+        "currency": "USD"
+      },
+      "ordering_customer": {
+        "name": "PRIMESTACK TECHNOLOGIES LLC",
+        "entity_ref": "PRIMESTACK-SETTLEMENT",
+        "city": "WILMINGTON",
+        "state": "DE",
+        "country": "US"
+      },
+      "remittance_information": "BATCH=POS-SETTLE-BATCH-1788877956420 | SIG=0c3407da0c544e2e68272448 | SEQ=1/2 | POS-PAYOUT-ID=6daaf3fd-a776-4f89-8ba1-16ae22a241dc | PROVIDER-REF=ABSA-AUTO-SETTLE-1788873034744",
+      "wire_memo": "ABSA-AUTO-SETTLE-1788873034744",
+      "charges_type": "SHA",
+      "domestic_rail": "ABA-ACH-WIRE",
+      "recon_signature": "4c3f9054a13b7417a25ab6cfd089c27b385ed1c485eff4c36da34519c89b5f07"
+    },
+    {
+      "sequence": 2,
+      "payout_id": "13aac090-d6d4-4871-ad292-a81e08c8d470",
+      "transaction_id": "6ac73229-31fa-4a24-9005e-de3d70abcb12",
+      "provider_reference": "ABSA-AUTO-SETTLE-1788875393994",
+      "status_before_batch": "COMPLETED",
+      "amount": 50000,
+      "currency": "USD",
+      "value_date_utc": "2026-09-08",
+      "beneficiary": {
+        "name": "JUKRUTI LOGISTICS PTY LTD",
+        "bank_name": "ABSA",
+        "account_number": "4110362532",
+        "routing_number": "250655",
+        "swift_bic": "ABSAZAJJ",
+        "account_type": "CHECKING",
+        "currency": "USD"
+      },
+      "ordering_customer": {
+        "name": "PRIMESTACK TECHNOLOGIES LLC",
+        "entity_ref": "PRIMESTACK-SETTLEMENT",
+        "city": "WILMINGTON",
+        "state": "DE",
+        "country": "US"
+      },
+      "remittance_information": "BATCH=POS-SETTLE-BATCH-1788877956420 | SIG=0c3407da0c544e2e68272448 | SEQ=2/2 | POS-PAYOUT-ID=13aac090-d6d4-4871-ad292-a81e08c8d470 | PROVIDER-REF=ABSA-AUTO-SETTLE-1788875393994",
+      "wire_memo": "ABSA-AUTO-SETTLE-1788875393994",
+      "charges_type": "SHA",
+      "domestic_rail": "ABA-ACH-WIRE",
+      "recon_signature": "e72dccb45f48e2a968e437ea42668f41c98e8ea1bbf8743007b70fafd84dca52"
+    }
+  ],
+  "output_files": {
+    "wise_csv": "WISE_BATCH_POS-SETTLE-BATCH-1788877956420.csv",
+    "swift_mt103_txt": "SWIFT_MT103_BATCH_POS-SETTLE-BATCH-1788877956420.txt",
+    "manifest_json": "SETTLEMENT_MANIFEST_POS-SETTLE-BATCH-1788877956420.json"
+  },
+  "sha256_of_wise_csv": "bb9d8408a185e521b4b0dae676227b3640e57101b080cf1230bfe054b9145a48",
+  "sha256_of_swift_txt": "a4260f4adcdc794adc625523154d7d4d5eada13cd4ab9f55552aa9c1952c7e15",
+  "sha256_of_manifest": "63adb598ec6adf7a63055e05044eaf1f268fabf73a51367e95d304a1b2e57954"
+}

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class BankTransferPaymentScreen extends StatefulWidget {
-  const BankTransferPaymentScreen({Key? key}) : super(key: key);
+  const BankTransferPaymentScreen({super.key});
 
   @override
   State<BankTransferPaymentScreen> createState() =>
@@ -11,7 +11,7 @@ class BankTransferPaymentScreen extends StatefulWidget {
 
 class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
   bool _showDetails = false;
-  bool _copiedToClipboard = false;
+  final bool _copiedToClipboard = false;
 
   // Wise USD Account Details
   final Map<String, String> bankDetails = {
@@ -31,7 +31,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('$label copied to clipboard'),
-        duration: Duration(seconds: 2),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -40,7 +40,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Wire Transfer Payment'),
+        title: const Text('Wire Transfer Payment'),
         elevation: 0,
       ),
       body: SingleChildScrollView(
@@ -49,7 +49,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
             // Hero section
             Container(
               width: double.infinity,
-              padding: EdgeInsets.all(20),
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -57,7 +57,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                   colors: [Colors.blue.shade600, Colors.blue.shade800],
                 ),
               ),
-              child: Column(
+              child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(Icons.account_balance, size: 40, color: Colors.white),
@@ -81,14 +81,14 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
 
             // Main content
             Padding(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Instructions
                   Card(
                     child: Padding(
-                      padding: EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -96,7 +96,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                             'How to Send Payment',
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
-                          SizedBox(height: 12),
+                          const SizedBox(height: 12),
                           ...[
                             '1. Log into your bank account',
                             '2. Select "Send Wire Transfer" or "International Transfer"',
@@ -108,18 +108,18 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                             '8. You\'ll receive confirmation in 1-2 business days',
                           ]
                               .map((step) => Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 6),
+                                    padding: const EdgeInsets.symmetric(vertical: 6),
                                     child: Text(
                                       step,
-                                      style: TextStyle(fontSize: 14),
+                                      style: const TextStyle(fontSize: 14),
                                     ),
                                   ))
-                              .toList(),
+                              ,
                         ],
                       ),
                     ),
                   ),
-                  SizedBox(height: 20),
+                  const SizedBox(height: 20),
 
                   // Bank Details
                   Card(
@@ -127,7 +127,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                       children: [
                         Container(
                           width: double.infinity,
-                          padding: EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: Colors.blue.shade50,
                             border: Border(
@@ -155,7 +155,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                         ),
                         if (_showDetails)
                           Padding(
-                            padding: EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(16),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -164,39 +164,39 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                                   'Payee Name',
                                   bankDetails['Payee Name']!,
                                 ),
-                                Divider(),
+                                const Divider(),
 
                                 // Bank
                                 _buildDetailRow(
                                   'Bank Name',
                                   bankDetails['Bank Name']!,
                                 ),
-                                Divider(),
+                                const Divider(),
 
                                 // Routing Number
                                 _buildDetailRow(
                                   'Wire Routing Number',
                                   bankDetails['Wire Routing Number']!,
                                 ),
-                                Divider(),
+                                const Divider(),
 
                                 // Account Number
                                 _buildDetailRow(
                                   'Account Number',
                                   bankDetails['Account Number']!,
                                 ),
-                                Divider(),
+                                const Divider(),
 
                                 // Account Type
                                 _buildDetailRow(
                                   'Account Type',
                                   bankDetails['Account Type']!,
                                 ),
-                                Divider(),
+                                const Divider(),
 
                                 // Reference Code (IMPORTANT)
                                 Container(
-                                  padding: EdgeInsets.all(12),
+                                  padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
                                     color: Colors.orange.shade50,
                                     border: Border.all(
@@ -214,13 +214,13 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                                           color: Colors.orange.shade900,
                                         ),
                                       ),
-                                      SizedBox(height: 8),
+                                      const SizedBox(height: 8),
                                       Row(
                                         children: [
                                           Expanded(
                                             child: Text(
                                               bankDetails['Reference Code']!,
-                                              style: TextStyle(
+                                              style: const TextStyle(
                                                 fontSize: 16,
                                                 fontFamily: 'monospace',
                                                 fontWeight: FontWeight.bold,
@@ -228,7 +228,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                                             ),
                                           ),
                                           IconButton(
-                                            icon: Icon(Icons.copy, size: 18),
+                                            icon: const Icon(Icons.copy, size: 18),
                                             onPressed: () =>
                                                 _copyToClipboard(
                                               bankDetails['Reference Code']!,
@@ -237,7 +237,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                                           ),
                                         ],
                                       ),
-                                      SizedBox(height: 8),
+                                      const SizedBox(height: 8),
                                       Text(
                                         'Must be entered in "Reference" or "Reason" field for transfer matching',
                                         style: TextStyle(
@@ -248,15 +248,15 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                                     ],
                                   ),
                                 ),
-                                SizedBox(height: 16),
-                                Divider(),
+                                const SizedBox(height: 16),
+                                const Divider(),
 
                                 // Bank Address
                                 _buildDetailRow(
                                   'Bank Address',
                                   bankDetails['Bank Address']!,
                                 ),
-                                Divider(),
+                                const Divider(),
 
                                 // Bank Phone
                                 _buildDetailRow(
@@ -269,13 +269,13 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                       ],
                     ),
                   ),
-                  SizedBox(height: 20),
+                  const SizedBox(height: 20),
 
                   // Important Notes
                   Card(
                     color: Colors.red.shade50,
                     child: Padding(
-                      padding: EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -287,7 +287,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                               fontSize: 16,
                             ),
                           ),
-                          SizedBox(height: 12),
+                          const SizedBox(height: 12),
                           ...[
                             '✓ This is a LOCAL USD transfer (not international)',
                             '✓ Partial payments accepted - send in multiple stages if needed',
@@ -297,7 +297,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                             '✓ No international fees - local USD transfer only',
                           ]
                               .map((note) => Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 6),
+                                    padding: const EdgeInsets.symmetric(vertical: 6),
                                     child: Text(
                                       note,
                                       style: TextStyle(
@@ -306,17 +306,17 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                                       ),
                                     ),
                                   ))
-                              .toList(),
+                              ,
                         ],
                       ),
                     ),
                   ),
-                  SizedBox(height: 20),
+                  const SizedBox(height: 20),
 
                   // Support
                   Card(
                     child: Padding(
-                      padding: EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -324,29 +324,29 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                             'Need Help?',
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
-                          SizedBox(height: 12),
-                          Text(
+                          const SizedBox(height: 12),
+                          const Text(
                             'Contact Wise Support:',
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
-                          SizedBox(height: 4),
-                          Text('30 W 26th Street, Floor 6, New York, NY 10010'),
-                          SizedBox(height: 12),
+                          const SizedBox(height: 4),
+                          const Text('30 W 26th Street, Floor 6, New York, NY 10010'),
+                          const SizedBox(height: 12),
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton.icon(
                               onPressed: () {
                                 // Open contact support
                               },
-                              icon: Icon(Icons.email),
-                              label: Text('Contact Support'),
+                              icon: const Icon(Icons.email),
+                              label: const Text('Contact Support'),
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  SizedBox(height: 20),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -358,13 +358,13 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
 
   Widget _buildDetailRow(String label, String value) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
             label,
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
           ),
           Expanded(
             child: Row(
@@ -374,7 +374,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                   child: Text(
                     value,
                     textAlign: TextAlign.right,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 13,
                     ),
@@ -382,10 +382,10 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 InkWell(
                   onTap: () => _copyToClipboard(value, label),
-                  child: Icon(Icons.copy, size: 16, color: Colors.blue),
+                  child: const Icon(Icons.copy, size: 16, color: Colors.blue),
                 ),
               ],
             ),

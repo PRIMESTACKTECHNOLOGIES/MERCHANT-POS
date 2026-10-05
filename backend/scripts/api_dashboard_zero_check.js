@@ -1,13 +1,13 @@
 // End-to-end API dashboard check: login → call all UI dashboard endpoints, print what the operator sees on screen.
 const BASE = "http://127.0.0.1:7000";
 const U = "admin";
-const P = "admin1234";
+const P = "admin123";
 
 function fmt$(n) { return `$${(Number(n)||0).toFixed(2)}`; }
 
 (async () => {
   let token = null;
-  console.log("Step1: POST /auth/login admin/admin1234");
+  console.log("Step1: POST /auth/login admin/admin123");
   try {
     const res = await fetch(BASE + "/auth/login", {
       method: "POST",

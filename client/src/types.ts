@@ -4,10 +4,10 @@ export interface Terminal {
   merchantId: string;
   terminalId: string;
   offlineEnabled: boolean;
-  lastBatchAt?: string;
+  lastBatchAt?: string | null;
   
   // Optional extended fields
-  status?: 'ONLINE' | 'OFFLINE';
+  status?: 'ONLINE' | 'OFFLINE' | 'REGISTERED';
   ipAddress?: string;
   appVersion?: string;
 }

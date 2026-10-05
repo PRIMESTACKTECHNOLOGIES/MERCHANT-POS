@@ -16,7 +16,6 @@
  */
 
 import { TLVParser } from './tlv-parser';
-import type { EMVTag } from './tlv-parser';
 
 export interface ICCPublicKey {
   /** Full RSA modulus (n) = certificate remainder + tag 9F48 remainder */
@@ -75,7 +74,6 @@ export class ICCPublicKeyRecovery {
     }
 
     const keyLength = certBytes[12];
-    const exponentLength = certBytes[13];
 
     // Left part of modulus starts at byte 14 in the recovered certificate
     const leftPartEnd = 14 + (keyLength - remainderBytes.length);

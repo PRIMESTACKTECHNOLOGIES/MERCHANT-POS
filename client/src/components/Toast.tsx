@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useNotifications } from '../contexts/NotificationContext';
+import { useNotifications } from '../contexts/useNotifications';
 
 export const Toast = () => {
-  const { notifications } = useNotifications();
+  const { notifications, dismissNotification } = useNotifications();
   const [toasts, setToasts] = useState<typeof notifications>([]);
 
   // Show only the latest unread notification as a toast
@@ -49,6 +49,13 @@ export const Toast = () => {
             <p className="text-sm font-semibold text-gray-900">{toast.title}</p>
             <p className="text-xs text-gray-500 mt-1">{toast.message}</p>
           </div>
+          <button
+            type="button"
+            onClick={() => dismissNotification(toast.id)}
+            className="flex-shrink-0 self-center rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+          >
+            Close
+          </button>
         </div>
       ))}
     </div>

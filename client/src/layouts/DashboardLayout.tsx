@@ -1,4 +1,3 @@
-import { useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { Sidebar } from "../components/Sidebar";
 import { ProfileMenu } from "../components/ProfileMenu";
@@ -10,7 +9,6 @@ interface Props {
 }
 
 export const DashboardLayout = ({ children }: Props) => {
-  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (

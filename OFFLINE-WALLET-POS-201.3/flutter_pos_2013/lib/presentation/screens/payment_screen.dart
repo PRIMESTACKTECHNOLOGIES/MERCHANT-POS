@@ -97,7 +97,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
         final modeText = _paymentMode == 'online' ? 'online' : 'offline';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Payment saved as $modeText transaction. TXN: $txnId'),
+            content:
+                Text('Payment saved as $modeText transaction. TXN: $txnId'),
             backgroundColor: Colors.green,
           ),
         );
@@ -154,7 +155,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
               ),
               child: Column(
                 children: [
-                  const Icon(Icons.account_balance_wallet_rounded, size: 48, color: Colors.white),
+                  const Icon(Icons.account_balance_wallet_rounded,
+                      size: 48, color: Colors.white),
                   const SizedBox(height: 8),
                   const Text(
                     'Offline + Online POS',
@@ -166,7 +168,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    isOffline ? 'Secure offline sale queued for sync' : 'Live online payment mode',
+                    isOffline
+                        ? 'Secure offline sale queued for sync'
+                        : 'Live online payment mode',
                     style: const TextStyle(color: Colors.white70),
                   ),
                 ],
@@ -175,8 +179,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
             const SizedBox(height: 20),
             SegmentedButton<String>(
               segments: const [
-                ButtonSegment(value: 'offline', label: Text('Offline'), icon: Icon(Icons.cloud_off)),
-                ButtonSegment(value: 'online', label: Text('Online'), icon: Icon(Icons.cloud_done)),
+                ButtonSegment(
+                    value: 'offline',
+                    label: Text('Offline'),
+                    icon: Icon(Icons.cloud_off)),
+                ButtonSegment(
+                    value: 'online',
+                    label: Text('Online'),
+                    icon: Icon(Icons.cloud_done)),
               ],
               selected: {_paymentMode},
               onSelectionChanged: (Set<String> selection) {
@@ -184,9 +194,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
               },
             ),
             const SizedBox(height: 20),
+            _CardPreview(
+              cardNumber: _panController.text,
+              expiry: _expiryController.text,
+              cardholderName: _nameController.text,
+              isOnline: !isOffline,
+            ),
+            const SizedBox(height: 20),
             Card(
               elevation: 3,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -204,6 +222,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         FilteringTextInputFormatter.digitsOnly,
                         CardNumberInputFormatter(),
                       ],
+                      onChanged: (_) => setState(() {}),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -221,6 +240,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                               FilteringTextInputFormatter.digitsOnly,
                               CardMonthInputFormatter(),
                             ],
+                            onChanged: (_) => setState(() {}),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -240,6 +260,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly,
                             ],
+                            onChanged: (_) => setState(() {}),
                           ),
                         ),
                       ],
@@ -254,6 +275,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         border: OutlineInputBorder(),
                       ),
                       textCapitalization: TextCapitalization.words,
+                      onChanged: (_) => setState(() {}),
                     ),
                   ],
                 ),
@@ -262,7 +284,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
             const SizedBox(height: 20),
             Card(
               elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: TextField(
@@ -274,7 +297,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.attach_money),
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                 ),
               ),
             ),
@@ -285,21 +309,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
                     )
                   : Icon(isOffline ? Icons.save : Icons.payment),
               label: Text(
-                  _loading
-                      ? 'Processing...'
-                      : isOffline
-                          ? 'Save Offline Payment'
-                          : 'Process Online Payment',
+                _loading
+                    ? 'Processing...'
+                    : isOffline
+                        ? 'Save Offline Payment'
+                        : 'Process Online Payment',
               ),
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size.fromHeight(54),
                 backgroundColor: isOffline ? Colors.green : Colors.blue,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 12),
@@ -309,7 +335,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
               label: const Text('View Sync Dashboard'),
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],
@@ -317,4 +344,237 @@ class _PaymentScreenState extends State<PaymentScreen> {
       ),
     );
   }
+}
+
+class _CardPreview extends StatelessWidget {
+  const _CardPreview({
+    required this.cardNumber,
+    required this.expiry,
+    required this.cardholderName,
+    required this.isOnline,
+  });
+
+  final String cardNumber;
+  final String expiry;
+  final String cardholderName;
+  final bool isOnline;
+
+  String get _maskedNumber {
+    final digits = cardNumber.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '••••  ••••  ••••  ••••';
+    final padded = digits.padRight(16, '•');
+    final visible = padded.length > 16 ? padded.substring(0, 16) : padded;
+    return '${visible.substring(0, 4)}  ${visible.substring(4, 8)}  '
+        '${visible.substring(8, 12)}  ${visible.substring(12, 16)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 1.586,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xff172554), Color(0xff0f172a), Color(0xff020617)],
+            stops: [0, .58, 1],
+          ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 18,
+              offset: Offset(0, 10),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: Stack(
+            children: [
+              Positioned(
+                right: -48,
+                top: -70,
+                child: Container(
+                  width: 190,
+                  height: 190,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white12, width: 26),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'VAULT BANK',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 2.2,
+                          ),
+                        ),
+                        Text(
+                          isOnline ? 'ONLINE' : 'OFFLINE',
+                          style: TextStyle(
+                            color: isOnline
+                                ? const Color(0xff93c5fd)
+                                : Colors.white60,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Row(
+                      children: [
+                        CustomPaint(
+                          size: const Size(49, 38),
+                          painter: _EmvChipPainter(),
+                        ),
+                        const SizedBox(width: 14),
+                        const Icon(
+                          Icons.contactless,
+                          color: Colors.white70,
+                          size: 28,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      _maskedNumber,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 1.4,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const Spacer(),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: _CardLabel(
+                            label: 'CARDHOLDER',
+                            value: cardholderName.trim().isEmpty
+                                ? 'YOUR NAME'
+                                : cardholderName.trim().toUpperCase(),
+                          ),
+                        ),
+                        _CardLabel(
+                          label: 'VALID THRU',
+                          value: expiry.isEmpty ? 'MM/YY' : expiry,
+                        ),
+                        const SizedBox(width: 18),
+                        const Text(
+                          'VISA',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 25,
+                            fontWeight: FontWeight.w900,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: -1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CardLabel extends StatelessWidget {
+  const _CardLabel({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white54,
+            fontSize: 8,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: .7,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmvChipPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(8),
+    );
+    final fill = Paint()..color = const Color(0xffd6b66a);
+    final line = Paint()
+      ..color = const Color(0xff80672f)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+
+    canvas.drawRRect(rect, fill);
+    canvas.drawRRect(rect.deflate(5), line);
+    canvas.drawLine(
+      Offset(size.width * .5, 4),
+      Offset(size.width * .5, size.height - 4),
+      line,
+    );
+    canvas.drawLine(
+      Offset(5, size.height * .5),
+      Offset(size.width - 5, size.height * .5),
+      line,
+    );
+    canvas.drawLine(
+      Offset(size.width * .25, 5),
+      Offset(size.width * .25, size.height - 5),
+      line,
+    );
+    canvas.drawLine(
+      Offset(size.width * .75, 5),
+      Offset(size.width * .75, size.height - 5),
+      line,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

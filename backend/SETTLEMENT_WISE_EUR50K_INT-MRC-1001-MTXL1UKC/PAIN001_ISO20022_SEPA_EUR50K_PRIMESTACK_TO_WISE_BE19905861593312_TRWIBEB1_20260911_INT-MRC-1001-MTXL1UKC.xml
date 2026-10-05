@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.13">
+  <CstmrCdtTrfInitn>
+    <GrpHdr>
+      <MsgId>POS2013MTXL1UKCEUR50000WISE0001</MsgId>
+      <CreDtTm>2026-09-11T23:23:59.810Z</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <CtrlSum>50000.00</CtrlSum>
+      <InitgPty>
+        <Nm>PRIMESTACK TECHNOLOGIES LLC (Offline POS Protocol 201.3)</Nm>
+        <Id>
+          <OrgId>
+            <Othr>
+              <Id>MRC-1001</Id>
+              <Issr>OFFLINE POS 201.3 INTERNAL ACQUIRER</Issr>
+            </Othr>
+          </OrgId>
+        </Id>
+      </InitgPty>
+    </GrpHdr>
+    <PmtInf>
+      <PmtInfId>MRC-1001-20260911-EUR50K-WISE</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <NbOfTxs>1</NbOfTxs>
+      <CtrlSum>50000.00</CtrlSum>
+      <PmtTpInf>
+        <SvcLvl>
+          <Cd>SEPA</Cd>
+        </SvcLvl>
+        <LclInstrm>
+          <Cd>INST</Cd>
+        </LclInstrm>
+      </PmtTpInf>
+      <ReqdExctnDt>
+        <Dt>2026-09-11</Dt>
+      </ReqdExctnDt>
+      <Dbtr>
+        <Nm>OFFLINE POS SETTLEMENT TRUST (PROCESSOR TREASURY)</Nm>
+        <PstlAdr>
+          <Ctry>US</Ctry>
+          <TwnNm>Wilmington</TwnNm>
+          <AdrLine>PRIMESTACK TECHNOLOGIES LLC c/o Merchant Wallet MW-EUR-1001</AdrLine>
+        </PstlAdr>
+      </Dbtr>
+      <DbtrAcct>
+        <Id>
+          <Othr>
+            <Id>MW-EUR-1001</Id>
+            <Issr>OFFLINE POS 201.3 INTERNAL ACQUIRER</Issr>
+          </Othr>
+        </Id>
+        <Ccy>EUR</Ccy>
+        <Nm>MRC-1001 EUR PROCESSOR VAULT (Tier 1 — Real Card Proceeds)</Nm>
+      </DbtrAcct>
+      <DbtrAgt>
+        <FinInstnId>
+          <BIC>PROCESSOR_BIC_PLACEHOLDER</BIC>
+          <Nm>INTERNAL PROCESSOR BANK (LICENSED ACQUIRER — Protocol 201.3)</Nm>
+          <PstlAdr>
+            <Ctry>EU</Ctry>
+            <TwnNm>Processor Head Office</TwnNm>
+            <AdrLine>Settlement Operations, Card Proceeds Nostro, SEPA Credit Transfer Capable</AdrLine>
+          </PstlAdr>
+        </FinInstnId>
+      </DbtrAgt>
+      <ChrgBr>SLEV</ChrgBr>
+      <CdtTrfTxInf>
+        <PmtId>
+          <InstrId>POS2013-EUR50K-WISE-MTXL1UKC</InstrId>
+          <EndToEndId>INTL-MRC-1001-MTXL1UKC</EndToEndId>
+          <TxId>3E31293C7609490F838B193828E86AED</TxId>
+        </PmtId>
+        <PmtTpInf>
+          <SvcLvl><Cd>SEPA</Cd></SvcLvl>
+          <LclInstrm><Cd>INST</Cd></LclInstrm>
+          <CtgyPurp><Cd>CASH</Cd></CtgyPurp>
+        </PmtTpInf>
+        <Amt>
+          <InstdAmt Ccy="EUR">50000.00</InstdAmt>
+        </Amt>
+        <ChrgBr>SLEV</ChrgBr>
+        <CdtrAgt>
+          <FinInstnId>
+            <BIC>TRWIBEB1XXX</BIC>
+            <Nm>Wise Payments Europe S.A.</Nm>
+            <PstlAdr>
+              <Ctry>BE</Ctry>
+              <TwnNm>Brussels</TwnNm>
+              <AdrLine>Rue du Trône 100, 3rd floor, 1050 Brussels, Belgium</AdrLine>
+            </PstlAdr>
+          </FinInstnId>
+        </CdtrAgt>
+        <Cdtr>
+          <Nm>PRIMESTACK TECHNOLOGIES LLC</Nm>
+          <PstlAdr>
+            <Ctry>US</Ctry>
+            <TwnNm>Wilmington</TwnNm>
+            <AdrLine>Wise EUR Receiving — Merchant Mediator Balance Credit</AdrLine>
+          </PstlAdr>
+        </Cdtr>
+        <CdtrAcct>
+          <Id>
+            <IBAN>BE19905861593312</IBAN>
+          </Id>
+          <Ccy>EUR</Ccy>
+          <Nm>Wise EUR Mediator Balance (Tier 2 — Transport Rail)</Nm>
+        </CdtrAcct>
+        <RmtInf>
+          <Ustrd>MERCHANT PAYOUT EUR 50000.00 | PAYOUT-ID 3E31293C-7609-490F-838B-193828E86AED | SETTLEMENT-REF INTL-MRC-1001-MTXL1UKC | WISE-TRANSFER-ID 2366356442 | OFFLINE POS PROTOCOL 201.3 | PRIMESTACK TECHNOLOGIES LLC MRC-1001</Ustrd>
+          <Strd>
+            <CdtrRefInf>
+              <Tp>
+                <CdOrPrtry>
+                  <Cd>SCOR</Cd>
+                </CdOrPrtry>
+              </Tp>
+              <Ref>INTL-MRC-1001-MTXL1UKC</Ref>
+            </CdtrRefInf>
+            <AddtlRmtInf>PAYOUT_ID=3E31293C-7609-490F-838B-193828E86AED; WISE_TRANSFER_ID=2366635788; PROTOCOL=201.3; MERCHANT=MRC-1001;</AddtlRmtInf>
+          </Strd>
+        </RmtInf>
+      </CdtTrfTxInf>
+    </PmtInf>
+  </CstmrCdtTrfInitn>
+</Document>

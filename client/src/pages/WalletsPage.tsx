@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io, type Socket } from 'socket.io-client';
-import CryptoHoldingsCard from '../components/wallets/CryptoHoldingsCard';
-import type { CryptoBalance } from '../components/wallets/CryptoHoldingsCard';
 import './WalletsPage.css';
 import {
   getCustomers, createCustomer, updateCustomerKYC,
   fetchSettings,
-  getWalletBalance, getWalletTransactions, topupWallet, topupWalletWithCard, debitWallet,
+  getWalletBalance, getWalletTransactions, topupWalletWithCard, debitWallet,
   walletTransfer,
   sendToHotWallet,
   getBankAccounts, addBankAccount, bankPayout, getBankPayouts,
@@ -17,8 +15,6 @@ import {
   getMerchantBankAccounts, getMerchantPayouts, merchantBankPayout,
   approveMerchantPayout, rejectMerchantPayout,
   downloadPayoutReceipt,
-  getHotWalletBalance, autobuyTopupHotWalletUsdt,
-  type HotWalletBalance, type HotWalletAutobuyResult,
   transakSendUserOtp, transakVerifyUserOtp, transakGetUserLimits, transakGetUserDetails, transakRefreshUserAccessToken, transakLogoutUser, transakOnboardUser, transakVerifyWalletAddress,
   checkBackendHealth,
   type Customer, type WalletBalance, type WalletTransaction,
@@ -27,7 +23,7 @@ import {
   type MerchantBankAccount, type MerchantPayout,
 } from "../lib/api";
 import { resolveApiBaseUrl } from "../lib/backendUrl";
-import { useNotifications } from "../contexts/NotificationContext";
+import { useNotifications } from "../contexts/useNotifications";
 import "../styles/wallet-codepen-theme.css";
 import {
   enqueue, cacheBalance, getCachedBalance, applyLocalBalance, pendingCount as offlinePending
@@ -44,9 +40,19 @@ type Modal =
 
 const COINS = ['BTC','ETH','USDT','SOL','DOGE','BNB','XRP','ADA','AVAX','LINK','MATIC'];
 const COIN_ICONS: Record<string,string> = {
-  BTC:'â‚¿', ETH:'Îž', USDT:'â‚®', SOL:'â—Ž', DOGE:'Ã',
-  BNB:'ðŸŸ¡', XRP:'â—ˆ', ADA:'â‚³', AVAX:'ðŸ”º', LINK:'â¬¡', MATIC:'ðŸŸ£'
+  BTC:'btc', ETH:'eth', USDT:'usdt', SOL:'sol', DOGE:'doge',
+  BNB:'bnb', XRP:'xrp', ADA:'ada', AVAX:'avax', LINK:'link', MATIC:'matic'
 };
+// Helper: render coin logo — image if available, else fallback emoji
+const COIN_FALLBACK: Record<string,string> = {
+  BTC:'\u20BF', ETH:'\u039E', USDT:'\u20AE', SOL:'\u25CE', DOGE:'D',
+  BNB:'\uD83D\uDFE1', XRP:'\u25C8', ADA:'\u20B3', AVAX:'\uD83D\uDD3A', LINK:'\u2B21', MATIC:'\uD83D\uDFE3'
+};
+function CoinLogo({coin,size=24}:{coin:string;size?:number}) {
+  const name = COIN_ICONS[coin];
+  if (!name) return <span style={{fontSize:size*0.75}}>{COIN_FALLBACK[coin]||'\uD83E\uDE99'}</span>;
+  return <img src={`/coins/${name}.png`} alt={coin} width={size} height={size} style={{objectFit:'contain',borderRadius:'50%'}} onError={(e)=>{(e.target as HTMLImageElement).style.display='none';}} />;
+}
 const NETWORK_OPTIONS: Record<string, string[]> = {
   BTC: ['bitcoin', 'lightning'],
   ETH: ['ethereum', 'arbitrum', 'optimism'],
@@ -150,7 +156,6 @@ export const WalletsPage = () => {
   const [selMerchantBank, setSelMerchantBank] = useState<string>('');
   const [selPayout, setSelPayout] = useState<MerchantPayout | null>(null);
   const [virtualAccounts, setVirtualAccounts] = useState<BankTransferTransaction[]>([]);
-  const [merchantLoading, setMerchantLoading] = useState(false);
   const [selCoin, setSelCoin] = useState('BTC');
   const [selectedNetwork, setSelectedNetwork] = useState('bitcoin');
   const [coinPrice, setCoinPrice] = useState(0);
@@ -230,7 +235,6 @@ export const WalletsPage = () => {
       return;
     }
 
-    setMerchantLoading(true);
     try {
       const [wallet, txns] = await Promise.all([
         getMerchantBalance(targetMerchantId),
@@ -243,7 +247,6 @@ export const WalletsPage = () => {
       setMerchantWallet(null);
       setMerchantTxns([]);
     } finally {
-      setMerchantLoading(false);
     }
   };
 
@@ -369,7 +372,9 @@ export const WalletsPage = () => {
         try {
           const r = await getCryptoPrice(coin);
           if (!cancelled) entries.push([coin, r.price]);
-        } catch {}
+        } catch {
+          // Leave the cached price unchanged when a quote is temporarily unavailable.
+        }
       }
       if (!cancelled && entries.length) {
         setCoinPriceMap(prev => {
@@ -478,9 +483,7 @@ export const WalletsPage = () => {
     setSelId(safeCustomer.id);
     try {
       await getWalletBalance(safeCustomer.id);
-      const walletId   = safeCustomer.wallet_id   || safeCustomer.id;
-      const walletCode = safeCustomer.wallet_code ? ` · Code: ${safeCustomer.wallet_code}` : '';
-      addNotification('Wallet Created', `${savedName}'s wallet ready — ID: ${walletId}${walletCode}`, 'success');
+      addNotification('Wallet Created', `${savedName}'s wallet is ready. Open the customer profile to view wallet details.`, 'success');
     } catch {
       addNotification('Wallet Created', `${savedName}'s wallet created — ID: ${safeCustomer.id}`, 'success');
     }
@@ -504,7 +507,7 @@ export const WalletsPage = () => {
     const panMasked = '*'.repeat(pan.length - 4) + pan.slice(-4);
 
     if (!snapIsOnline) {
-      const op = enqueue('wallet_topup_card', {
+      enqueue('wallet_topup_card', {
         customerId: snapSelId,
         amount: amt,
         cardNumber: pan,
@@ -1150,6 +1153,7 @@ export const WalletsPage = () => {
               className="rounded-xl border border-red-400/30 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/25">
               ⬆️ Send to Hot Wallet
             </button>
+            {false && (
             <button onClick={() => {
                 const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
                 setF({ merchantId, currency: merchantWallet?.currency || 'USD' });
@@ -1158,6 +1162,7 @@ export const WalletsPage = () => {
               className="rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/25">
               🏦 Merchant Bank Payout
             </button>
+            )}
             <button onClick={() => {
                 const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
                 setF({ merchantId });
@@ -1201,16 +1206,15 @@ export const WalletsPage = () => {
                 <button onClick={() => setSelId(c.id)}
                   className="w-full text-left p-3">
                   <div className={`font-semibold ${selId===c.id?'text-blue-700':'text-gray-700'}`}>{c.name?.trim() || <span className="text-red-500 italic">(Unnamed Customer)</span>}</div>
-                  {c.wallet_code && <div className="text-xs font-mono text-blue-500">{c.wallet_code}</div>}
                   {c.email && <div className="text-xs text-gray-400">{c.email}</div>}
                   {c.phone && <div className="text-xs text-gray-400">📞 {c.phone}</div>}
                 </button>
                 {selId===c.id && (
                   <div className="px-3 pb-2">
                     <button
-                      onClick={() => navigate(`/customer-wallet-profile/${c.id}`)}
+                      onClick={() => navigate(`/customer-wallet/${c.id}`)}
                       className="text-xs text-emerald-600 hover:text-emerald-800 font-semibold underline"
-                    >View Full Profile →</button>
+                    >View Customer Wallet →</button>
                   </div>
                 )}
               </div>
@@ -1248,28 +1252,24 @@ export const WalletsPage = () => {
               <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Customer wallet</div>
                 <div className="mt-4 text-sm text-slate-600">
-                  <div className="font-semibold text-slate-900">{sel.name?.trim() || <span className="text-red-500 italic">(Unnamed Customer â€” ID: {sel.id.slice(0,8)}â€¦)</span>}</div>
+                  <div className="font-semibold text-slate-900">{sel.name?.trim() || <span className="text-red-500 italic">(Unnamed Customer)</span>}</div>
                   {sel.email && <div className="mt-1">{sel.email}</div>}
                   {sel.phone && <div className="mt-1 text-slate-500">ðŸ“ž {sel.phone}</div>}
                 </div>
-                <div className="mt-6 grid gap-3">
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Wallet Code</div>
-                    <div className="mt-1 font-semibold text-slate-900">{sel.wallet_code || 'Not available'}</div>
-                  </div>
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Wallet ID</div>
-                    <div className="mt-1 font-semibold text-slate-900">{sel.wallet_id || sel.id}</div>
-                  </div>
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Balance</div>
-                    <div className="mt-1 font-semibold text-slate-900">{balance.currency} {Number(balance.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                  </div>
+                <div className="mt-6">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/customer-wallet-profile/${sel.id}`)}
+                    className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                  >
+                    Open customer profile for wallet details
+                  </button>
                 </div>
               </div>
             </div>
 
 
+            {false && (
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -1482,6 +1482,7 @@ export const WalletsPage = () => {
                     </div>}
               </div>
             </section>
+            )}
 
             <section className="overflow-hidden rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 via-white to-sky-50 shadow-sm">
               <div className="flex flex-col gap-4 border-b border-cyan-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -1601,7 +1602,7 @@ export const WalletsPage = () => {
                       </div>
                     ))
                 }
-                {bankPayouts.length > 0 && (
+                {false && bankPayouts.length > 0 && (
                   <div className="bg-white rounded-xl border border-gray-200 p-5">
                     <h4 className="font-bold text-gray-700 mb-3 text-sm">Payout History</h4>
                     {bankPayouts.map((p, index) => (
@@ -1713,7 +1714,7 @@ export const WalletsPage = () => {
                           onClick={()=>{setSelCoin(coin); if(isOnline) getCryptoPrice(coin).then(r=>setCoinPriceMap(p=>({...p,[coin]:r.price})));}}
                           className={`group cursor-pointer rounded-xl px-3 py-2 border transition-all ${selCoin===coin?'border-emerald-400 bg-emerald-50 shadow-sm':'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white'}`}>
                           <div className="flex items-center gap-2">
-                            <span className="text-lg leading-none">{COIN_ICONS[coin]||'ðŸª™'}</span>
+                          <span className="text-lg leading-none"><CoinLogo coin={coin} size={20}/></span>
                             <div>
                               <div className="text-[11px] font-bold text-slate-800">{coin}</div>
                               <div className="text-[11px] font-semibold text-slate-500 tabular-nums">${(coinPriceMap[coin]||0).toLocaleString(undefined,{maximumFractionDigits:coinPriceMap[coin]&&coinPriceMap[coin]>100?2:6})}</div>
@@ -1779,7 +1780,7 @@ export const WalletsPage = () => {
                           <div key={w.id || `vault-${index}`} className="grid grid-cols-12 gap-2 px-5 py-3.5 items-center hover:bg-slate-50/50 transition">
                             <div className="col-span-3 flex items-center gap-3">
                               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-900 to-slate-700 flex items-center justify-center text-white text-lg shadow-sm">
-                                {COIN_ICONS[w.crypto_coin]||'ðŸª™'}
+                                <CoinLogo coin={w.crypto_coin} size={32}/>
                               </div>
                               <div>
                                 <div className="font-bold text-slate-900 text-sm">{w.crypto_coin}</div>
@@ -2128,7 +2129,7 @@ export const WalletsPage = () => {
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-[0.25em] text-indigo-500">Destination</div>
                     <div className="mt-0.5 text-sm font-semibold text-slate-800 flex items-center gap-1.5">
-                      <span>{COIN_ICONS[selCoin]||'ðŸª™'}</span> {selCoin} Internal Vault
+                    <span className="flex items-center gap-1.5"><CoinLogo coin={selCoin} size={18}/> {selCoin} Internal Vault</span>
                     </div>
                   </div>
                   <div className="text-right">
@@ -2140,9 +2141,13 @@ export const WalletsPage = () => {
 
               <div>
                 <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 mb-1.5">Asset</label>
-                <select value={selCoin} onChange={async e=>{setSelCoin(e.target.value); try{const r=await getCryptoPrice(e.target.value); setCoinPrice(r.price); setCoinPriceMap(p=>({...p,[e.target.value]:r.price}));}catch{}}}
+                <select value={selCoin} onChange={async e=>{setSelCoin(e.target.value); try{const r=await getCryptoPrice(e.target.value); setCoinPrice(r.price); setCoinPriceMap(p=>({...p,[e.target.value]:r.price}));}catch{/* Keep the last quoted price if refreshing fails. */}}}
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500">
-                  {COINS.map(c=><option key={c} value={c}>{COIN_ICONS[c]||'ðŸª™'} {c} {coinPriceMap[c]?`Â· $${coinPriceMap[c].toLocaleString(undefined,{maximumFractionDigits:coinPriceMap[c]>100?2:6})}`:''}</option>)}
+                  {COINS.map(c => (
+                    <option key={c} value={c}>
+                      {c}{coinPriceMap[c] ? ` · $${coinPriceMap[c].toLocaleString(undefined, { maximumFractionDigits: coinPriceMap[c] > 100 ? 2 : 6 })}` : ""}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -2332,7 +2337,7 @@ export const WalletsPage = () => {
           <p className="text-sm text-gray-500">Merchant: <strong>{f.merchantId||'(not set)'}</strong></p>
           <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Asset</label>
           <select value={selCoin} onChange={e=>setSelCoin(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm">
-            {COINS.map(c=><option key={c} value={c}>{COIN_ICONS[c]} {c}</option>)}
+            {COINS.map(c=><option key={c} value={c}>{c}</option>)}
           </select>
           <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">Network</label>
           <select value={selectedNetwork} onChange={e=>setSelectedNetwork(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm">
@@ -2656,7 +2661,7 @@ export const WalletsPage = () => {
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-[0.25em] text-rose-600">Crypto Vault</div>
                     <div className="mt-0.5 text-sm font-semibold text-slate-800 flex items-center gap-1.5">
-                      <span>{COIN_ICONS[selCoin]||'ðŸª™'}</span> {selCoin} Balance
+                    <span className="flex items-center gap-1.5"><CoinLogo coin={selCoin} size={18}/> {selCoin} Balance</span>
                     </div>
                   </div>
                   <div className="text-right">
@@ -2679,11 +2684,11 @@ export const WalletsPage = () => {
 
               <div>
                 <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 mb-1.5">Asset to Sell</label>
-                <select value={selCoin} onChange={async e=>{setSelCoin(e.target.value); try{const r=await getCryptoPrice(e.target.value); setCoinPrice(r.price); setCoinPriceMap(p=>({...p,[e.target.value]:r.price}));}catch{}}}
+                <select value={selCoin} onChange={async e=>{setSelCoin(e.target.value); try{const r=await getCryptoPrice(e.target.value); setCoinPrice(r.price); setCoinPriceMap(p=>({...p,[e.target.value]:r.price}));}catch{/* Keep the last quoted price if refreshing fails. */}}}
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500">
                   {cryptoWallets.filter(w=>Number(w.balance)>0).length===0
                     ? <option value="">No crypto balances available</option>
-                    : cryptoWallets.filter(w=>Number(w.balance)>0).map((w,i)=><option key={w.id||`sell-opt-${i}`} value={w.crypto_coin}>{COIN_ICONS[w.crypto_coin]} {w.crypto_coin} Â· {Number(w.balance).toLocaleString(undefined,{maximumFractionDigits:6})}</option>)
+                    : cryptoWallets.filter(w=>Number(w.balance)>0).map((w,i)=><option key={w.id||`sell-opt-${i}`} value={w.crypto_coin}>{w.crypto_coin} · {Number(w.balance).toLocaleString(undefined,{maximumFractionDigits:6})}</option>)
                   }
                 </select>
               </div>
@@ -2840,7 +2845,7 @@ export const WalletsPage = () => {
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-500/20">
                     {cryptoWallets.filter(w => Number(w.balance) > 0).map((w, i) => (
                       <option key={w.id || i} value={w.crypto_coin}>
-                        {COIN_ICONS[w.crypto_coin]} {w.crypto_coin} · Balance: {Number(w.balance).toFixed(6)}
+                        {w.crypto_coin} · Balance: {Number(w.balance).toFixed(6)}
                       </option>
                     ))}
                   </select>
@@ -3146,6 +3151,7 @@ export const WalletsPage = () => {
       )}
 
       <TransakWidgetModal
+        open={transakOpen}
         onClose={() => setTransakOpen(false)}
         flow={transakFlow}
         defaultCryptoCurrency={transakPresets.defaultCryptoCurrency}

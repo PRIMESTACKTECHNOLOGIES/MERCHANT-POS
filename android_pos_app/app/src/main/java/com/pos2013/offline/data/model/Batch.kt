@@ -10,6 +10,7 @@ data class OfflineSaleTransaction(
     val txn_type: String = "SALE",
     val auth_mode: String = "OFFLINE_APPROVED",
     val entry_mode: String = "MANUAL",
+    val auth_code: String? = null,
     val txn_timestamp: Long,
     val rrn: String? = null
 )
@@ -30,6 +31,7 @@ fun TransactionEntity.toOfflineSaleTransaction() = OfflineSaleTransaction(
     txn_type = txnType,
     auth_mode = authMode,
     entry_mode = entryMode,
+    auth_code = authCode,
     txn_timestamp = txnTimestamp,
     rrn = rrn
 )

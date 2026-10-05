@@ -1,5 +1,4 @@
 import { TLVParser } from './tlv-parser';
-import type { EMVTag } from './tlv-parser';
 import { hexToBytes } from './emv-utils';
 import { RSAODA, type CAPK as RSA_CAPK, type ODAResult } from './rsa-oda';
 import { ICCPublicKeyRecovery } from './icc-public-key';
@@ -57,11 +56,11 @@ export class OfflineDataAuthentication {
     }
 
     if (supportsCDA) {
-      return this.performCDA(cardData, terminalData);
+      return this.performCDA(cardData);
     }
 
     if (supportsDDA) {
-      return this.performDDA(cardData, terminalData);
+      return this.performDDA(cardData);
     }
 
     if (supportsSDA) {
@@ -156,7 +155,7 @@ export class OfflineDataAuthentication {
     }
   }
 
-  private async performDDA(cardData: string, terminalData: string): Promise<AuthenticationResult> {
+  private async performDDA(cardData: string): Promise<AuthenticationResult> {
     try {
       const cardTags = TLVParser.parseTLV(cardData);
 
@@ -265,7 +264,7 @@ export class OfflineDataAuthentication {
     }
   }
 
-  private async performCDA(cardData: string, terminalData: string): Promise<AuthenticationResult> {
+  private async performCDA(cardData: string): Promise<AuthenticationResult> {
     try {
       const cardTags = TLVParser.parseTLV(cardData);
 
@@ -281,7 +280,7 @@ export class OfflineDataAuthentication {
 
       const cdaSignature = TLVParser.getTagValue(cardTags, '9F4C');
       if (!cdaSignature) {
-        const fallbackResult = await this.performDDA(cardData, terminalData);
+        const fallbackResult = await this.performDDA(cardData);
         if (fallbackResult.success) {
           return { ...fallbackResult, method: 'CDA' as const };
         }

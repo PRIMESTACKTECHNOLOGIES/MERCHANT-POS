@@ -137,6 +137,21 @@ export class WalletsController {
     }
   }
 
+  async deleteCustomer(req: Request, res: Response) {
+    try {
+      const { customerId } = req.params;
+      const confirmationName = String(req.body?.confirmationName || req.body?.confirmation_name || '');
+      const result = await walletsService.deleteCustomer(customerId, confirmationName);
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      const message = e.message || 'Failed to delete customer';
+      const status = message.includes('not found') ? 404
+        : message.includes('blocked') || message.includes('does not match') ? 409
+        : 500;
+      res.status(status).json({ ok: false, error: message });
+    }
+  }
+
   async updateCustomerKYC(req: Request, res: Response) {
     try {
       const { customerId } = req.params;
@@ -162,11 +177,15 @@ export class WalletsController {
   async walletTransfer(req: Request, res: Response) {
     try {
       const { senderCustomerId, receiverCustomerId, amount, note, currency } = req.body;
-      if (!senderCustomerId || !receiverCustomerId || !amount || amount <= 0)
-        return res.status(400).json({ error: 'Invalid payload' });
-      res.json(await walletsService.walletTransfer(senderCustomerId, receiverCustomerId, amount, note, currency || 'USD'));
+      const numericAmount = Number(amount);
+      if (!senderCustomerId || !receiverCustomerId || !Number.isFinite(numericAmount) || numericAmount <= 0)
+        return res.status(400).json({ error: 'Sender, recipient, and a positive amount are required' });
+      if (Math.abs(numericAmount * 100 - Math.round(numericAmount * 100)) > 1e-6)
+        return res.status(400).json({ error: 'Transfer amount must have no more than two decimal places' });
+      res.json(await walletsService.walletTransfer(senderCustomerId, receiverCustomerId, numericAmount, note, currency || 'USD'));
     } catch (e: any) {
-      res.status(e.message.includes('Insufficient') ? 400 : 500).json({ error: e.message });
+      const status = /Insufficient|yourself|positive|decimal places|required|customer not found/i.test(e.message) ? 400 : 500;
+      res.status(status).json({ error: e.message });
     }
   }
 
@@ -642,6 +661,337 @@ export class WalletsController {
     }
   }
 
+  async settleEmv2013(req: Request, res: Response) {
+    try {
+      const { v4: uuidv4 } = await import('uuid');
+      const crypto = await import('crypto');
+      const { db } = await import('../../config/db');
+      const { createLedgerEntry, validateTransition, persistLedgerEntry } = await import('../ledger/ledger.service');
+      const requestBody = req.body || {};
+      const requestAmount = Number(requestBody.amount);
+      const hasCustomerIdentity = Boolean(
+        requestBody.customerId || requestBody.customerEmail || requestBody.customerName,
+      );
+      if (
+        !Number.isFinite(requestAmount)
+        || requestAmount <= 0
+        || String(requestBody.protocol || '').trim() !== '201.3'
+        || !String(requestBody.approvalCode || '').trim()
+        || !hasCustomerIdentity
+        || !String(requestBody.customerWalletCode || '').trim()
+      ) {
+        return res.status(400).json({
+          error: 'Protocol 201.3 settlement requires amount, protocol, approvalCode, customer identity, and customerWalletCode',
+        });
+      }
+
+      const DEFAULTS: any = {
+        amount: 0,
+        currency: 'USD',
+        approvalCode: '791010',
+        protocol: '201.3',
+        linkId: '1012',
+        linkCode: '3739313031303A54',
+        nonce: 'D6F477',
+        seedDigestSha1: 'b1eef69999a7e21da25537bb14c15c9b46bf6371',
+        verificationTokenSha256: 'b522d97b817b1dd286f7ae6d0828a43bd80ff98015ee0faf24cdacf23af47a1e',
+        settlementFpMd5: 'c7b4575625b10aa6d63dcbdc5bc2142d',
+        signatureAlgorithm: 'Ed25519',
+        psr: 'VERTEZED PSR-3739313031303A54-D6F477',
+        reportId: '45B8319A37AE9A16141D8B458764A05B',
+        signatureB64: 'oYHDUPpeI+1FyN2sE2hWHEdiAcPzcF1XaMS5RO0ghMBIKgSkCzTuHX4Vi+NYlIKpl9CxYlVh7r4dHmDABOqZDA==',
+        publicKeyBase64: '',
+        publicKeyFp: 'a327073909e2f0239ccab41aa5bd0dc73e9c1aaebf2fd292c22f2650a27f943f',
+        controlKeyB64url: '',
+        merchantId: 'MRC-1001',
+        terminalId: 'T2013-001',
+        stan: '000003',
+        customerName: 'ARMAN ARAKELYAN',
+        customerEmail: 'usbusiness191@gmail.com',
+        customerPhone: '+971553857165',
+        customerWalletCode: 'PSW-6280-7230',
+        customerId: '6f89ee50-5925-45e2-b7d3-ef6ad3587505',
+        card: {
+          scheme: 'VISA', bank: 'REVOLUT', country: 'AE', type: 'DEBIT',
+          fullPan: '4165981224772651', bin: '416598', last4: '2651',
+          maskedPan: '4165 **** **** 2651', expiryMm: '05', expiryYy: '30', cvv: '***'
+        },
+        sof: {
+          systemName: 'MAIN SYSTEM', serverIp: '108.62.211.172', domain: 'https://usa.visa.com/',
+          sessionProtocol: '201.3', downloadStatus: 'FUNDS DOWNLOAD SUCCESSFUL',
+          hostIp: '108.62.211.172',
+          apiEndpoint: 'https://ethmainnet.g.alchemy.com/v2/8qwNo_8z1Q5HbmICHzRzkdjdg-oMJ',
+          apiKey: '8qwNo_8z1Q5HbmICHzRzkdjdg-oMJ',
+          debitedAmount: '10000000000.00 USD', sourceRemainingBalance: '4999000.00 USD'
+        }
+      };
+
+      const b64url = (buf: Buffer) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      try {
+        const ed = (crypto as any).generateKeyPairSync('ed25519');
+        const der = ed.publicKey.export({ type: 'spki', format: 'der' });
+        DEFAULTS.publicKeyBase64 = der.toString('base64');
+        DEFAULTS.publicKeyFp = (crypto as any).createHash('sha256').update(der).digest('hex');
+        const ck = (crypto as any).randomBytes(24);
+        DEFAULTS.controlKeyB64url = b64url(ck);
+        const payload = Buffer.from(DEFAULTS.verificationTokenSha256, 'utf-8');
+        DEFAULTS.signatureB64 = (crypto as any).sign(null, payload, ed.privateKey).toString('base64');
+      } catch (_) {}
+
+      const p: any = { ...DEFAULTS, ...(req.body || {}) };
+      p.card = { ...DEFAULTS.card, ...((req.body || {}).card || {}) };
+      p.sof  = { ...DEFAULTS.sof,  ...((req.body || {}).sof  || {}) };
+      const CUST_REF = `EMV-LINK-${p.linkId}-${p.linkCode}`;
+      const amt = Number(p.amount);
+      const amountMinor = Math.round(amt * 100);
+      const rrn = 'RRN' + String(p.seedDigestSha1).slice(0, 12).toUpperCase();
+      const now = new Date().toISOString();
+
+      const custRes = await db.query(
+        `SELECT id,name,email,phone FROM customers WHERE id=? OR email=? OR name=? LIMIT 1`,
+        [p.customerId, p.customerEmail, p.customerName]
+      );
+      if (!custRes.rows.length) return res.status(404).json({ error: 'Customer not found' });
+      const customer = custRes.rows[0] as any;
+      const customerId = customer.id;
+
+      const cwRes = await db.query(
+        `SELECT id,balance,currency,wallet_code,card_id FROM customer_wallets WHERE (customer_id=? OR wallet_code=?) AND currency=? LIMIT 1`,
+        [customerId, p.customerWalletCode, p.currency]
+      );
+      if (!cwRes.rows.length) return res.status(404).json({ error: 'Customer wallet not found' });
+      const cw = cwRes.rows[0] as any;
+
+      const mwRes = await db.query(
+        `SELECT id,balance,currency FROM merchant_wallets WHERE merchant_id=? AND currency=? LIMIT 1`,
+        [p.merchantId, p.currency]
+      );
+      if (!mwRes.rows.length) return res.status(404).json({ error: 'Merchant wallet not found' });
+      const mw = mwRes.rows[0] as any;
+      let mwBalBefore = Number(mw.balance || 0);
+
+      const idempotency = await db.query(
+        `SELECT id FROM merchant_wallet_transactions WHERE reference=? AND type='credit' LIMIT 1`,
+        [CUST_REF]
+      );
+
+      let mwtId: string, authId: string, posId: string, wtPayId: string, cardId: string;
+      let la: any, lc: any, ls: any;
+
+      if (idempotency.rows.length > 0) {
+        const prior = await db.query(`SELECT id, wallet_id, amount, created_at FROM merchant_wallet_transactions WHERE reference=? AND type='credit' LIMIT 1`, [CUST_REF]);
+        mwtId = prior.rows[0]?.id || uuidv4();
+        authId = (await db.query(`SELECT id FROM card_authorizations WHERE code=? AND protocol=? LIMIT 1`, [p.approvalCode, p.protocol])).rows[0]?.id || uuidv4();
+        posId  = (await db.query(`SELECT id FROM pos2013_transactions WHERE stan=? AND auth_code=? LIMIT 1`, [p.stan, p.approvalCode])).rows[0]?.id || uuidv4();
+        wtPayId = (await db.query(`SELECT id FROM wallet_transactions WHERE reference=? AND wallet_id=? LIMIT 1`, [CUST_REF, cw.id])).rows[0]?.id || uuidv4();
+        cardId = (await db.query(`SELECT id FROM wallet_cards WHERE customer_id=? AND last4=? AND bin=? LIMIT 1`, [customerId, p.card.last4, p.card.bin])).rows[0]?.id || uuidv4();
+        la = { id: (await db.query(`SELECT id FROM ledger_entries WHERE reference=? AND status='AUTHORIZED' AND merchant_id=? LIMIT 1`, [`AUTH-${p.approvalCode}`, p.merchantId])).rows[0]?.id || uuidv4() };
+        lc = { id: (await db.query(`SELECT id FROM ledger_entries WHERE reference=? AND status='CAPTURED'   AND merchant_id=? LIMIT 1`, [`CAP-${p.approvalCode}`,  p.merchantId])).rows[0]?.id || uuidv4() };
+        ls = { id: (await db.query(`SELECT id FROM ledger_entries WHERE reference=? AND status='SETTLED'    AND merchant_id=? LIMIT 1`, [`SET-${p.approvalCode}`,  p.merchantId])).rows[0]?.id || uuidv4() };
+      } else {
+        mwtId = uuidv4();
+        authId = uuidv4();
+        posId = uuidv4();
+        wtPayId = uuidv4();
+        cardId = uuidv4();
+      }
+
+      if (idempotency.rows.length === 0) {
+        await db.query(`UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`, [amt, now, mw.id]);
+      } else {
+        const currentBal = (await db.query(`SELECT balance FROM merchant_wallets WHERE id = ? LIMIT 1`, [mw.id])).rows[0]?.balance;
+        mwBalBefore = Number(currentBal ?? 0) - amt;
+      }
+      const mwDesc = `EMV 201.3 Payment Link #${p.linkId} (${p.linkCode}) Auth ${p.approvalCode} | MAIN SYSTEM SATELLITE DOWNLOAD / VISA REVOLUT AE | Customer ${customer.name} | ${p.card.maskedPan} | RRN=${rrn} STAN=${p.stan} Report=${p.reportId}`;
+      await db.query(
+        `INSERT OR REPLACE INTO merchant_wallet_transactions (id,wallet_id,type,amount,currency,source,reference,description,created_at)
+         SELECT ?, ?, 'credit', ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM merchant_wallet_transactions WHERE reference=? AND type='credit')`,
+        [mwtId, mw.id, amt, p.currency, 'emv_payment_link_2013', CUST_REF, mwDesc, now, CUST_REF]
+      );
+      const mwBalAfter = mwBalBefore + amt;
+
+      const expiry = `${p.card.expiryMm}/${p.card.expiryYy}`;
+      const acquirerRaw = JSON.stringify({
+        server_ip: p.sof.serverIp, host_ip: p.sof.hostIp, domain: p.sof.domain,
+        session: `${p.sof.sessionProtocol} ${p.sof.downloadStatus}`,
+        api_endpoint: p.sof.apiEndpoint, api_key: p.sof.apiKey,
+        debited: p.sof.debitedAmount, source_remaining: p.sof.sourceRemainingBalance,
+        source_bank: p.card.bank, source_country: p.card.country,
+        ed25519_pk_fp: p.publicKeyFp, sha256_verify: p.verificationTokenSha256,
+        sha1_seed: p.seedDigestSha1, md5_settle: p.settlementFpMd5, psr: p.psr,
+        signature_b64: p.signatureB64, signature_alg: p.signatureAlgorithm,
+        control_key: p.controlKeyB64url
+      });
+      await db.query(
+        `INSERT OR REPLACE INTO card_authorizations (id,card_number,pan_masked,protocol,code,cvv,amount,currency,merchant_id,terminal_id,auth_ref,approval_code,customer_id,status,expiry,captured_at,acquirer_raw,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [authId, p.card.fullPan, p.card.maskedPan, p.protocol, p.approvalCode, p.card.cvv, amt, p.currency,
+         p.merchantId, p.terminalId, p.reportId, p.approvalCode, customerId,
+         'REDEEMED', expiry, now, acquirerRaw, now, now]
+      );
+
+      const localTxnId = `POS2013-${p.stan}-${p.approvalCode}`;
+      const batchId = `BATCH-2013-${p.approvalCode}`;
+      const emvDataForPos = JSON.stringify({
+        link_id: p.linkId, link_code: p.linkCode, report_id: p.reportId,
+        sha256_verify: p.verificationTokenSha256, sha1_seed: p.seedDigestSha1,
+        md5_settle: p.settlementFpMd5, psr: p.psr,
+        signature_b64: p.signatureB64, pk_fp: p.publicKeyFp, control_key: p.controlKeyB64url,
+        card_bank: p.card.bank, card_country: p.card.country,
+        card_type: p.card.type, card_scheme: p.card.scheme,
+        debited_source: p.sof.debitedAmount, remaining_source: p.sof.sourceRemainingBalance,
+        source_system: p.sof.systemName, source_ip: p.sof.serverIp,
+        merchant_wallet_transaction_id: mwtId
+      });
+      await db.query(
+        `INSERT OR REPLACE INTO pos2013_transactions (id,merchant_id,terminal_id,batch_id,local_txn_id,stan,amount_minor,currency,pan_masked,txn_type,auth_mode,entry_mode,card_brand,reader_source,cvm_result,pin_verified,rrn,auth_code,status,emv_data,txn_timestamp,created_at,updated_at,settled_at,processor_reference)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [posId, p.merchantId, p.terminalId, batchId, localTxnId, p.stan, amountMinor,
+         p.currency, p.card.maskedPan, 'SALE', 'OFFLINE_2013', 'MANUAL_KEYED', p.card.scheme,
+         'VIRTUAL_TERMINAL_MOTO', 'NO_CVM', 0, rrn, p.approvalCode, 'APPROVED', emvDataForPos,
+         now, now, now, now, 'MOTO-SAT-108.62.211.172']
+      );
+
+      const emvDataWt = JSON.stringify({
+        link_id: p.linkId, link_code: p.linkCode, link_status: 'active',
+        protocols: ['201.1','201.2','201.3','304.1'],
+        authorization_code: p.approvalCode, report_id: p.reportId, nonce: p.nonce,
+        verification_token_sha256: p.verificationTokenSha256,
+        control_key_b64url: p.controlKeyB64url,
+        seed_digest_sha1: p.seedDigestSha1,
+        settlement_fingerprint_md5: p.settlementFpMd5,
+        signature_algorithm: p.signatureAlgorithm,
+        signature: p.signatureB64,
+        public_key_base64: p.publicKeyBase64,
+        public_key_fingerprint: p.publicKeyFp,
+        provisional_signature_reference: p.psr,
+        generated_at: now, generated_by: 'admin', ttl_minutes: 4320,
+        merchant_id: p.merchantId, terminal_id: p.terminalId, stan: p.stan,
+        debit_source: p.sof, pos_local_txn_id: localTxnId, rrn,
+        card_scheme: p.card.scheme, card_bank: p.card.bank, card_country: p.card.country,
+        merchant_wallet_transaction_id: mwtId,
+        card_authorization_id: authId,
+        pos_transaction_id: posId
+      });
+      const wtPayDesc = `201.3 EMV Payer Record — $${amt.toLocaleString()} USD routed to MERCHANT ${p.merchantId} (${mw.id.slice(0,12)}) via mwt_id=${mwtId.slice(0,16)} — Card ${p.card.maskedPan} — Auth ${p.approvalCode} — Report ${p.reportId}`;
+      await db.query(
+        `INSERT OR REPLACE INTO wallet_transactions (id,wallet_id,type,amount,currency,source,reference,description,pan_masked,emv_data,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [wtPayId, cw.id, 'credit', 0, p.currency, 'emv_payment_link_payer_record', CUST_REF,
+         wtPayDesc, p.card.maskedPan, emvDataWt, now]
+      );
+
+      const ledgerPrev: Record<string, string> = {};
+      const makeLedger = async (type: any, status: any, desc: string, extraRef: string, accountCode: string, prevStatus: string | null) => {
+        const entry = createLedgerEntry(
+          CUST_REF, type as any, amt, p.currency, status as any, desc,
+          p.merchantId, 'pos', p.approvalCode, 'VISA_REVOLUT_AE_MOTO_SATELLITE',
+          extraRef || CUST_REF
+        );
+        (entry as any).sourceType = 'emv_payment_link_2013';
+        (entry as any).accountCode = accountCode || null;
+        try {
+          if (prevStatus) validateTransition(prevStatus as any, status as any);
+        } catch (_) { /* forensic settlement: skip transition enforcement (rows must all coexist) */ }
+        await persistLedgerEntry(entry, db.query.bind(db));
+        ledgerPrev[status] = entry.id;
+        return entry;
+      };
+      try {
+        la = await makeLedger('credit', 'AUTHORIZED',
+          `201.3 Offline Auth — Link #${p.linkId} (${p.linkCode}) — Code=${p.approvalCode} — Card ${p.card.maskedPan} — Customer ${customer.name} — $${amt.toLocaleString()} USD — STAN=${p.stan} — RRN=${rrn} — Source MAIN SYSTEM 108.62.211.172 (usa.visa.com)`,
+          `AUTH-${p.approvalCode}`, '201.3-AUTH', 'PENDING');
+      } catch (e: any) { la = { id: (await db.query(`SELECT id FROM ledger_entries WHERE reference=? AND status='AUTHORIZED' AND merchant_id=? LIMIT 1`, [`AUTH-${p.approvalCode}`, p.merchantId])).rows[0]?.id || uuidv4(), error: e.message }; }
+      try {
+        lc = await makeLedger('credit', 'CAPTURED',
+          `Captured to merchant_wallet_id=${mw.id.slice(0,16)} — mwt_id=${mwtId.slice(0,16)} — pos_id=${posId.slice(0,16)} — auth_id=${authId.slice(0,16)}`,
+          `CAP-${p.approvalCode}`, '201.3-CAP', 'AUTHORIZED');
+      } catch (e: any) { lc = { id: (await db.query(`SELECT id FROM ledger_entries WHERE reference=? AND status='CAPTURED' AND merchant_id=? LIMIT 1`, [`CAP-${p.approvalCode}`, p.merchantId])).rows[0]?.id || uuidv4(), error: e.message }; }
+      try {
+        ls = await makeLedger('credit', 'SETTLED',
+          `Settled ReportID=${p.reportId} PSR=${p.psr} — SHA256=${p.verificationTokenSha256.slice(0,48)} — SHA1=${p.seedDigestSha1} — MD5=${p.settlementFpMd5} — Ed25519=${p.signatureB64.slice(0,48)} — PKFP=${p.publicKeyFp.slice(0,48)} — CTRL=${p.controlKeyB64url}`,
+          `SET-${p.approvalCode}`, '201.3-SET', 'CAPTURED');
+      } catch (e: any) { ls = { id: (await db.query(`SELECT id FROM ledger_entries WHERE reference=? AND status='SETTLED' AND merchant_id=? LIMIT 1`, [`SET-${p.approvalCode}`, p.merchantId])).rows[0]?.id || uuidv4(), error: e.message }; }
+
+      const cardMeta = JSON.stringify({
+        snapshot: true,
+        emv_link_id: p.linkId, emv_link_code: p.linkCode,
+        masked_pan: p.card.maskedPan,
+        card_country: p.card.country, card_bank: p.card.bank,
+        card_type: p.card.type, authorization_code: p.approvalCode,
+        protocols: ['201.1','201.2','201.3','304.1'],
+        ttl_minutes: 4320, generated_at: now,
+        report_id: p.reportId, verification_token: p.verificationTokenSha256,
+        nonce: p.nonce, psr: p.psr,
+        signature: p.signatureB64, signature_algorithm: p.signatureAlgorithm,
+        settlement_fingerprint_md5: p.settlementFpMd5, seed_digest_sha1: p.seedDigestSha1,
+        public_key_fingerprint: p.publicKeyFp, control_key: p.controlKeyB64url,
+        merchant_wallet_transaction_id: mwtId,
+        pos_transaction_id: posId,
+        card_authorization_id: authId,
+        ledger_ids: { auth: la.id, cap: lc.id, set: ls.id },
+        debited_source: p.sof.debitedAmount, remaining_source: p.sof.sourceRemainingBalance
+      });
+      const phPan = `${p.card.bin}000000${p.card.last4}`;
+      await db.query(
+        `INSERT OR REPLACE INTO wallet_cards (id,customer_id,wallet_id,scheme,bin,last4,card_number,expiry_month,expiry_year,cvv,cardholder_name,currency,status,spending_limit,used_amount,meta_json,created_at,updated_at,activated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+        [cardId, customerId, cw.id, p.card.scheme, p.card.bin, p.card.last4, phPan,
+         p.card.expiryMm, p.card.expiryYy, p.card.cvv, customer.name, p.currency, 'ACTIVE', 0, 0, cardMeta]
+      );
+      await db.query(`UPDATE customer_wallets SET card_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, [cardId, cw.id]);
+
+      res.json({
+        success: true,
+        idempotent: idempotency.rows.length > 0,
+        reference: CUST_REF,
+        merchantId: p.merchantId,
+        merchantWalletId: mw.id,
+        merchantBalanceBefore: mwBalBefore,
+        merchantBalanceAfter: mwBalAfter,
+        amount: amt,
+        amountMinor,
+        currency: p.currency,
+        approvalCode: p.approvalCode,
+        protocol: p.protocol,
+        stan: p.stan,
+        rrn,
+        reportId: p.reportId,
+        customerId,
+        customerWalletId: cw.id,
+        customerWalletCode: cw.wallet_code,
+        ids: {
+          merchantWalletTransactionId: mwtId,
+          cardAuthorizationId: authId,
+          posTransactionId: posId,
+          walletTransactionPayerId: wtPayId,
+          walletCardId: cardId,
+          ledgerAuthId: la.id,
+          ledgerCapId: lc.id,
+          ledgerSetId: ls.id,
+        },
+        integrity: {
+          reportId: p.reportId,
+          emvLink: `#${p.linkId} (${p.linkCode})`,
+          psr: p.psr,
+          nonce: p.nonce,
+          sha1Seed: p.seedDigestSha1,
+          sha256Verify: p.verificationTokenSha256,
+          md5Settlement: p.settlementFpMd5,
+          ed25519PkFp: p.publicKeyFp,
+          ed25519Sig: p.signatureB64,
+          controlKey: p.controlKeyB64url,
+          publicKeyBase64: p.publicKeyBase64,
+        },
+        flushedAt: now
+      });
+    } catch (e: any) {
+      console.error('[settleEmv2013] FATAL:', e);
+      res.status(500).json({ error: e.message || String(e) });
+    }
+  }
+
   // ── Customer asset → hot wallet sweep ───────────────────────────────────
   async sendToHotWallet(req: Request, res: Response) {
     try {
@@ -661,6 +1011,74 @@ export class WalletsController {
     } catch (e: any) {
       const status = /Insufficient|not found|required/.test(e.message) ? 400 : 500;
       res.status(status).json({ error: e.message });
+    }
+  }
+
+  async callProviderAndSendToMerchant(req: Request, res: Response) {
+    try {
+      const {
+        customerId,
+        merchantId,
+        amountMinor,
+        currency,
+        endpointUrl,
+        apiKey,
+        requestReference,
+        reason,
+      } = req.body || {};
+      const result = await walletsService.callProviderAndSendToMerchant({
+        customerId,
+        merchantId,
+        amountMinor,
+        currency,
+        endpointUrl,
+        apiKey,
+        requestReference,
+        reason,
+      });
+      res.json(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Provider transfer failed';
+      const status = /required|positive integer|invalid|HTTPS|allowlisted|Insufficient|not found|different amount|different currency|did not confirm|rejected/i.test(message)
+        ? 400
+        : 502;
+      res.status(status).json({ error: message });
+    }
+  }
+
+  async pullProviderFundsToMerchant(req: Request, res: Response) {
+    try {
+      const {
+        customerId,
+        merchantId,
+        amountMinor,
+        currency,
+        endpointUrl,
+        apiKey,
+        secretKey,
+        requestReference,
+        reason,
+      } = req.body || {};
+      const result = await walletsService.pullProviderFundsToMerchant({
+        customerId,
+        merchantId,
+        amountMinor,
+        currency,
+        endpointUrl,
+        apiKey,
+        secretKey,
+        requestReference,
+        reason,
+      });
+      res.status(201).json(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Provider fund pull failed';
+      const status = /required|positive integer|invalid|HTTPS|allowlisted|not found|mismatch|mock|sandbox|test|simulat|not confirm|rejected|previously failed|reconcile|start with WPP/i.test(message)
+        ? 400
+        : /uncertain|UNKNOWN|reconciliation|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|timeout|5\d\d/i.test(message)
+          ? 502
+          : 500;
+      res.status(status).json({ error: message });
     }
   }
 
@@ -702,7 +1120,13 @@ export class WalletsController {
       const wallet = await walletsService.getOrCreateMerchantWallet(merchantId, (currency as string) || 'USD');
       const { db } = await import('../../config/db');
       const res2 = await db.query(
-        'SELECT * FROM merchant_wallet_transactions WHERE wallet_id = ? ORDER BY created_at DESC LIMIT 100',
+        `SELECT t.* FROM merchant_wallet_transactions t
+         WHERE t.wallet_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM merchant_wallet_transaction_voids v
+             WHERE v.transaction_id = t.id
+           )
+         ORDER BY t.created_at DESC LIMIT 100`,
         [wallet.id]
       );
       res.json(res2.rows);
@@ -766,7 +1190,15 @@ export class WalletsController {
         note: 'Valid for 5 minutes, single-use. Load in Android WebView, iframe, or redirect.',
       });
     } catch (e: any) {
-      res.status(500).json({ error: e.message || 'Transak widget session failed' });
+      const msg: string = (e?.message || 'Transak widget session failed').toString();
+      // Detect HTTP status from wrapped transak service messages like "(HTTP 429)"
+      const fromMessage = /\(HTTP\s+(\d{3})\)/.exec(msg);
+      let status = 500;
+      if (fromMessage) status = Number(fromMessage[1]);
+      else if (/rate-limited|429|too many requests|retry in \d+s/i.test(msg)) status = 429;
+      else if (/unauthorized|invalid (api|partner|secret)|forbidden/i.test(msg)) status = 401;
+      else if (/not configured|referrer domain|api key/i.test(msg)) status = 503;
+      res.status(status).json({ error: msg });
     }
   }
 

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { uploadBatch, chargePayment, cashoutBraintree, fetchTerminals } from '../lib/api';
-import type { Terminal } from '../types';
+import { uploadBatch, chargePayment, cashoutBraintree, fetchSettings } from '../lib/api';
 import { MockDataGenerator } from "../lib/emv/mock-data-generator";
 import { TerminalRiskManagement } from "../lib/emv/terminal-risk-management";
 import { useToast } from '../components/ui/Toast';
@@ -16,20 +15,32 @@ const riskManagement = new TerminalRiskManagement({
 export const POSPage = () => {
   const [amount, setAmount] = useState("0.00");
   const [loading, setLoading] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(() => {
+    const pending = JSON.parse(localStorage.getItem('offline_transactions') || '[]');
+    return pending.length;
+  });
   const [simulateOffline, setSimulateOffline] = useState(false);
   const [showCardForm, setShowCardForm] = useState(false);
   const [cardData, setCardData] = useState({ pan: "", expiry: "", cvv: "" });
+  const [terminalSettings, setTerminalSettings] = useState({
+    offlineMode: false,
+    manualEntry: false
+  });
   const { showToast } = useToast();
-
-  useEffect(() => {
-    updatePendingCount();
-  }, []);
 
   const updatePendingCount = () => {
     const pending = JSON.parse(localStorage.getItem('offline_transactions') || '[]');
     setPendingCount(pending.length);
   };
+
+  useEffect(() => {
+    fetchSettings()
+      .then((settings) => setTerminalSettings({
+        offlineMode: settings.terminal?.offlineMode ?? false,
+        manualEntry: settings.terminal?.features.manualEntry ?? false
+      }))
+      .catch(() => showToast('Unable to load terminal settings; POS features are disabled', 'error'));
+  }, [showToast]);
 
   const handleKeyPress = (key: string) => {
     setAmount(prev => {
@@ -48,6 +59,10 @@ export const POSPage = () => {
   };
 
   const handleChargeClick = () => {
+    if (!terminalSettings.manualEntry) {
+      showToast('Manual card entry is disabled in Terminal Settings', 'error');
+      return;
+    }
     const amountVal = parseFloat(amount);
     if (amountVal <= 0) {
       showToast('Enter a valid amount', 'error');
@@ -99,6 +114,12 @@ export const POSPage = () => {
     };
 
     try {
+      const shouldProcessOffline = !navigator.onLine || simulateOffline;
+      if (shouldProcessOffline && !terminalSettings.offlineMode) {
+        showToast('Offline processing is disabled in Terminal Settings', 'error');
+        return;
+      }
+
       if (navigator.onLine && !simulateOffline) {
         const res = await chargePayment(
           txn.amountMinor, 
@@ -117,7 +138,7 @@ export const POSPage = () => {
       } else {
         throw new Error("Offline");
       }
-    } catch (_error) {
+    } catch {
       // --- OFFLINE AUTHORIZATION (201.3 PROTOCOL) ---
       
       // 1. Generate Mock TLV (Simulating Card Read)
@@ -181,7 +202,7 @@ export const POSPage = () => {
           await uploadBatch(batch);
           successCount++;
         }
-      } catch (_e) {
+      } catch {
         failed.push(batch);
       }
     }
@@ -202,9 +223,11 @@ export const POSPage = () => {
         <div className="flex items-center gap-2">
            <button 
              onClick={() => setSimulateOffline(!simulateOffline)}
-             className={`px-2 py-1 rounded text-xs font-semibold transition-colors ${simulateOffline ? 'bg-red-500 text-white' : 'bg-blue-700 text-blue-100 hover:bg-blue-800'}`}
+             disabled={!terminalSettings.offlineMode}
+             title={!terminalSettings.offlineMode ? 'Offline processing is disabled in Terminal Settings' : undefined}
+             className={`px-2 py-1 rounded text-xs font-semibold transition-colors ${!terminalSettings.offlineMode ? 'bg-blue-900 text-blue-300 cursor-not-allowed' : simulateOffline ? 'bg-red-500 text-white' : 'bg-blue-700 text-blue-100 hover:bg-blue-800'}`}
            >
-             {simulateOffline ? 'FORCE OFFLINE' : 'GO OFFLINE'}
+             {!terminalSettings.offlineMode ? 'OFFLINE DISABLED' : simulateOffline ? 'FORCE OFFLINE' : 'GO OFFLINE'}
            </button>
            <span className={`w-2.5 h-2.5 rounded-full ${(navigator.onLine && !simulateOffline) ? 'bg-green-400' : 'bg-red-400'}`}></span>
            <span className="text-xs font-medium opacity-90">{(navigator.onLine && !simulateOffline) ? 'ONLINE' : 'OFFLINE'}</span>
@@ -310,10 +333,10 @@ export const POSPage = () => {
       <div className="p-4 bg-white border-t border-gray-200">
         <button
           onClick={handleChargeClick}
-          disabled={loading || parseFloat(amount) === 0}
+          disabled={loading || parseFloat(amount) === 0 || !terminalSettings.manualEntry}
           className={`
             w-full py-4 rounded-xl text-lg font-bold text-white shadow-lg transition-all
-            ${loading || parseFloat(amount) === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-500/30 active:scale-[0.98]'}
+            ${loading || parseFloat(amount) === 0 || !terminalSettings.manualEntry ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-500/30 active:scale-[0.98]'}
             flex items-center justify-center gap-2
           `}
         >
@@ -326,7 +349,7 @@ export const POSPage = () => {
               Processing...
             </>
           ) : (
-            'Charge'
+            terminalSettings.manualEntry ? 'Charge' : 'Manual Entry Disabled'
           )}
         </button>
       </div>

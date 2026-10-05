@@ -158,8 +158,8 @@ export const TerminalPairingPage = () => {
             terminalSecret: result.terminalSecret,
             name: data.terminalName
           });
-        } catch (e: any) {
-          setError(e.message || "Registration failed");
+        } catch (e: unknown) {
+          setError(e instanceof Error && e.message ? e.message : "Registration failed");
           setLoading(false);
           return;
         }
@@ -190,8 +190,8 @@ export const TerminalPairingPage = () => {
       });
       const result = await res.json();
       setVerifyResult({ valid: result.valid, message: result.valid ? "Verified!" : result.message });
-    } catch (e: any) {
-      setVerifyResult({ valid: false, message: e.message });
+    } catch (e: unknown) {
+      setVerifyResult({ valid: false, message: e instanceof Error ? e.message : "Verification failed" });
     }
   };
 
@@ -227,7 +227,7 @@ export const TerminalPairingPage = () => {
                      <Input 
                        label="Terminal Name" 
                        value={data.terminalName} 
-                       onChange={(e: any) => setData({...data, terminalName: e.target.value})} 
+                       onChange={(e) => setData({...data, terminalName: e.target.value})} 
                        placeholder="e.g. Counter 1, Front Desk" 
                      />
                      <Input 

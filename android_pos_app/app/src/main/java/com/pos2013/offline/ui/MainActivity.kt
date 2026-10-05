@@ -3,6 +3,7 @@ package com.pos2013.offline.ui
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
@@ -82,10 +83,12 @@ class MainActivity : AppCompatActivity() {
         if (androidNfcReaderManager.isAvailable()) {
             androidNfcReaderManager.enableReaderMode()
         }
+        startHealthPing()
     }
 
     override fun onPause() {
         super.onPause()
+        healthPingJob?.cancel()
         acsReaderManager.closeReader()
         if (androidNfcReaderManager.isAvailable()) {
             androidNfcReaderManager.disableReaderMode()
@@ -150,136 +153,139 @@ class MainActivity : AppCompatActivity() {
 
     // ── Build UI ───────────────────────────────────────────────────────────────
     private fun buildUI() {
-        val root = LinearLayout(this).apply {
+        // Outer frame: header (fixed) + scrollable content + bottom nav (fixed)
+        val frame = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#F1F5F9"))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
+                LinearLayout.LayoutParams.MATCH_PARENT
             )
         }
 
-        // Header
+        // ── Fixed header ─────────────────────────────────────────────────────
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.parseColor("#1E3A5F"))
-            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
         }
         val tvTitle = TextView(this).apply {
-            text = "POS Offline"
-            textSize = 20f
+            text = "POS Terminal"
+            textSize = 16f
             setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            typeface = Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         tvStatus = TextView(this).apply {
             text = "● Checking..."
-            textSize = 12f
+            textSize = 10f
             setTextColor(Color.parseColor("#93C5FD"))
-            setPadding(0, 0, dp(12), 0)
+            setPadding(0, 0, dp(8), 0)
         }
-        val btnSettings = TextView(this).apply {
-            text = "⚙"
-            textSize = 28f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(dp(20), dp(10), dp(20), dp(10))
-            isClickable = true
-            isFocusable = true
-
-            val outValue = android.util.TypedValue()
-            theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
-            setBackgroundResource(outValue.resourceId)
-            
-            setOnClickListener { 
-                startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) 
-            }
+        val btnSettingsIco = TextView(this).apply {
+            text = "⚙"; textSize = 22f; setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER; setPadding(dp(12), dp(6), dp(12), dp(6))
+            isClickable = true; isFocusable = true
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
-        header.addView(tvTitle); header.addView(tvStatus); header.addView(btnSettings)
-        root.addView(header)
+        header.addView(tvTitle); header.addView(tvStatus); header.addView(btnSettingsIco)
+        frame.addView(header)
 
-        // Amount card
+        // ── Scrollable body ──────────────────────────────────────────────────
+        val scroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            isFillViewport = true
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F1F5F9"))
+        }
+
+        // Amount display (compact)
         val amountCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
-            setPadding(dp(24), dp(16), dp(24), dp(16))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
             gravity = Gravity.CENTER_HORIZONTAL
         }
         TextView(this).apply {
             text = "Amount (AED)"
-            textSize = 12f
+            textSize = 10f
             setTextColor(Color.parseColor("#9CA3AF"))
             gravity = Gravity.CENTER
         }.also { amountCard.addView(it) }
         tvAmount = TextView(this).apply {
             text = "0.00"
-            textSize = 52f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textSize = 40f
+            typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#111827"))
             gravity = Gravity.END
         }
         amountCard.addView(tvAmount)
         tvPending = TextView(this).apply {
-            text = ""
-            textSize = 11f
+            text = ""; textSize = 10f
             setTextColor(Color.parseColor("#D97706"))
             gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, 0)
         }
         amountCard.addView(tvPending)
-        root.addView(amountCard)
+        body.addView(amountCard)
 
-        // Reader status banner
+        // Reader status (single compact line)
         tvReaderStatus = TextView(this).apply {
             text = "📇 Waiting for reader..."
-            textSize = 13f
+            textSize = 11f
             setTextColor(Color.parseColor("#374151"))
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setPadding(dp(12), dp(5), dp(12), dp(5))
             gravity = Gravity.CENTER
             setBackgroundColor(Color.parseColor("#FFFBEB"))
         }
-        root.addView(tvReaderStatus)
+        body.addView(tvReaderStatus)
 
-        // Result banner
+        // Result banner (compact)
         tvResult = TextView(this).apply {
             text = "Ready"
-            textSize = 13f
+            textSize = 11f
             setTextColor(Color.parseColor("#374151"))
-            setPadding(dp(16), dp(10), dp(16), dp(10))
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             gravity = Gravity.CENTER
             setBackgroundColor(Color.parseColor("#EFF6FF"))
         }
-        root.addView(tvResult)
+        body.addView(tvResult)
 
-        root.addView(buildKeypad())
-        root.addView(buildActionRow())
-        setContentView(root)
+        body.addView(buildKeypad())
+        body.addView(buildActionRow())
+
+        scroll.addView(body)
+        frame.addView(scroll)
+
+        // ── Fixed bottom nav ─────────────────────────────────────────────────
+        frame.addView(buildBottomNav())
+
+        setContentView(frame)
     }
 
     private fun buildKeypad(): GridLayout {
         val grid = GridLayout(this).apply {
             columnCount = 3
-            setPadding(dp(10), dp(10), dp(10), dp(4))
+            setPadding(dp(6), dp(6), dp(6), dp(2))
             setBackgroundColor(Color.parseColor("#F1F5F9"))
         }
         listOf("1","2","3","4","5","6","7","8","9","C","0",".").forEach { key ->
             val isC = key == "C"
             val btn = Button(this).apply {
                 text = key
-                textSize = 24f
+                textSize = 20f
+                typeface = Typeface.DEFAULT_BOLD
                 setTextColor(if (isC) Color.parseColor("#DC2626") else Color.parseColor("#1F2937"))
                 setBackgroundColor(if (isC) Color.parseColor("#FEE2E2") else Color.WHITE)
-                setPadding(0, dp(16), 0, dp(16))
-                elevation = 2f
+                setPadding(0, dp(10), 0, dp(10))
+                elevation = 1f
                 layoutParams = GridLayout.LayoutParams().apply {
                     width = 0; height = GridLayout.LayoutParams.WRAP_CONTENT
                     columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                    setMargins(dp(4), dp(4), dp(4), dp(4))
+                    setMargins(dp(3), dp(3), dp(3), dp(3))
                 }
                 setOnClickListener { onKeyPress(key) }
             }
@@ -292,61 +298,95 @@ class MainActivity : AppCompatActivity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
-            setPadding(dp(12), dp(8), dp(12), dp(12))
+            setPadding(dp(8), dp(6), dp(8), dp(8))
         }
 
-        // Top row: Charge + Sync
+        // Row 1: Charge + Sync
         val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-
         btnCharge = Button(this).apply {
-            text = "Charge"
-            textSize = 16f; setTextColor(Color.WHITE)
+            text = "💳 CHARGE"
+            textSize = 14f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
             setBackgroundColor(Color.parseColor("#1E3A5F"))
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                .apply { marginEnd = dp(6) }
-            setPadding(0, dp(16), 0, dp(16))
+            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(4) }
             setOnClickListener { onChargeClick() }
         }
         btnSync = Button(this).apply {
-            text = "Sync ↑"
-            textSize = 14f; setTextColor(Color.parseColor("#92400E"))
+            text = "⬆ Sync"
+            textSize = 12f; setTextColor(Color.parseColor("#92400E")); typeface = Typeface.DEFAULT_BOLD
             setBackgroundColor(Color.parseColor("#FDE68A"))
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT)
-            setPadding(dp(20), dp(16), dp(20), dp(16))
+            layoutParams = LinearLayout.LayoutParams(dp(80), dp(44))
             visibility = View.GONE
             setOnClickListener { onSyncClick() }
         }
         topRow.addView(btnCharge); topRow.addView(btnSync)
         row.addView(topRow)
 
-        // Wallet Topup button
-        row.addView(space(8))
+        // Row 2: Wallet Topup + Redeem (side by side)
+        row.addView(space(5))
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         btnWalletTopup = Button(this).apply {
             text = "💳 Wallet Topup"
-            textSize = 15f; setTextColor(Color.WHITE)
+            textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
             setBackgroundColor(Color.parseColor("#7C3AED"))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setPadding(0, dp(14), 0, dp(14))
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) }
             setOnClickListener { showWalletTopupDialog() }
         }
-        row.addView(btnWalletTopup)
-
-        // Bottom row: Redeem 6-digit code
-        row.addView(space(8))
         btnRedeemCode = Button(this).apply {
-            text = "⌨  Enter 6-Digit Code"
-            textSize = 15f; setTextColor(Color.WHITE)
+            text = "⌨ 6-Digit Code"
+            textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
             setBackgroundColor(Color.parseColor("#16A34A"))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setPadding(0, dp(14), 0, dp(14))
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f)
             setOnClickListener { showRedeemCodeDialog() }
         }
-        row.addView(btnRedeemCode)
+        row2.addView(btnWalletTopup); row2.addView(btnRedeemCode)
+        row.addView(row2)
+
+        // Row 3: Print Receipt button
+        row.addView(space(5))
+        val btnPrint = Button(this).apply {
+            text = "🖨 Print Last Receipt"
+            textSize = 12f; setTextColor(Color.parseColor("#1E3A5F")); typeface = Typeface.DEFAULT_BOLD
+            setBackgroundColor(Color.parseColor("#E0E7FF"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(38))
+            setOnClickListener { printLastReceipt() }
+        }
+        row.addView(btnPrint)
 
         return row
+    }
+
+    private fun buildBottomNav(): LinearLayout {
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.parseColor("#1E3A5F"))
+            setPadding(dp(2), dp(6), dp(2), dp(8))
+            elevation = 8f
+        }
+        fun navBtn(icon: String, label: String, action: () -> Unit) = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            isClickable = true; isFocusable = true
+            setPadding(0, dp(2), 0, dp(2))
+            setOnClickListener { action() }
+            addView(TextView(this@MainActivity).apply {
+                text = icon; textSize = 18f; gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = label; textSize = 9f; gravity = Gravity.CENTER
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.parseColor("#93C5FD"))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            })
+        }
+        nav.addView(navBtn("🏠", "POS") { /* home */ })
+        nav.addView(navBtn("📋", "History") { startActivity(Intent(this, TransactionHistoryActivity::class.java)) })
+        nav.addView(navBtn("👥", "Customers") { startActivity(Intent(this, CustomerActivity::class.java)) })
+        nav.addView(navBtn("📊", "Dashboard") { startActivity(Intent(this, DashboardSyncActivity::class.java)) })
+        nav.addView(navBtn("⚙", "Settings") { startActivity(Intent(this, SettingsActivity::class.java)) })
+        return nav
     }
 
     private fun showCardDetectedDialog(cardData: EmvCardData) {
@@ -615,6 +655,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun getAmount(): Double = amountBuffer.toString().toDoubleOrNull() ?: 0.0
 
+    private var healthPingJob: kotlinx.coroutines.Job? = null
+
+    private fun startHealthPing() {
+        healthPingJob?.cancel()
+        healthPingJob = lifecycleScope.launch {
+            while (true) {
+                try {
+                    val serverUrl = PosApplication.getServerUrl(this@MainActivity)
+                    val api = ApiClient.createPayment2013Api(serverUrl)
+                    val resp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        api.health()
+                    }
+                    if (resp.isSuccessful) {
+                        setStatus("ONLINE", "#4ADE80")
+                        // Auto-sync pending if we just came online
+                        val db = (application as PosApplication).database
+                        val pending = db.transactionDao().countByStatus("PENDING")
+                        if (pending > 0 && isNetworkAvailable()) onSyncClick()
+                    } else {
+                        setStatus("HTTP ${resp.code()}", "#FFA000")
+                    }
+                } catch (e: Exception) {
+                    setStatus("OFFLINE", "#FF5252")
+                }
+                kotlinx.coroutines.delay(15_000) // ping every 15 seconds
+            }
+        }
+    }
+
     // ── Processor health check ────────────────────────────────────────────────
     private fun setStatus(text: String, hex: String) {
         tvStatus.text = "● $text"
@@ -788,13 +857,16 @@ class MainActivity : AppCompatActivity() {
                 editing = false
             }
         })
-        etExpiry.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dp(10) }
+        etExpiry.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
 
         val etCvv = styledInput("CVV", isPassword = true)
         etCvv.filters = arrayOf(InputFilter.LengthFilter(4))
         etCvv.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-        etCvv.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        etCvv.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
 
         val expiryWrap = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -813,9 +885,27 @@ class MainActivity : AppCompatActivity() {
         expiryRow.addView(expiryWrap)
         expiryRow.addView(cvvWrap)
 
+        val etAuthCode = styledInput("OPTIONAL CODE").apply {
+            filters = arrayOf(InputFilter.LengthFilter(12), InputFilter.AllCaps())
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val authCodeWrap = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+        authCodeWrap.addView(fieldLabel("AUTHORIZATION CODE (OPTIONAL)"))
+        authCodeWrap.addView(etAuthCode)
+
         inputSection.addView(fieldLabel("CARD NUMBER"))
         inputSection.addView(etPan)
         inputSection.addView(expiryRow)
+        inputSection.addView(authCodeWrap)
         root.addView(inputSection)
 
         // ── Divider ───────────────────────────────────────────────────────────
@@ -879,6 +969,7 @@ class MainActivity : AppCompatActivity() {
             val rawPan = etPan.text.toString().replace(" ", "").trim()
             val expiry = etExpiry.text.toString().trim()
             val cvv = etCvv.text.toString().trim()
+            val authCode = etAuthCode.text.toString().trim().ifEmpty { null }
 
             if (rawPan.length < 13) { toast("Invalid card number"); return@setOnClickListener }
             if (!expiry.matches(Regex("\\d{2}/\\d{2}"))) { toast("Enter expiry MM/YY"); return@setOnClickListener }
@@ -887,9 +978,9 @@ class MainActivity : AppCompatActivity() {
             val panMasked = "*".repeat(rawPan.length - 4) + rawPan.takeLast(4)
             dialog.dismiss()
             if (isNetworkAvailable()) {
-                submitOnlineCharge(amount, rawPan, expiry, cvv)
+                submitOnlineCharge(amount, rawPan, expiry, cvv, authCode = authCode)
             } else {
-                processOfflineQueue(amount, panMasked, expiry)
+                processOfflineQueue(amount, panMasked, expiry, authCode = authCode)
             }
         }
 
@@ -906,7 +997,8 @@ class MainActivity : AppCompatActivity() {
         expiry: String?,
         cvv: String?,
         emv: Map<String, Any?>? = null,
-        tlvRaw: String? = null
+        tlvRaw: String? = null,
+        authCode: String? = null
     ) {
         val prefs = getSharedPreferences("pos_settings", Context.MODE_PRIVATE)
         val merchantId = prefs.getString("merchant_id", "")?.trim().orEmpty()
@@ -929,6 +1021,7 @@ class MainActivity : AppCompatActivity() {
                         pan = pan,
                         expiry = expiry,
                         cvv = cvv,
+                        authCode = authCode,
                         emv = emv,
                         tlvRaw = tlvRaw,
                         stan = generateNextStan()
@@ -936,8 +1029,9 @@ class MainActivity : AppCompatActivity() {
                 )
                 val body = response.body()
                 if (response.isSuccessful && body?.status == "APPROVED" && !body.authCode.isNullOrBlank()) {
+                    lastTransactionId = body.paymentIntentId
                     setResult(
-                        "✅ APPROVED\nApproval code: ${body.authCode}\nReference: ${body.paymentIntentId ?: "-"}",
+                        "✅ APPROVED\nApproval code: ${body.authCode}\nRef: ${body.paymentIntentId ?: "-"}",
                         "#DCFCE7"
                     )
                     resetAmount()
@@ -961,7 +1055,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ── Store offline transaction in Room ─────────────────────────────────────
-    private fun processOfflineQueue(amount: Double, panMasked: String, expiry: String, entryMode: String = "MANUAL") {
+    private fun processOfflineQueue(
+        amount: Double,
+        panMasked: String,
+        expiry: String,
+        entryMode: String = "MANUAL",
+        authCode: String? = null
+    ) {
         val nextStan = generateNextStan()
         val amountMinor = (amount * 100).toLong()
 
@@ -976,7 +1076,8 @@ class MainActivity : AppCompatActivity() {
                     stan = nextStan,
                     entryMode = entryMode,
                     txnType = "SALE",
-                    authMode = "OFFLINE_APPROVED"
+                    authMode = if (!authCode.isNullOrBlank()) "PRE_AUTHORIZED" else "OFFLINE_APPROVED",
+                    authCode = authCode
                 )
                 setResult("💾 Queued  STAN: $nextStan  AED ${"%.2f".format(amount)}", "#FEF3C7")
                 resetAmount()
@@ -1102,6 +1203,193 @@ class MainActivity : AppCompatActivity() {
                 btnRedeemCode.isEnabled = true
             }
         }
+    }
+
+    // ── Thermal receipt printer (Bluetooth ESC/POS) ───────────────────────────
+    private var lastReceiptText: String? = null
+    private var lastTransactionId: String? = null
+
+    private fun printLastReceipt() {
+        val token = PosApplication.getJwtToken(this)
+        val serverUrl = PosApplication.getServerUrl(this)
+        val txId = lastTransactionId
+
+        if (txId == null) {
+            toast("No transaction to print — process a payment first")
+            return
+        }
+        if (token.isNullOrBlank()) {
+            toast("Login required — go to Settings")
+            return
+        }
+
+        setResult("🖨 Fetching receipt...", "#EFF6FF")
+        lifecycleScope.launch {
+            try {
+                val api = ApiClient.createReceiptApi(serverUrl, token)
+                val resp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    api.generateReceipt(txId)
+                }
+                if (resp.isSuccessful) {
+                    val text = resp.body()?.plainCustomer ?: resp.body()?.browserCustomer ?: ""
+                    lastReceiptText = text
+                    showPrintDialog(text)
+                } else {
+                    toast("Receipt not available: HTTP ${resp.code()}")
+                }
+            } catch (e: Exception) {
+                toast("Receipt error: ${e.message}")
+            }
+        }
+    }
+
+    private fun showPrintDialog(receiptText: String) {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+
+        // Preview
+        val tv = TextView(this).apply {
+            text = receiptText.take(500) + if (receiptText.length > 500) "\n..." else ""
+            textSize = 9f
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.parseColor("#1F2937"))
+            setBackgroundColor(Color.parseColor("#F9FAFB"))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val sv = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(200))
+        }
+        sv.addView(tv)
+        layout.addView(sv)
+
+        // Bluetooth device address input
+        layout.addView(View(this).apply {
+            setBackgroundColor(Color.parseColor("#E5E7EB"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(8); bottomMargin = dp(8) }
+        })
+        layout.addView(TextView(this).apply {
+            text = "Bluetooth Printer MAC Address"
+            textSize = 11f; setTextColor(Color.parseColor("#6B7280"))
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        val etMac = EditText(this).apply {
+            hint = "e.g. 00:11:22:33:44:55"
+            textSize = 13f
+            typeface = Typeface.MONOSPACE
+            val savedMac = getSharedPreferences("pos_settings", Context.MODE_PRIVATE)
+                .getString("printer_mac", "") ?: ""
+            setText(savedMac)
+        }
+        layout.addView(etMac)
+
+        AlertDialog.Builder(this)
+            .setTitle("🖨 Print Receipt")
+            .setView(layout)
+            .setPositiveButton("Print via Bluetooth") { _, _ ->
+                val mac = etMac.text.toString().trim()
+                if (mac.isBlank()) {
+                    // Show receipt as text if no printer
+                    showReceiptAsText(receiptText)
+                    return@setPositiveButton
+                }
+                // Save MAC for next time
+                getSharedPreferences("pos_settings", Context.MODE_PRIVATE)
+                    .edit().putString("printer_mac", mac).apply()
+                printViaBluetooth(mac, receiptText)
+            }
+            .setNeutralButton("View on Screen") { _, _ -> showReceiptAsText(receiptText) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun printViaBluetooth(macAddress: String, text: String) {
+        // Request BLUETOOTH_CONNECT permission on Android 12+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.BLUETOOTH_CONNECT), 1001)
+                toast("Bluetooth permission requested — try printing again")
+                return
+            }
+        }
+        setResult("🖨 Connecting to printer...", "#EFF6FF")
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+                if (adapter == null || !adapter.isEnabled) {
+                    runOnUiThread { toast("Bluetooth is off — turn it on first") }
+                    return@launch
+                }
+
+                val device = try {
+                    adapter.getRemoteDevice(macAddress.uppercase().trim())
+                } catch (e: Exception) {
+                    runOnUiThread { toast("Invalid MAC address: $macAddress") }
+                    return@launch
+                }
+
+                val socket = try {
+                    device.createRfcommSocketToServiceRecord(
+                        java.util.UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+                    )
+                } catch (e: Exception) {
+                    runOnUiThread { toast("Could not create Bluetooth socket: ${e.message}") }
+                    return@launch
+                }
+
+                try {
+                    socket.connect()
+
+                    val out = socket.outputStream
+
+                    // ESC/POS init
+                    out.write(byteArrayOf(0x1B, 0x40)) // ESC @ — initialize printer
+
+                    // Print text as UTF-8
+                    // Clean control chars but keep newlines
+                    val clean = text.replace(Regex("[\\x00-\\x09\\x0B-\\x1F\\x7F]"), "")
+                    out.write(clean.toByteArray(Charsets.UTF_8))
+
+                    // Feed and cut
+                    out.write(byteArrayOf(0x0A, 0x0A, 0x0A)) // 3 line feeds
+                    out.write(byteArrayOf(0x1D, 0x56, 0x00)) // GS V 0 — full cut
+
+                    out.flush()
+                    socket.close()
+
+                    runOnUiThread {
+                        setResult("✅ Receipt printed successfully", "#DCFCE7")
+                        toast("Printed!")
+                    }
+                } catch (e: Exception) {
+                    try { socket.close() } catch (_: Exception) {}
+                    runOnUiThread {
+                        setResult("❌ Print failed: ${e.message}", "#FEE2E2")
+                        toast("Print failed — check printer is on and paired")
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Bluetooth error: ${e.message}") }
+            }
+        }
+    }
+
+    private fun showReceiptAsText(text: String) {
+        val tv = TextView(this).apply {
+            this.text = text
+            textSize = 10f
+            typeface = Typeface.MONOSPACE
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+        }
+        val sv = ScrollView(this).also { it.addView(tv) }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Receipt")
+            .setView(sv)
+            .setPositiveButton("Close", null)
+            .show()
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

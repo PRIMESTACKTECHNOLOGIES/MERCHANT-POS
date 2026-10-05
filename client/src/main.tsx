@@ -52,13 +52,22 @@ declare global {
       lsAll.forEach(k => { if (!removed.includes('LS:'+k)) { localStorage.removeItem(k); removed.push('LS*:'+k); }});
       const ssAll = new Array(sessionStorage.length).fill(0).map((_,i)=>sessionStorage.key(i)!);
       ssAll.forEach(k => { if (!removed.includes('SS:'+k)) { sessionStorage.removeItem(k); removed.push('SS*:'+k); }});
-      if (typeof (window as any).indexedDB?.databases === 'function') {
-        (window as any).indexedDB.databases().then((dbs: any[]) => dbs.forEach((d:any) => d.name && window.indexedDB.deleteDatabase(d.name)));
+      const indexedDBWithDatabases = window.indexedDB as IDBFactory & {
+        databases?: () => Promise<IDBDatabaseInfo[]>;
+      };
+      if (typeof indexedDBWithDatabases.databases === 'function') {
+        indexedDBWithDatabases.databases().then(databases =>
+          databases.forEach(database => {
+            if (database.name) window.indexedDB.deleteDatabase(database.name);
+          })
+        );
       }
       if (typeof caches !== 'undefined') {
         caches.keys().then(ks => ks.forEach(k => caches.delete(k).catch(()=>{})));
       }
-    } catch {}
+    } catch {
+      // Storage providers may disable enumeration; continue with available data.
+    }
     console.log('%c[POS_WIPE_ALL] Removed '+removed.length+' keys. Reloading in 1s.',
       'color:green;font-weight:bold;', removed);
     setTimeout(() => location.reload(), 1000);

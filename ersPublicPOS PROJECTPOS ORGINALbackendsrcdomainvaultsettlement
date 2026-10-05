@@ -1,0 +1,129 @@
+[1mdiff --git a/backend/.env.example b/backend/.env.example[m
+[1mindex 47ecfaa..58ea395 100644[m
+[1m--- a/backend/.env.example[m
+[1m+++ b/backend/.env.example[m
+[36m@@ -1,6 +1,13 @@[m
+ # ─── App ──────────────────────────────────────────────────────────────────────[m
+ PORT=7000[m
+ JWT_SECRET=your_jwt_secret_here[m
+[32m+[m[32mADMIN_USERNAME=admin[m
+[32m+[m[32mADMIN_PASSWORD=admin123[m
+[32m+[m
+[32m+[m[32m# Vault Bank → licensed Bank Partner payout API[m
+[32m+[m[32m# BANK_PARTNER_API_URL=http://127.0.0.1:9100[m
+[32m+[m[32m# BANK_PARTNER_API_KEY=[m
+[32m+[m[32m# BANK_PARTNER_SECRET=[m
+ [m
+ # ─── Display branding (does not change transaction IDs or protocol/database identifiers) ───[m
+ POS_BRAND_NAME=PRIME[m
+[36m@@ -21,11 +28,11 @@[m [mNPM_TOKEN=replace_this_with_your_npm_token_starts_with_npm_[m
+ # recommended since KuCoin has minimal KYC friction.[m
+ #[m
+ # RECOMMENDED PRODUCTION SETTING (default if unset):[m
+[31m-#   EXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+[31m-EXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+[32m+[m[32m#   EXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin[m
+[32m+[m[32mEXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin[m
+ [m
+ # Legacy alias (also accepted):[m
+[31m-# CRYPTO_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+[32m+[m[32m# CRYPTO_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin[m
+ [m
+ # Single-provider shorthand (lowest precedence — only used when the comma list[m
+ # above and legacy priority alias are both absent):[m
+[36m@@ -96,7 +103,12 @@[m [mEXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+ # BANK_PAYOUT_PROVIDER=internal[m
+ # Use Wise as the transport rail:[m
+ # INTERNAL_PAYOUT_DOWNSTREAM=wise[m
+[31m-# WISE_API_KEY=your_wise_api_key_here[m
+[32m+[m[32m# INTERNAL_PAYOUT_DOWNSTREAM=iso8583[m
+[32m+[m[32m# ISO8583_HEADER=NONE[m
+[32m+[m[32mVAULT_BANK_WEBHOOK_SECRET=replace_with_bank_partner_webhook_secret[m
+[32m+[m[32m# WISE_API_URL=https://api.wise.com/2026Q3[m
+[32m+[m[32m# WISE_API_KEY=8129c526-150f-432b-a41c-78c07245adc1[m
+[32m+[m[32m# WISE_PROFILE_ID=your_wise_profile_id_optional[m
+ # Or call your bank/processor directly from the internal acquirer:[m
+ # INTERNAL_PAYOUT_RECEIVER_URL=https://your-bank-or-processor.example/api/payouts[m
+ # INTERNAL_PAYOUT_RECEIVER_API_KEY=your_receiver_api_key_here[m
+[36m@@ -104,6 +116,10 @@[m [mEXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+ # Banks sign `${timestamp}.${nonce}.${JSON.stringify(body)}` with HMAC-SHA512.[m
+ # VAULT_BANK_API_KEY=generate_a-512-bit-key-and-store-in-your-secret-manager[m
+ # VAULT_BANK_SECRET_KEY=generate-a-512-bit-secret-and-store-in-your-secret-manager[m
+[32m+[m[32m# POS -> private vault-bank settlement rail. The endpoint must confirm the[m
+[32m+[m[32m# external vault-bank ledger credit before the local merchant wallet is debited.[m
+[32m+[m[32m# Defaults to the separate local process at http://127.0.0.1:9001/api/vault/settlement.[m
+[32m+[m[32m# VAULT_BANK_TRANSFER_URL=https://your-remote-vault-bank.example/api/vault/settlement[m
+ # Optional mTLS listener for banks. Keep certificate files outside Git.[m
+ # VAULT_MTLS_ENABLED=false[m
+ # VAULT_MTLS_PORT=9443[m
+[36m@@ -111,6 +127,11 @@[m [mEXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+ # VAULT_MTLS_CA_PATH=./certs/ca.crt[m
+ # VAULT_MTLS_CERT_PATH=./certs/vault-server.crt[m
+ # VAULT_MTLS_KEY_PATH=./certs/vault-server.key[m
+[32m+[m[32m# Run the vault bank as a separate private process:[m
+[32m+[m[32m#   npm run dev:vault-bank[m
+[32m+[m[32m#   npm run start:vault-bank[m
+[32m+[m[32mVAULT_BANK_PORT=9001[m
+[32m+[m[32mVAULT_BANK_BIND_HOST=127.0.0.1[m
+ # Replacement provider through the generic external adapter:[m
+ # BANK_PAYOUT_PROVIDER=external[m
+ # BANK_PAYOUT_API_URL=https://your-payout-provider.example/api/payouts[m
+[36m@@ -118,11 +139,44 @@[m [mEXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+ # BANK_PAYOUT_API_KEY=your_provider_api_key_here[m
+ # Every new POST /api/payout/merchant/:merchantId/payout/bank calls the configured provider.[m
+ [m
+[32m+[m[32m# ─── ACH Originator (Dwolla) ─────────────────────────────────────────────────[m
+[32m+[m[32m# Use INTERNAL_PAYOUT_DOWNSTREAM=dwolla only after Dwolla production onboarding,[m
+[32m+[m[32m# source funding setup, and recipient funding-source verification are complete.[m
+[32m+[m[32m# DWOLLA_ENVIRONMENT=sandbox[m
+[32m+[m[32m# DWOLLA_API_URL=https://api-sandbox.dwolla.com[m
+[32m+[m[32m# DWOLLA_APP_KEY=your_dwolla_app_key[m
+[32m+[m[32m# DWOLLA_APP_SECRET=your_dwolla_app_secret[m
+[32m+[m[32m# Legacy-compatible aliases:[m
+[32m+[m[32m# DWOLLA_API_KEY=your_dwolla_key[m
+[32m+[m[32m# DWOLLA_API_SECRET=your_dwolla_secret[m
+[32m+[m[32m# DWOLLA_FUNDING_SOURCE_ID=your_originator_funding_source_id[m
+[32m+[m[32m# DWOLLA_SOURCE_FUNDING_SOURCE_URL=https://api-sandbox.dwolla.com/funding-sources/...[m
+[32m+[m
+ # ─── Card Processor (for wallet card topups) ─────────────────────────────────[m
+ # CARD_PROCESSOR_URL=https://your-card-processor.example/api/auth[m
+ # CARD_PROCESSOR_AUTH_URL=https://your-card-processor.example/api/auth[m
+ [m
+[32m+[m[32m# ─── EMV issuer cryptography ─────────────────────────────────────────────────[m
+[32m+[m[32m# Leave unset unless a certified HSM adapter is not yet available. The[m
+[32m+[m[32m# software provider is for certification/sandbox tests only and fail-closes[m
+[32m+[m[32m# when this key is absent. Never commit a real issuer master key.[m
+[32m+[m[32m# EMV_ISSUER_MASTER_KEY_HEX=[m
+[32m+[m[32mVAULT_CARD_PAN=[m
+[32m+[m[32mVAULT_CARD_CVV=[m
+[32m+[m[32mVAULT_CARD_EXPIRY=05/30[m
+[32m+[m[32mVAULT_CARDHOLDER_NAME=AJI ALOSIOUS[m
+[32m+[m[32mVAULT_EUR_CARD_PAN=[m
+[32m+[m[32mVAULT_EUR_CARD_CVV=[m
+[32m+[m[32mVAULT_EUR_CARD_EXPIRY=06/29[m
+[32m+[m[32mVAULT_EUR_CARDHOLDER_NAME=DANIA ALOSIOUS[m
+[32m+[m[32mVAULT_EXTERNAL_LOAD_HMAC_SECRET=[m
+[32m+[m[32mVAULT_EXTERNAL_LOAD_ALLOWED_HOSTS=[m
+[32m+[m
+ # ─── Licensed Acquirer (HTTP JSON) ────────────────────────────────────────────[m
+[32m+[m[32m# External settlement platform (required only for POS 101.1 real settlement)[m
+[32m+[m[32mGLOBAL_SERVER_URL=https://settlement.example.com[m
+[32m+[m[32mGLOBAL_API_KEY=replace_with_public_api_key[m
+[32m+[m[32mGLOBAL_API_SECRET=replace_with_secret_key────────────────────────[m
+ # Required for real card authorization/capture. Do not use a placeholder URL.[m
+ # ACQUIRER_HOST=https://your-licensed-acquirer.example[m
+ # ACQUIRER_PORT=[m
+[36m@@ -131,6 +185,7 @@[m [mEXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+ # ACQUIRER_TERMINAL_ID=TERM0001[m
+ # ACQUIRER_TIMEOUT_MS=8000[m
+ # ACQUIRER_PROTOCOL=http-json[m
+[32m+[m[32m# ISO8583_HEADER=NONE[m
+ # ACQUIRER_MAC_KEY=[m
+ [m
+ # ─── Transak Fiat On/Off-Ramp (Primary Fiat Rail) ────────────────────────────[m
+[36m@@ -152,6 +207,7 @@[m [mEXCHANGE_PROVIDER_PRIORITY=tronweb,bscweb,polygonweb,kucoin,binance[m
+ #      The backend verifies the HMAC signature with TRANSAK_WEBHOOK_SECRET.[m
+ #[m
+ # TRANSAK_MODE=staging                    # staging | production[m
+[32m+[m[32m# TRANSAK_DEMO_MODE=true                  # use local demo tokens and virtual-account records when partner auth is rejected[m
+ # T

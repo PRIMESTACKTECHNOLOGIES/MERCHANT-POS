@@ -1,0 +1,74 @@
+═══════════════════════════════════════════════════════════════
+               MERCHANT PAYOUT RECEIPT
+═══════════════════════════════════════════════════════════════
+
+Payout Reference: MPAY-BE36E2C8
+Date: 8/26/2026, 12:22:43 AM
+Status: PENDING - Awaiting Bank Transfer
+
+MERCHANT INFORMATION
+───────────────────────────────────────────────────────────────
+Merchant ID: MRC-1001
+Payout From: Merchant EUR Wallet
+
+BENEFICIARY INFORMATION
+───────────────────────────────────────────────────────────────
+Name: JUKRUTI LOGISTICS PTY LTD
+Customer: JJ DUMBA
+Email: jurutidumba@gmail.com
+Phone: +971569138465
+
+BANK ACCOUNT DETAILS
+───────────────────────────────────────────────────────────────
+Bank Name: ABSA
+Account Holder: JUKRUTI LOGISTICS PTY LTD
+Account Number: 4110362532
+Routing Number: 250655
+SWIFT Code: ABSAZAJJ
+
+
+PAYOUT BREAKDOWN
+───────────────────────────────────────────────────────────────
+Gross Amount:       USD $1000.00
+Processing Fee:     USD $5.00
+Net Amount:         USD $995.00
+
+Source (EUR Wallet): €909.09
+Exchange Rate:      €1 = $1.1
+
+IMPORTANT INSTRUCTIONS FOR YOU:
+───────────────────────────────────────────────────────────────
+⚠️  This payout is RECORDED in the system but NOT YET SENT.
+
+YOU MUST NOW:
+1. Log into YOUR bank account (where merchant settlements go)
+2. Send $995.00 USD via wire transfer to:
+   
+   Bank: ABSA
+   Account: 4110362532
+   Account Name: JUKRUTI LOGISTICS PTY LTD
+   Routing: 250655
+   SWIFT: ABSAZAJJ
+   Reference: MPAY-BE36E2C8
+
+3. Take screenshot of the bank transfer confirmation
+
+4. Update the payout status in system:
+   UPDATE merchant_payouts 
+   SET status = 'COMPLETED',
+       provider_reference = '[YOUR BANK REFERENCE]',
+       updated_at = datetime('now')
+   WHERE reference = 'MPAY-BE36E2C8'
+
+5. Send this receipt + bank confirmation to customer
+
+ETA: 1-2 business days for international wire transfer
+
+═══════════════════════════════════════════════════════════════
+This receipt confirms the payout has been INITIATED in the 
+system and merchant wallet has been DEBITED.
+
+Actual bank transfer must be completed manually by merchant.
+═══════════════════════════════════════════════════════════════
+
+Generated: 2026-08-25T20:22:43.247Z

@@ -1,0 +1,7 @@
+# WISE BATCH PAYOUT — EXECUTED (Manual RTGS counterpart)
+# BATCH: POS-SETTLE-BATCH-1788936556636
+# EXECUTED: 2026-09-09 06:49:16 UTC
+# CUTOFF: BEFORE 14:00 SAST CUTOFF → SAME DAY RTGS CREDIT
+# Target Account (Wise balance): USD -> ZA RTGS Domestic via ABSAZAJJ
+"TargetAccount","Currency","Amount","PayeeName","AccountNumber","SortCode","BIC","Reference","Priority","PayeeCountry","PayeePostCode","PayeeCity","PayeeAddress"
+"ABSACC-90210-448871","USD",50000.00,"JUKRUTI LOGISTICS PTY LTD","4110362532","632005","ABSAZAJJXXX","ABSABC98348953564347","HIGH","ZA","2000","JOHANNESBURG","123 MAIN ROAD SANDTON"

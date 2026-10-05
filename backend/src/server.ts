@@ -1,5 +1,5 @@
-import dotenv from "dotenv";
-dotenv.config();
+﻿import dotenv from "dotenv";
+dotenv.config({ path: require('path').join(__dirname, '..', '.env') });
 
 import fs from "fs";
 import path from "path";
@@ -11,7 +11,6 @@ import { startDeferredBroadcastWorker, stopDeferredBroadcastWorker } from "./wor
 import { flushDb } from "./config/db";
 import { startVaultReconciliationWorker, stopVaultReconciliationWorker } from "./workers/vaultReconciliation.worker";
 import { startVaultLiquidityWorker, stopVaultLiquidityWorker } from "./workers/vaultLiquidity.worker";
-import { startVaultMtlsServer } from "./domain/vault/gateway/mtls-server";
 
 const PORT = parseInt(process.env.PORT || '7000');
 
@@ -25,15 +24,10 @@ if (!fs.existsSync(dbDir)) {
 const start = async () => {
   await initTables();
   const server = http.createServer(app);
-  let mtlsServer: ReturnType<typeof startVaultMtlsServer> | null = null;
   initWsServer(server);
   server.listen(PORT, '0.0.0.0', () => {
     console.log("Server running on port", PORT);
   });
-  if ((process.env.VAULT_MTLS_ENABLED || '').trim().toLowerCase() === 'true') {
-    mtlsServer = startVaultMtlsServer();
-  }
-
   // Start deferred broadcast retry daemon
   startDeferredBroadcastWorker();
   startVaultReconciliationWorker();
@@ -45,8 +39,7 @@ const start = async () => {
     stopVaultReconciliationWorker();
     stopVaultLiquidityWorker();
     flushDb();
-    const closeHttp = () => mtlsServer ? mtlsServer.close(() => process.exit(0)) : process.exit(0);
-    server.close(closeHttp);
+    server.close(() => process.exit(0));
   };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);

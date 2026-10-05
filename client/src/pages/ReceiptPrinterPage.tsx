@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useToast } from "../components/ui/Toast";
-import { useNotifications } from "../contexts/NotificationContext";
+import { useToast } from "../components/ui/toastContext";
+import { useNotifications } from "../contexts/useNotifications";
 import { Skeleton } from "../components/ui/Skeleton";
 import { ConfirmModal } from "../components/ui/Modal";
 

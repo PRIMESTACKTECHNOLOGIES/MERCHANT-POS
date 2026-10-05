@@ -111,7 +111,7 @@ export class TLVParser {
       const lengthBytes = Math.ceil(Math.log2(valueLength) / 8);
       lengthHex = (0x80 | lengthBytes).toString(16).padStart(2, '0');
       
-      let tempLength = valueLength;
+      const tempLength = valueLength;
       for (let i = lengthBytes - 1; i >= 0; i--) {
         lengthHex += ((tempLength >> (i * 8)) & 0xFF).toString(16).padStart(2, '0');
       }
@@ -132,7 +132,8 @@ export class TLVParser {
   static getTagClass(tag: string): string {
     const firstByte = parseInt(tag.substr(0, 2), 16);
     const classBits = (firstByte >> 6) & 0x03;
-    return this.TAG_CLASSES[classBits.toString(2).padStart(2, '0')];
+    const classCode = classBits.toString(2).padStart(2, '0') as keyof typeof this.TAG_CLASSES;
+    return this.TAG_CLASSES[classCode];
   }
 
   static getTagNumber(tag: string): number {

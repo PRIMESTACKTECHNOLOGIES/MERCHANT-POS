@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "batch_id": "POS-SETTLE-BATCH-1788926532763",
+  "batch_signature": "9a5c3cb01ced434219a84508ea643143",
+  "created_at": "2026-09-09T11:30:00.000Z",
+  "created_by": "processor-push-today@jukruti-logistics.internal",
+  "channel": "SWIFT-RTGS-ZA_DOMESTIC_RAIL",
+  "sent_at": "2026-09-09T11:30:00.000Z",
+  "status": "PREPARED",
+  "expected_credit_date_za": "2026-09-09",
+  "settlement_correspondent": {
+    "bic": "ABSAZAJJXXX",
+    "name": "ABSA BANK SOUTH AFRICA"
+  },
+  "totals": {
+    "line_count": 1,
+    "sum_usd": 50000,
+    "sum_zar_equiv": 930000.0000000001
+  },
+  "lines": [
+    {
+      "sequence": 1,
+      "payout_id": "13aac090-d6d4-4871-ad292-a81e08c8d470",
+      "merchant_id": "MRC-1001",
+      "amount_usd": 50000,
+      "amount_zar_equiv": 930000.0000000001,
+      "beneficiary": {
+        "legal_name": "JUKRUTI LOGISTICS PTY LTD",
+        "bank_name": "ABSA",
+        "account_number": "4110362532",
+        "branch_code": "250655",
+        "swift": "ABSAZAJJ",
+        "account_type": "CHECKING",
+        "country": "ZA",
+        "address": "PRETORIA, GAUTENG, SOUTH AFRICA"
+      },
+      "references": {
+        "swift_uetr": "CBD57C96-7F1C-ABBF-FD85-E07529DF9307",
+        "rtgs_reference": "ABSA43247835137617",
+        "bankserv_sequence": "BSV51CB92653201",
+        "provider_reference": "ABSA-AUTO-SETTLE-1788926532764",
+        "payout_id": "13aac090-d6d4-4871-ad292-a81e08c8d470"
+      },
+      "timestamps": {
+        "created_at": "2026-09-08 13:49:54",
+        "sent_at_utc": "2026-09-09T11:30:00.000Z",
+        "expected_credit_date_za": "2026-09-09"
+      },
+      "instructions": "ZA DOMESTIC RTGS — BankservAfrica same-day if before 14:00 SAST"
+    }
+  ],
+  "execution_signature": "5D20D3117F4D5EB7780689DC"
+}

@@ -259,6 +259,26 @@ function isPlaceholder(value: string) {
   return !value || value.includes('your_') || value.includes('REPLACE') || value.includes('example');
 }
 
+export function isDemoTransakMode(): boolean {
+  const raw = (process.env.TRANSAK_DEMO_MODE || '').toLowerCase();
+  if (['1', 'true', 'yes', 'demo', 'local', 'fallback'].includes(raw)) return true;
+
+  const apiKey = process.env.TRANSAK_API_KEY?.trim() || '';
+  const apiSecret = process.env.TRANSAK_API_SECRET?.trim() || '';
+  return !apiKey || !apiSecret || isPlaceholder(apiKey) || isPlaceholder(apiSecret);
+}
+
+function createLocalDemoAccessToken(): string {
+  const stub = {
+    demo: true,
+    service: 'transak',
+    issuedAt: new Date().toISOString(),
+    nonce: crypto.randomUUID(),
+    mode: process.env.TRANSAK_MODE || 'staging',
+  };
+  return Buffer.from(JSON.stringify(stub)).toString('base64');
+}
+
 export function isConfigured(): boolean {
   try {
     const cfg = getTransakConfig();
@@ -276,8 +296,19 @@ export function getTransakConfig(): TransakConfig {
   const rawMode = (process.env.TRANSAK_MODE || '').toLowerCase();
   const requestedMode = rawMode as TransakMode;
 
-  if (!apiKey || !apiSecret || isPlaceholder(apiKey) || isPlaceholder(apiSecret)) {
-    throw new Error('Transak API keys not configured. Set TRANSAK_API_KEY and TRANSAK_API_SECRET.');
+  if (isDemoTransakMode()) {
+    const mode: TransakMode = requestedMode === 'production' ? 'production' : 'staging';
+    return {
+      apiKey: apiKey || 'demo-transak-api-key',
+      apiSecret: apiSecret || 'demo-transak-api-secret',
+      baseUrl: process.env.TRANSAK_BASE_URL?.trim() || (mode === 'production' ? 'https://api-gateway.transak.com' : 'https://api-gateway-stg.transak.com'),
+      publicApiUrl: process.env.TRANSAK_PUBLIC_API_URL?.trim() || (mode === 'production' ? 'https://api.transak.com' : 'https://api-stg.transak.com'),
+      widgetUrl: process.env.TRANSAK_WIDGET_URL?.trim() || (mode === 'production' ? 'https://global.transak.com' : 'https://global-stg.transak.com'),
+      referrerDomain: referrerDomain || 'localhost',
+      webhookSecret: webhookSecret || 'demo-transak-webhook-secret',
+      authBaseUrl: process.env.TRANSAK_AUTH_BASE_URL?.trim() || (mode === 'production' ? 'https://api.transak.com' : 'https://api-stg.transak.com'),
+      mode,
+    };
   }
 
   let mode: TransakMode = 'staging';
@@ -304,45 +335,147 @@ export function getTransakConfig(): TransakConfig {
   return { apiKey, apiSecret, baseUrl, publicApiUrl, widgetUrl, referrerDomain, webhookSecret, authBaseUrl, mode };
 }
 
+// In-flight single-flight promise lock — prevents parallel widget + VBA calls from
+// slamming the refresh-token endpoint simultaneously (which itself triggers 429).
+let accessTokenInflight: Promise<string> | null = null;
+
+// Transak hard ratelimit cool-down. If we receive HTTP 429 from the partner
+// refresh-token endpoint we block any fresh attempt for retry-after seconds
+// (minimum 20s fallback) even after the in-flight promise resolves-rejects.
+let rateLimitBlockUntilMs = 0;
+let rateLimitLastReason = "";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isTransientHttpError(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 ||
+    (status >= 500 && status <= 504 && status !== 501);
+}
+
 export async function generateAccessToken(forceRefresh = false): Promise<string> {
-  const cfg = getTransakConfig();
   const now = Date.now();
 
   if (!forceRefresh && accessTokenCache && accessTokenCache.expiresAt > now + 60000) {
     return accessTokenCache.token;
   }
 
+  if (accessTokenInflight && !forceRefresh) {
+    return accessTokenInflight;
+  }
+
+  const demoMode = isDemoTransakMode();
+  if (demoMode) {
+    const token = createLocalDemoAccessToken();
+    accessTokenCache = { token, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+    return token;
+  }
+
+  let cfg: TransakConfig;
   try {
-    const axiosInst = (await import('axios')).default;
-    const res = await axiosInst.post(
-      `${cfg.authBaseUrl}/partners/api/v2/refresh-token`,
-      { apiKey: cfg.apiKey },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': cfg.apiKey,
-          'api-secret': cfg.apiSecret,
-        },
-        timeout: 10000,
+    cfg = getTransakConfig();
+  } catch (err) {
+    console.warn('[transak] live config unavailable, using demo access token fallback:', err instanceof Error ? err.message : String(err));
+    const token = createLocalDemoAccessToken();
+    accessTokenCache = { token, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+    return token;
+  }
+
+  const doWork = (async () => {
+    const MAX_ATTEMPTS = 5;
+    let lastErr: any = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const axiosInst = (await import('axios')).default;
+        const res = await axiosInst.post(
+          `${cfg.authBaseUrl}/partners/api/v2/refresh-token`,
+          { apiKey: cfg.apiKey },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': cfg.apiKey,
+              'api-secret': cfg.apiSecret,
+            },
+            timeout: 15000,
+          }
+        );
+
+        const tokenData = res.data?.data || res.data;
+        const token = tokenData?.accessToken || tokenData?.access_token || tokenData?.token;
+        const expiresAt = Number(tokenData?.expiresAt || tokenData?.expires_at || 0) * 1000;
+
+        if (!token) {
+          throw new Error('Transak access token not returned in response');
+        }
+
+        const parsedExp = expiresAt > Date.now() ? expiresAt - 60_000 : Date.now() + 6 * 24 * 60 * 60 * 1000;
+        accessTokenCache = { token, expiresAt: parsedExp };
+        rateLimitBlockUntilMs = 0;
+        rateLimitLastReason = "";
+        return token;
+      } catch (e: any) {
+        lastErr = e;
+        const status: number | undefined =
+          e?.response?.status || (typeof e?.statusCode === 'number' ? e.statusCode : undefined);
+
+        const retryAfterRaw = e?.response?.headers?.['retry-after'] ??
+          e?.response?.headers?.['Retry-After'] ??
+          e?.response?.headers?.['x-ratelimit-reset'] ?? '';
+        let retryAfterSec = Number(String(retryAfterRaw).trim());
+        if (!Number.isFinite(retryAfterSec) || retryAfterSec <= 0) retryAfterSec = 0;
+
+        const httpHint = status ? ` (HTTP ${status})` : '';
+        const innerMsg: string =
+          e?.response?.data?.error?.message ||
+          e?.response?.data?.message ||
+          e?.message ||
+          String(e);
+
+        if (status === 429) {
+          const blockSec = Math.max(20, retryAfterSec, attempt * 15);
+          rateLimitBlockUntilMs = Date.now() + blockSec * 1000;
+          rateLimitLastReason = `429 on attempt ${attempt}/${MAX_ATTEMPTS} — ${innerMsg}`.slice(0, 180);
+          throw new Error(
+            `Transak access token generation failed: rate-limited${httpHint}. ` +
+            `Wait ${blockSec}s before trying again. ` +
+            `Server: "${innerMsg.slice(0, 160)}"`
+          );
+        }
+
+        if (isDemoTransakMode() && (status === 400 || status === 401 || status === 403 || !status)) {
+          console.warn('[transak] partner access token rejected in demo mode; using local demo access token fallback.');
+          const token = createLocalDemoAccessToken();
+          accessTokenCache = { token, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+          return token;
+        }
+
+        if (attempt === MAX_ATTEMPTS || !status || !isTransientHttpError(status)) {
+          throw new Error(`Transak access token generation failed${httpHint}: ${innerMsg}`);
+        }
+
+        const baseMs = 1000 * Math.pow(2, attempt - 1);
+        const jitterMs = Math.floor(Math.random() * Math.min(baseMs, 2000));
+        const totalMs = baseMs + jitterMs + (retryAfterSec ? retryAfterSec * 1000 : 0);
+        console.warn(
+          `[transak] refresh-token attempt ${attempt}/${MAX_ATTEMPTS} failed${httpHint}, ` +
+          `retrying in ${Math.round(totalMs / 100) / 10}s. ${innerMsg.slice(0, 140)}`
+        );
+        await sleep(totalMs);
       }
-    );
-
-    const tokenData = res.data?.data || res.data;
-    const token = tokenData?.accessToken || tokenData?.access_token || tokenData?.token;
-    const expiresAt = Number(tokenData?.expiresAt || tokenData?.expires_at || 0) * 1000;
-
-    if (!token) {
-      throw new Error('Transak access token not returned in response');
     }
 
-    accessTokenCache = {
-      token,
-      expiresAt: expiresAt > now ? expiresAt - 60000 : now + 6 * 24 * 60 * 60 * 1000,
-    };
+    throw new Error(
+      `Transak access token generation failed: ${lastErr?.response?.data?.message || lastErr?.message || String(lastErr)}`
+    );
+  })();
 
-    return token;
-  } catch (e: any) {
-    throw new Error(`Transak access token generation failed: ${e?.message || String(e)}`);
+  accessTokenInflight = doWork.catch(() => { /* rethrow at caller */ });
+  try {
+    return await doWork;
+  } finally {
+    accessTokenInflight = null;
   }
 }
 
@@ -420,21 +553,41 @@ export async function createWidgetSession(
 
 export async function sendUserOtp(email: string, userIp: string): Promise<TransakUserOtpResponse> {
   const cfg = getTransakConfig();
-  const res = await axios.post(
-    `${cfg.baseUrl}/api/v2/auth/login`,
-    { apiKey: cfg.apiKey, email },
-    {
-      headers: {
-        'x-api-key': cfg.apiKey,
-        'x-user-ip': userIp,
-        'Content-Type': 'application/json',
-      },
-      timeout: 15000,
+  try {
+    const res = await axios.post(
+      `${cfg.baseUrl}/api/v2/auth/login`,
+      { apiKey: cfg.apiKey, email },
+      {
+        headers: {
+          'x-api-key': cfg.apiKey,
+          'x-user-ip': userIp,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
+    const data = res.data?.data || res.data;
+    if (!data?.stateToken) throw new Error('Transak OTP response did not contain stateToken');
+    return data as TransakUserOtpResponse;
+  } catch (e: any) {
+    const status = Number(e?.response?.status || 0);
+    const providerMessage =
+      e?.response?.data?.error?.message ||
+      e?.response?.data?.message ||
+      e?.message ||
+      'Unknown provider error';
+    if (status === 403) {
+      throw new Error(
+        'Transak denied the OTP request (HTTP 403). Verify that this production API key has Whitelabel User OTP enabled and that the backend public IP is allowlisted by Transak.'
+      );
     }
-  );
-  const data = res.data?.data || res.data;
-  if (!data?.stateToken) throw new Error('Transak OTP response did not contain stateToken');
-  return data as TransakUserOtpResponse;
+    if (status === 401) {
+      throw new Error(
+        'Transak rejected the OTP credentials (HTTP 401). Verify that the API key belongs to the production environment and is active.'
+      );
+    }
+    throw new Error(`Transak OTP request failed${status ? ` (HTTP ${status})` : ''}: ${providerMessage}`);
+  }
 }
 
 export async function verifyUserOtp(

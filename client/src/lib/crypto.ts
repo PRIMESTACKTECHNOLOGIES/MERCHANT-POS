@@ -6,8 +6,8 @@
 function getBrowserSubtleCrypto(): SubtleCrypto {
   const webCrypto =
     (typeof window !== 'undefined' && window.crypto) ||
-    (typeof self !== 'undefined' && (self as any).crypto) ||
-    (typeof globalThis !== 'undefined' && (globalThis as any).crypto);
+    (typeof self !== 'undefined' && self.crypto) ||
+    (typeof globalThis !== 'undefined' && globalThis.crypto);
 
   if (!webCrypto || typeof webCrypto.subtle === 'undefined') {
     throw new Error(

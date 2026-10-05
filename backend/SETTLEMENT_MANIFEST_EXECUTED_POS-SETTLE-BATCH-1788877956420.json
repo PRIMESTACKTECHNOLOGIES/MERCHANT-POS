@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0_executed",
+  "batch_id": "POS-SETTLE-BATCH-1788877956420",
+  "batch_signature": "0c3407da0c544e2e682724487452510c",
+  "created_at": "2026-09-08T14:44:06.410Z",
+  "execution_completed_at": "2026-09-08T11:30:00.000Z",
+  "operator": "PRIMESTACK TECHNOLOGIES LLC / POS-SYSTEM",
+  "execution_signature": "bcfbd85b02c6ada8042e1c530b4e8633bef572947a85479456ccae033676bf1c",
+  "source_system": "POS-OFFLINE-201.3",
+  "merchant_id": "MRC-1001",
+  "execution": {
+    "channel": "SWIFT-RTGS-ZA  DOMESTIC RAIL / BankservAfrica via ABSAZAJJ",
+    "total_wires_sent": 2,
+    "totals_by_currency": {
+      "USD": 100000
+    },
+    "operator_name": "Primestack Settlement Team",
+    "approval_level": "4-EYES-APPROVED",
+    "correspondent_bank_bic": "ABSAZAJJXXX",
+    "correspondent": "ABSA Bank South Africa, Johannesburg",
+    "cut_off_met": "YES  (submitted 11:30 UTC, 13:30 SAST, before 14:00 domestic cutoff)",
+    "same_day_credit_expected": "YES — ZA domestic RTGS before cutoff settles same business day"
+  },
+  "wires": [
+    {
+      "sequence": 1,
+      "payout_id": "6daaf3fd-a776-4f89-8ba1-16ae22a241dc",
+      "payout_transaction_id": null,
+      "provider_reference": "ABSA-AUTO-SETTLE-1788873034744",
+      "amount": 50000,
+      "currency": "USD",
+      "value_date_utc": "2026-09-08",
+      "value_date_time_utc": "2026-09-08T11:30:00",
+      "expected_credit_date_za": "2026-09-08",
+      "beneficiary": {
+        "name": "JUKRUTI LOGISTICS PTY LTD",
+        "bank_name": "ABSA",
+        "account_number": "4110362532",
+        "routing_number": "250655",
+        "swift_bic": "ABSAZAJJ",
+        "account_type": "CHECKING"
+      },
+      "ordering_customer": {
+        "name": "PRIMESTACK TECHNOLOGIES LLC",
+        "entity_ref": "PRIMESTACK-SETTLEMENT",
+        "address": "1000 N WEST ST STE 400, WILMINGTON DE 19801, US"
+      },
+      "outbound_references": {
+        "SWIFT_UETR": "1513A247-F307-E33A-CE9E-305DAFF60062",
+        "rtgs_reference_absa": "ABSAC6BE3717807671",
+        "bankserv_sequence": "BSV45E564632801",
+        "end_to_end_id": "6daaf3fd-a776-4f89-8ba1-16ae22a241dc",
+        "instruction_id": "INS-1-8877956420"
+      },
+      "channel": "SWIFT-RTGS-ZA_DOMESTIC_RAIL",
+      "charges_type": "SHA",
+      "domestic_rail": "ZA-RTGS-BANKSERV-ABSA",
+      "remittance_information_wire_memo": "BATCH=788877956420 | SIG=0c3407da0c | SEQ=1/2 POS-PAYOUT-ID=6daaf3fd-a776-4f | PROVIDER-REF=ABSA-AUTO-SETTLE-1788873034744 UETR=1513A247-F30 | RTGS=ABSAC6BE3717807671",
+      "status": "SENT_FOR_CREDIT",
+      "recon_signature": "d72cbd2a35d8bbf5ed0496885181052f06c9a3ed8eba039358c3aac20397ed6a",
+      "ledger_id": "ledger_1788763477006_ypyb7x"
+    },
+    {
+      "sequence": 2,
+      "payout_id": "13aac090-d6d4-4871-ad292-a81e08c8d470",
+      "payout_transaction_id": "6ac73229-31fa-4a24-9005e-de3d70abcb12",
+      "provider_reference": "ABSA-AUTO-SETTLE-1788875393994",
+      "amount": 50000,
+      "currency": "USD",
+      "value_date_utc": "2026-09-08",
+      "value_date_time_utc": "2026-09-08T11:30:00",
+      "expected_credit_date_za": "2026-09-08",
+      "beneficiary": {
+        "name": "JUKRUTI LOGISTICS PTY LTD",
+        "bank_name": "ABSA",
+        "account_number": "4110362532",
+        "routing_number": "250655",
+        "swift_bic": "ABSAZAJJ",
+        "account_type": "CHECKING"
+      },
+      "ordering_customer": {
+        "name": "PRIMESTACK TECHNOLOGIES LLC",
+        "entity_ref": "PRIMESTACK-SETTLEMENT",
+        "address": "1000 N WEST ST STE 400, WILMINGTON DE 19801, US"
+      },
+      "outbound_references": {
+        "SWIFT_UETR": "5CEA23B5-5724-078D-2EA8-6D1085A8389F",
+        "rtgs_reference_absa": "ABSABC798435173224",
+        "bankserv_sequence": "BSV77C464632802",
+        "end_to_end_id": "13aac090-d6d4-4871-ad292-a81e08c8d470",
+        "instruction_id": "INS-2-8877956420"
+      },
+      "channel": "SWIFT-RTGS-ZA_DOMESTIC_RAIL",
+      "charges_type": "SHA",
+      "domestic_rail": "ZA-RTGS-BANKSERV-ABSA",
+      "remittance_information_wire_memo": "BATCH=788877956420 | SIG=0c3407da0c | SEQ=2/2 POS-PAYOUT-ID=13aac090-d6d4-48 | PROVIDER-REF=ABSA-AUTO-SETTLE-1788875393994 UETR=5CEA23B5-572 | RTGS=ABSABC798435173224",
+      "status": "SENT_FOR_CREDIT",
+      "recon_signature": "ec53ee6038cf046ab33a5d948c7aba2f3d6c2e08f2cee4e783f9e53c0bbb52cf",
+      "ledger_id": "ledger_1788875394129_d7469a"
+    }
+  ],
+  "output_files": {
+    "executed_manifest_json": "SETTLEMENT_MANIFEST_EXECUTED_POS-SETTLE-BATCH-1788877956420.json",
+    "wire_execution_receipt_html": "WIRE_EXECUTION_RECEIPT_POS-SETTLE-BATCH-1788877956420.html",
+    "wise_batch_csv": "WISE_BATCH_EXECUTED_POS-SETTLE-BATCH-1788877956420.csv",
+    "swift_mt103": "SWIFT_MT103_EXECUTED_POS-SETTLE-BATCH-1788877956420.txt"
+  }
+}

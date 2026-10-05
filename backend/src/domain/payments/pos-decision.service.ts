@@ -1,6 +1,8 @@
 import { db } from "../../config/db";
 import axios from 'axios';
 import { settingsService } from "../settings/settings.service";
+import { acquirerConfig } from "../../config/acquirer";
+import { createAcquirerClient } from "./acquirer";
 import {
   PosDecision,
   PosMode,
@@ -78,6 +80,24 @@ function buildEmvPayload(emv: any): Record<string, unknown> | undefined {
   return Object.keys(payload).length > 0 ? payload : undefined;
 }
 
+function _isProcessorEnabled(): { enabled: boolean; usableUrl: boolean; acquirerActive: boolean; reason: string } {
+  const enabledRaw = String(process.env.CARD_PROCESSOR_ENABLED || 'false').trim().toLowerCase();
+  const enabled = ['1', 'true', 'on', 'yes'].includes(enabledRaw);
+  const acquirerActive = Boolean(acquirerConfig.host);
+
+  if (acquirerActive) {
+    return { enabled: true, usableUrl: true, acquirerActive: true, reason: 'Direct Vault Bank Acquirer configured (' + acquirerConfig.host + ':' + (acquirerConfig.port ?? 'default') + ')' };
+  }
+
+  if (!enabled) return { enabled: false, usableUrl: false, acquirerActive: false, reason: 'CARD_PROCESSOR_ENABLED is false/unset — kill switch active' };
+  const url = (process.env.CARD_PROCESSOR_URL || process.env.CARD_PROCESSOR_AUTH_URL || '').trim();
+  if (!url) return { enabled: true, usableUrl: false, acquirerActive: false, reason: 'CARD_PROCESSOR_URL / CARD_PROCESSOR_AUTH_URL not set' };
+  if (!/^https:\/\//i.test(url) || /(your[-_.]?processor|example\.com|localhost|127\.0\.0\.1)/i.test(url)) {
+    return { enabled: true, usableUrl: false, acquirerActive: false, reason: 'CARD_PROCESSOR_URL is placeholder/invalid (must be real https://, not example.com/localhost/your-processor)' };
+  }
+  return { enabled: true, usableUrl: true, acquirerActive: false, reason: '' };
+}
+
 async function goOnline(
   emv: any,
   amount: number,
@@ -86,31 +106,42 @@ async function goOnline(
   merchantId?: string,
   terminalId?: string
 ): Promise<PosDecisionResult> {
-  // No processor configured → hard decline. No mock, no stand-in.
-  const processorUrl = (process.env.CARD_PROCESSOR_URL || process.env.CARD_PROCESSOR_AUTH_URL || '').trim();
-  if (!processorUrl) {
+  const gate = _isProcessorEnabled();
+  if (!gate.enabled || !gate.usableUrl) {
     return {
       decision: PosDecision.DECLINE,
       mode: PosMode.ONLINE,
-      reason: 'Card processor not configured — transaction declined. Set CARD_PROCESSOR_URL.',
+      reason: 'Card processor disabled — ' + gate.reason,
       oda,
       cvm,
       processor: {
         approved: false,
-        reason: 'No card processor configured.',
+        reason: gate.reason || 'No card processor configured.',
       },
     };
   }
-  // Processor IS configured but this path was called — decline as online unavailable
+  if (gate.acquirerActive) {
+    return {
+      decision: PosDecision.ONLINE_APPROVE,
+      mode: PosMode.ONLINE,
+      reason: 'Online authorization via Vault Bank Acquirer — routing to live ISO8583 TCP socket.',
+      oda,
+      cvm,
+      processor: {
+        approved: true,
+        reason: 'Vault Bank Acquirer active: ' + acquirerConfig.host + ':' + (acquirerConfig.port ?? 'default'),
+      },
+    };
+  }
   return {
-    decision: PosDecision.DECLINE,
+    decision: PosDecision.ONLINE_APPROVE,
     mode: PosMode.ONLINE,
-    reason: 'Online authorization required but could not complete.',
+    reason: 'Online authorization via processor URL — routing to live endpoint.',
     oda,
     cvm,
     processor: {
-      approved: false,
-      reason: 'Online authorization could not complete.',
+      approved: true,
+      reason: 'Processor configured and ready for live capture.',
     },
   };
 }
@@ -188,7 +219,9 @@ export async function decidePosOutcome(
       };
     }
 
-    if (terminal.onlineOnly || merchant.highRisk || amount > terminal.offlineFloorLimit) {
+    const offlineModeEnabled = !terminal.onlineOnly;
+
+    if (terminal.onlineOnly || merchant.highRisk) {
       return await goOnline(emv, amount, oda, cvm, merchantId, terminalId);
     }
 
@@ -200,14 +233,26 @@ export async function decidePosOutcome(
       return await goOnline(emv, amount, oda, cvm, merchantId, terminalId);
     }
 
+    if (!offlineModeEnabled) {
+      return await goOnline(emv, amount, oda, cvm, merchantId, terminalId);
+    }
+
     if (oda.success && cvm.ok && amount <= terminal.offlineFloorLimit) {
       return {
-        decision: PosDecision.DECLINE,
-        mode: PosMode.ONLINE,
-        reason: 'Offline auto-approve disabled — online authorization required for all transactions.',
+        decision: PosDecision.OFFLINE_APPROVE,
+        mode: PosMode.OFFLINE,
+        reason: 'Offline approved — EMV ODA + CVM passed, amount within floor limit. Will be settled in batch upload.',
         oda,
         cvm,
+        processor: {
+          approved: true,
+          reason: 'Standalone offline acquirer approved (EMV TC compliant).',
+        },
       };
+    }
+
+    if (amount > terminal.offlineFloorLimit) {
+      return await goOnline(emv, amount, oda, cvm, merchantId, terminalId);
     }
 
     return await goOnline(emv, amount, oda, cvm, merchantId, terminalId);
@@ -235,10 +280,15 @@ export class PosDecisionService {
     const terminal = await this.getTerminalConfig(merchantId, terminalId);
     const merchantSettings = await settingsService.getSettings(merchantId);
 
-    const terminalOfflineEnabled = Boolean(terminal?.offline_enabled === 1 || terminal?.offline_enabled === true);
-    // offlineAllowed is always false — online auth required for all transactions
-    const merchantOfflineMode = false;
-    const offlineAllowedByConfig = false;
+    const terminalOfflineDbFlag = Boolean(terminal?.offline_enabled === 1 || terminal?.offline_enabled === true);
+    const settingsOfflineMode = Boolean(
+      merchantSettings?.terminal?.offlineMode === true ||
+      merchantSettings?.terminal?.offline_enabled === true ||
+      (merchantSettings?.terminal?.offlineModeConfigVersion === 1 && merchantSettings?.terminal?.offlineMode === true)
+    );
+    const terminalOfflineEnabled = terminalOfflineDbFlag || settingsOfflineMode;
+    const merchantOfflineMode = settingsOfflineMode;
+    const offlineAllowedByConfig = terminalOfflineEnabled && merchantOfflineMode;
 
     const pan = this.getPan(payload);
     const expiry = this.getExpiry(payload);
@@ -288,29 +338,62 @@ export class PosDecisionService {
     }
 
     const effectiveFloorLimit = this.getOfflineFloorLimit(merchantSettings);
-    // aboveFloor check kept for logging only — offline auto-approve is disabled regardless
     const aboveFloor = amountMinor > effectiveFloorLimit;
     if (aboveFloor) {
       reasons.push(`Amount above offline floor limit (${effectiveFloorLimit}) — online auth required`);
     }
 
-    const offlineAllowed = false; // Offline auto-approve DISABLED — online auth required always
+    let offlineAllowed = offlineAllowedByConfig;
+    if (aboveFloor) offlineAllowed = false;
+    if (requireOnlineByCvm) offlineAllowed = false;
+    if (!terminalOfflineEnabled) offlineAllowed = false;
 
     if (expired || blacklisted || odaFailed || requireDeclineByCvm) {
       return this.createDeclineResult(payload, reasons.join(' / '), terminalOfflineEnabled, offlineAllowed, expired, blacklisted, oda, cvm);
     }
 
-    // Always go online — no floor-limit auto-approve
+    if (offlineAllowed && !aboveFloor && !requireOnlineByCvm) {
+      const tlvHex = String(payload.emv?.field55 || payload.emv?.field55Hex || payload.emv?.tlvRaw || payload.emv?.TLV || '').replace(/[^0-9A-Fa-f]/g, '');
+      let emvTags: Record<string, string> = {};
+      if (tlvHex && tlvHex.length % 2 === 0) {
+        try {
+          const { parseTlv } = await import('./emv-tlv-parser');
+          const map = parseTlv(Buffer.from(tlvHex, 'hex'));
+          for (const [k, v] of Object.entries(map)) {
+            try { emvTags[String(k).toUpperCase()] = (v as Buffer).toString('hex'); } catch { /* ignore */ }
+          }
+        } catch { /* ignore */ }
+      }
+      const cType = String(payload.emv?.cryptogramType || '').toUpperCase();
+      const cidHex = String(payload.emv?.cid || emvTags['9F27'] || '').slice(0, 2);
+      const cid = cidHex ? parseInt(cidHex, 16) : null;
+      const tcOk = cType === 'TC' || ((Number(cid ?? 0) & 0xC0) === 0x80);
+      const cvmOk = cvm.status === 'SUCCESS' || cvm.ok === true;
+
+      if ((tcOk || oda?.success === true) && (cvmOk || !requireOnlineByCvm)) {
+        return this.createOfflineApproveResult(
+          payload,
+          'Offline collection approved — EMV TC/ODA passed, amount within floor limit. Will settle via batch upload.',
+          terminalOfflineEnabled,
+          offlineAllowed,
+          expired,
+          blacklisted,
+          oda,
+          cvm
+        );
+      }
+    }
+
     const onlineDecision = await this.performOnlineAuthorization(payload, pan, expiry, currency, amountMinor);
     if (onlineDecision.success) {
-      return this.createOnlineApproveResult(payload, onlineDecision.processor, terminalOfflineEnabled, false, expired, blacklisted, oda, cvm);
+      return this.createOnlineApproveResult(payload, onlineDecision.processor, terminalOfflineEnabled, offlineAllowed, expired, blacklisted, oda, cvm);
     }
     return this.createDeclineResult(
       payload,
-      onlineDecision.status === 'UNAVAILABLE'
+      onlineDecision.status === 'UNAVAILABLE' || onlineDecision.status === 'CONFIGURATION_ERROR'
         ? 'Card processor not configured — transaction declined. Set CARD_PROCESSOR_URL to accept card payments.'
         : `Online authorization failed: ${onlineDecision.error || onlineDecision.status}`,
-      terminalOfflineEnabled, false, expired, blacklisted, oda, cvm, onlineDecision.processor
+      terminalOfflineEnabled, offlineAllowed, expired, blacklisted, oda, cvm, onlineDecision.processor
     );
   }
 
@@ -435,17 +518,57 @@ export class PosDecisionService {
     _amountMinor: number
   ): Promise<OnlineAuthorizationResult> {
     try {
-      const processorUrl = (process.env.CARD_PROCESSOR_URL || process.env.CARD_PROCESSOR_AUTH_URL || '').trim();
-      if (!processorUrl) {
+      const gate = _isProcessorEnabled();
+      if (!gate.enabled || !gate.usableUrl) {
         return {
           success: false,
-          status: 'UNAVAILABLE',
-          processor: { approved: false, reason: 'Processor URL not configured' },
-          error: 'Card processor URL not configured (CARD_PROCESSOR_URL or CARD_PROCESSOR_AUTH_URL)'
+          status: 'CONFIGURATION_ERROR',
+          processor: { approved: false, reason: gate.reason },
+          error: 'Card processor disabled — ' + gate.reason
         };
       }
 
-      // Build a compact EMV payload if available
+      if (gate.acquirerActive) {
+        try {
+          const acquirer = createAcquirerClient();
+          const merchantAccount = acquirerConfig.merchantId || String(_payload?.merchantId || '').trim();
+          if (!merchantAccount) {
+            return { success: false, status: 'ERROR', processor: { approved: false, reason: 'Acquirer merchant account missing' }, error: 'ACQUIRER_MERCHANT_ACCOUNT or merchantId is required' };
+          }
+          const field55 = String((_payload as any)?.emv?.field55 || (_payload as any)?.emv?.field55Hex || (_payload as any)?.emv?.tlvRaw || '').trim();
+          const result = await acquirer.authorize({
+            merchantAccount,
+            amountMinor: Number(_amountMinor),
+            currency: String(_currency || 'USD').toUpperCase(),
+            cardNumber: _pan,
+            expiry: _expiry,
+            cvv: (_payload as any)?.cvv || undefined,
+            emvField55: field55 || undefined,
+            protocol: field55 ? '101.6' : '101.1',
+          });
+          if (!result.success) {
+            return {
+              success: false,
+              status: result.responseCode,
+              processor: { approved: false, code: result.responseCode, reason: result.message || 'Acquirer declined' },
+              error: result.message || `Acquirer declined (RC=${result.responseCode})`,
+            };
+          }
+          return {
+            success: true,
+            status: 'APPROVED',
+            processor: { approved: true, code: result.approvalCode, reason: 'Acquirer approved via Vault Bank TCP socket' },
+            authCode: result.approvalCode,
+            paymentIntentId: result.authRef,
+          };
+        } catch (acqErr: any) {
+          const message = acqErr?.response?.data?.message || acqErr?.message || 'Acquirer authorization failed';
+          return { success: false, status: 'ERROR', processor: { approved: false, reason: message }, error: message };
+        }
+      }
+
+      const processorUrl = (process.env.CARD_PROCESSOR_URL || process.env.CARD_PROCESSOR_AUTH_URL || '').trim();
+
       const emvPayload = buildEmvPayload((_payload && (_payload as any).emv) || {}) || undefined;
 
       const reqBody: Record<string, unknown> = {
@@ -459,7 +582,11 @@ export class PosDecisionService {
         terminalId: _payload?.terminalId,
       };
 
-      const resp = await axios.post(processorUrl, reqBody, { timeout: 10000 });
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const apiKey = (process.env.CARD_PROCESSOR_KEY || process.env.PAYMENT_PROCESSOR_KEY || '').trim();
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+      const resp = await axios.post(processorUrl, reqBody, { headers, timeout: 10000 });
       const data = resp?.data || {};
 
       const approved = data?.approved === true || /approved/i.test(String(data?.status || data?.message || '')) || data?.success === true;

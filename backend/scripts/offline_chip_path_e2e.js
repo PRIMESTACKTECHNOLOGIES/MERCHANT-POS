@@ -32,7 +32,7 @@ const path = require('path');
   // ── 1. Login as admin ────────────────────────────────────────────────────────
   const login = await axios.post(BASE + '/auth/login', {
     username: 'admin',
-    password: 'admin1234',
+    password: 'admin123',
   });
   const token = login.data.token;
   const auth = { headers: { Authorization: `Bearer ${token}` } };

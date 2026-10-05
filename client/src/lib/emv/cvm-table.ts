@@ -1,4 +1,3 @@
-import { TLVParser } from './tlv-parser';
 
 export type CVMMethod = 'NO_CVM' | 'OFFLINE_PIN' | 'ONLINE_PIN' | 'SIGNATURE' | 'FAIL';
 

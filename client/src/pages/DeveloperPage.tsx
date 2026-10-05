@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { regenerateApiKey, getProfile } from "../lib/api";
-import { useToast } from "../components/ui/Toast";
+import { useToast } from "../components/ui/toastContext";
 import { resolveApiBaseUrl } from "../lib/backendUrl";
 
 interface ApiKey {
@@ -40,7 +40,6 @@ export const DeveloperPage = () => {
   const { showToast } = useToast();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
 
   // ── Settlement Instructions ────────────────────────────────────────────────
@@ -74,6 +73,14 @@ export const DeveloperPage = () => {
   const [caValidating,    setCaValidating]    = useState(false);
   const [caValidateCode,  setCaValidateCode]  = useState('');
   const [caValidateResult,setCaValidateResult]= useState<any>(null);
+  const [caDeletingId,    setCaDeletingId]    = useState<string | null>(null);
+
+  // ── Webhook / API integration validation ───────────────────────────────────
+  const [integrationApiKey, setIntegrationApiKey] = useState('');
+  const [integrationApiSecret, setIntegrationApiSecret] = useState('');
+  const [integrationEndpointUrl, setIntegrationEndpointUrl] = useState('');
+  const [integrationValidation, setIntegrationValidation] = useState<{ verified: boolean; reachable?: boolean; credentialsConfirmed?: boolean; httpStatus?: number; reason: string } | null>(null);
+  const [integrationValidating, setIntegrationValidating] = useState(false);
 
   const runWiseCollect = async () => {
     const amt = parseFloat(collectAmount);
@@ -87,8 +94,8 @@ export const DeveloperPage = () => {
         body: JSON.stringify({
           amount: amt,
           currency: collectCurrency,
-          targetBic: 'ABSAZAJJ',
-          targetAccount: '4110362532',
+          targetBic: '',
+          targetAccount: '',
           targetName: 'JUKRUTI LOGISTICS PTY LTD',
           targetAddressLines: ['9 HOUTKAPPER STR', 'OLIFANTSHOEK 8450', 'SOUTH AFRICA'],
           reference: `POS-COLLECT-${Date.now().toString(36).toUpperCase()}`,
@@ -245,13 +252,24 @@ export const DeveloperPage = () => {
   };
 
   const handleValidateCardAuth = async () => {
-    if (!caValidateCode) { showToast('Enter a code to test', 'error'); return; }
+    if (!caPan || !caValidateCode || !caAmount) {
+      showToast('Card number, one-time code, and amount are required', 'error');
+      return;
+    }
     setCaValidating(true); setCaValidateResult(null);
     try {
       const res = await fetch(`${BASE_URL}/api/card-auth/validate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol: caProtocol, cardNumber: caPan, code: caValidateCode.toUpperCase(), cvv: caCvv || undefined }),
+        body: JSON.stringify({
+          protocol: caProtocol,
+          cardNumber: caPan,
+          code: caValidateCode.toUpperCase(),
+          cvv: caCvv || undefined,
+          amount: parseFloat(caAmount),
+          currency: 'USD',
+          merchantId: 'MRC-1001',
+        }),
       });
       const data = await res.json();
       setCaValidateResult(data);
@@ -259,6 +277,67 @@ export const DeveloperPage = () => {
       else showToast(`❌ REJECTED: ${data.error}`, 'error');
     } catch (e: any) { showToast(`Error: ${e.message}`, 'error'); }
     finally { setCaValidating(false); }
+  };
+
+  const handleDeleteCardAuth = async (id: string, code: string) => {
+    if (!window.confirm(`Delete auth code "${code}"?`)) return;
+    setCaDeletingId(id);
+    try {
+      const res = await fetch(`${BASE_URL}/api/card-auth/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      const data = await res.json();
+      if (data.ok) { showToast(`Deleted auth code ${code}`, 'success'); await fetchCardAuthList(); }
+      else showToast(data.error || 'Delete failed', 'error');
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'error'); }
+    finally { setCaDeletingId(null); }
+  };
+
+  const handleDeleteAllCardAuth = async () => {
+    if (!window.confirm(`Delete ALL ${cardAuthList.length} auth codes? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${BASE_URL}/api/card-auth/all/purge`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      const data = await res.json();
+      if (data.ok) { showToast('All auth codes deleted', 'success'); setCardAuthList([]); }
+      else showToast(data.error || 'Delete failed', 'error');
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'error'); }
+  };
+
+  const handleValidateIntegration = async () => {
+    if (!integrationApiKey.trim() || !integrationApiSecret.trim() || !integrationEndpointUrl.trim()) {
+      setIntegrationValidation({ verified: false, reason: 'Enter an API key, API secret, and endpoint URL' });
+      return;
+    }
+
+    setIntegrationValidating(true);
+    setIntegrationValidation(null);
+    try {
+      const res = await fetch(`${BASE_URL}/api/developer/integration/validate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: integrationApiKey,
+          apiSecret: integrationApiSecret,
+          endpointUrl: integrationEndpointUrl,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setIntegrationValidation({
+        verified:  res.ok && data.verified === true,
+        reachable: data.reachable === true,
+        reason:    data.reason || `Validation failed (HTTP ${res.status})`,
+        httpStatus:           data.httpStatus,
+        credentialsConfirmed: data.credentialsConfirmed === true,
+      });
+    } catch {
+      setIntegrationValidation({ verified: false, reason: 'Validation request failed before the endpoint responded' });
+    } finally {
+      setIntegrationValidating(false);
+    }
   };
   const fetchWiseStatus = async () => {
     setWiseLoading(true);
@@ -560,31 +639,65 @@ export const DeveloperPage = () => {
         </div>
       </div>
 
-      {/* Webhooks Section */}
+      {/* Webhooks / API integration validation */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-bold text-gray-900">Webhooks</h3>
-            <p className="text-sm text-gray-500 mt-1">Listen for events on your account</p>
+            <h3 className="text-lg font-bold text-gray-900">Webhooks & API integration</h3>
+            <p className="text-sm text-gray-500 mt-1">Validate a provider endpoint without saving its credentials</p>
           </div>
-          <button
-            onClick={() => showToast("Webhook management coming soon — configure via Settings > Merchant Integration", "info")}
-            className="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-          >
-            + Add Webhook
-          </button>
         </div>
-        <div className="p-6">
-          <div className="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center">
-            <div className="mx-auto w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-3">
-              <svg width="24" height="24" className="text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">API key</label>
+              <input type="text" value={integrationApiKey} onChange={e => setIntegrationApiKey(e.target.value)}
+                autoComplete="off" className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
             </div>
-            <div className="text-sm font-medium text-gray-500">No webhooks configured</div>
-            <div className="text-xs text-gray-400 mt-1">
-              Configure a webhook endpoint URL to receive <span className="font-mono bg-gray-50 px-1">payment.success</span>,{' '}
-              <span className="font-mono bg-gray-50 px-1">batch.closed</span>, and settlement events.
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">API secret</label>
+              <input type="password" value={integrationApiSecret} onChange={e => setIntegrationApiSecret(e.target.value)}
+                autoComplete="new-password" className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Endpoint URL (HTTPS)</label>
+              <input type="url" value={integrationEndpointUrl} onChange={e => setIntegrationEndpointUrl(e.target.value)}
+                placeholder="https://provider.example/validate" autoComplete="off" className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
             </div>
           </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <button onClick={handleValidateIntegration} disabled={integrationValidating}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition">
+              {integrationValidating ? 'Validating...' : 'Validate endpoint'}
+            </button>
+            <p className="text-xs text-gray-500">Only a button press sends a request. Credentials are sent in headers, never in the URL or local storage.</p>
+          </div>
+          {integrationValidation && (
+            <div className={`rounded-xl px-4 py-3 text-sm border space-y-1 ${
+              integrationValidation.verified
+                ? 'bg-green-50 border-green-200 text-green-800'
+                : integrationValidation.reachable
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : 'bg-red-50 border-red-200 text-red-800'}`}>
+              <div className="font-bold flex items-center gap-2">
+                {integrationValidation.verified
+                  ? '✅ Credentials confirmed — endpoint is working'
+                  : integrationValidation.reachable
+                    ? '⚠️ Endpoint reachable — check credentials'
+                    : '❌ Endpoint not reachable'}
+                {integrationValidation.httpStatus && (
+                  <span className="text-xs font-mono bg-white/60 px-1.5 py-0.5 rounded border border-current/20">
+                    HTTP {integrationValidation.httpStatus}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs font-medium opacity-80">{integrationValidation.reason}</div>
+              <div className="flex gap-3 text-xs mt-1">
+                <span>Reachable: <strong>{integrationValidation.reachable ? 'Yes' : 'No'}</strong></span>
+                <span>Credentials: <strong>{integrationValidation.credentialsConfirmed ? 'Accepted' : 'Not confirmed'}</strong></span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -658,7 +771,7 @@ export const DeveloperPage = () => {
             <div className="bg-green-50 border border-green-200 rounded-xl p-5">
               <div className="font-bold text-green-900 mb-1">💸 Collect from Wise Balance → ABSA</div>
               <div className="text-sm text-green-700 mb-3">
-                Calls Wise API directly — takes funds from your Wise balance and sends to ABSA 4110362532.
+                Calls Wise API directly — takes funds from your Wise balance and sends to destination bank .
               </div>
               <div className="flex gap-3">
                 <input
@@ -682,14 +795,14 @@ export const DeveloperPage = () => {
                   disabled={wiseCollecting || !collectAmount}
                   className="px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-800 text-white font-bold text-sm disabled:opacity-50 transition"
                 >
-                  {wiseCollecting ? '⏳ Sending...' : '💸 Send to ABSA'}
+                  {wiseCollecting ? '⏳ Sending...' : '💸 Send to destination bank'}
                 </button>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 bg-white border border-green-100 rounded-lg p-3 text-xs">
                 <div><span className="text-green-600">Destination:</span> <span className="font-bold">JUKRUTI LOGISTICS PTY LTD</span></div>
-                <div><span className="text-green-600">Bank:</span> <span className="font-bold">ABSA South Africa</span></div>
-                <div><span className="text-green-600">Account:</span> <span className="font-mono font-bold">4110362532</span></div>
-                <div><span className="text-green-600">SWIFT:</span> <span className="font-mono font-bold">ABSAZAJJ</span></div>
+                <div><span className="text-green-600">Bank:</span> <span className="font-bold">Destination Bank</span></div>
+                <div><span className="text-green-600">Account:</span> <span className="font-mono font-bold"></span></div>
+                <div><span className="text-green-600">SWIFT:</span> <span className="font-mono font-bold"></span></div>
               </div>
               {wiseCollectResult && (
                 <div className={`mt-3 rounded-xl p-4 border text-sm ${wiseCollectResult.success ? 'bg-white border-green-200' : 'bg-red-50 border-red-200'}`}>
@@ -1132,8 +1245,8 @@ export const DeveloperPage = () => {
             <div className="mt-3 grid grid-cols-2 gap-3 bg-white border border-slate-100 rounded-lg p-3 text-xs">
               <div><span className="text-slate-400">Sender BIC:</span> <span className="font-mono font-bold">PRSTUS33XXX</span></div>
               <div><span className="text-slate-400">Sender:</span> <span className="font-bold">PRIMESTACK TECHNOLOGIES LLC</span></div>
-              <div><span className="text-slate-400">Beneficiary BIC:</span> <span className="font-mono font-bold">ABSAZAJJ</span></div>
-              <div><span className="text-slate-400">Account:</span> <span className="font-mono font-bold">4110362532</span></div>
+              <div><span className="text-slate-400">Beneficiary BIC:</span> <span className="font-mono font-bold"></span></div>
+              <div><span className="text-slate-400">Account:</span> <span className="font-mono font-bold"></span></div>
               <div><span className="text-slate-400">Beneficiary:</span> <span className="font-bold">JUKRUTI LOGISTICS PTY LTD</span></div>
               <div><span className="text-slate-400">Charge:</span> <span className="font-bold">SHA</span></div>
             </div>
@@ -1303,7 +1416,7 @@ export const DeveloperPage = () => {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Auth Code *</label>
-                <input type="text" value={caCode} onChange={e=>setCaCode(e.target.value.replace(/[^a-zA-Z0-9\-]/g,"").substring(0,32))}
+                <input type="text" value={caCode} onChange={e=>setCaCode(e.target.value.replace(/[^a-zA-Z0-9-]/g,"").substring(0,32))}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono outline-none focus:border-indigo-500 uppercase"
                   placeholder={caProtocol==='201.3' ? 'e.g. 9834' : caProtocol==='101.1' ? 'e.g. 000004' : 'e.g. TOKEN-001'} />
               </div>
@@ -1322,19 +1435,39 @@ export const DeveloperPage = () => {
                   placeholder="50000" />
               </div>
             </div>
-            <button onClick={handleCreateCardAuth} disabled={caCreating}
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition">
-              {caCreating ? '⏳ Registering...' : '✅ Register Auth Code'}
-            </button>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button onClick={handleCreateCardAuth} disabled={caCreating}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition">
+                {caCreating ? '⏳ Registering...' : '✅ Register Auth Code'}
+              </button>
+              <button onClick={handleDeleteAllCardAuth} disabled={cardAuthList.length === 0}
+                className="px-5 py-2 bg-red-50 hover:bg-red-100 disabled:opacity-40 border border-red-200 text-red-600 text-sm font-semibold rounded-lg transition flex items-center gap-2">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                Delete All Codes
+              </button>
+            </div>
           </div>
 
           {/* Validate / test a code */}
           <div className="border border-gray-200 rounded-xl p-4 space-y-3">
-            <p className="text-xs font-bold text-gray-700 uppercase tracking-widest">🔍 Test / Validate a Code</p>
+            <p className="text-xs font-bold text-gray-700 uppercase tracking-widest">🔍 Validate one-time card authorization code</p>
+            <p className="text-xs text-gray-500">This checks a single-use code against the selected card, amount, and protocol. It is not a provider/API health check.</p>
             <div className="flex gap-3 items-end flex-wrap">
               <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Card (PAN)</label>
+                <input type="text" value={caPan} onChange={e=>setCaPan(e.target.value.replace(/\D/g,"").substring(0,19))}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono outline-none focus:border-indigo-500 w-52"
+                  placeholder="Card number" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Amount (USD)</label>
+                <input type="number" min="0.01" value={caAmount} onChange={e=>setCaAmount(e.target.value)}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-indigo-500 w-32"
+                  placeholder="Amount" />
+              </div>
+              <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Code to Test</label>
-                <input type="text" value={caValidateCode} onChange={e=>setCaValidateCode(e.target.value.replace(/[^a-zA-Z0-9\-]/g,""))}
+                <input type="text" value={caValidateCode} onChange={e=>setCaValidateCode(e.target.value.replace(/[^a-zA-Z0-9-]/g,""))}
                   className="px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono outline-none focus:border-indigo-500 uppercase w-44"
                   placeholder="Enter code..." />
               </div>
@@ -1346,7 +1479,7 @@ export const DeveloperPage = () => {
                     placeholder="123" />
                 </div>
               )}
-              <button onClick={handleValidateCardAuth} disabled={caValidating}
+              <button onClick={handleValidateCardAuth} disabled={caValidating || !caPan || !caAmount}
                 className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition">
                 {caValidating ? '⏳' : '🔍 Validate'}
               </button>
@@ -1368,6 +1501,17 @@ export const DeveloperPage = () => {
               <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
                 Registered Authorization Codes ({cardAuthList.length})
               </p>
+              {cardAuthList.length > 0 && (
+                <div className="flex justify-end mb-2">
+                  <button
+                    onClick={handleDeleteAllCardAuth}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 text-xs font-bold transition-colors"
+                  >
+                    <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    Delete All
+                  </button>
+                </div>
+              )}
               {cardAuthList.length === 0 ? (
                 <div className="text-center py-8 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl">
                   No auth codes registered yet — create one above
@@ -1381,6 +1525,10 @@ export const DeveloperPage = () => {
                         <th className="text-left py-2 px-3">Auth Code</th>
                         <th className="text-left py-2 px-3">CVV</th>
                         <th className="text-left py-2 px-3">Card (PAN)</th>
+                        <th className="text-right py-2 px-3">Amount</th>
+                        <th className="text-center py-2 px-3">Status</th>
+                        <th className="text-left py-2 px-3">Created</th>
+                        <th className="text-right py-2 px-3">Action</th>
                         <th className="text-right py-2 px-3">Amount</th>
                         <th className="text-center py-2 px-3">Status</th>
                         <th className="text-left py-2 px-3">Created</th>
@@ -1406,6 +1554,21 @@ export const DeveloperPage = () => {
                               : 'bg-red-100 text-red-600'}`}>{a.status}</span>
                           </td>
                           <td className="py-2 px-3 text-xs text-gray-400">{a.created_at ? new Date(a.created_at).toLocaleDateString() : '-'}</td>
+                          <td className="py-2 px-3 text-right">
+                            <button
+                              onClick={() => handleDeleteCardAuth(a.id, a.code)}
+                              disabled={caDeletingId === a.id}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 text-xs font-semibold transition-colors disabled:opacity-50"
+                              title="Delete this auth code"
+                            >
+                              {caDeletingId === a.id ? '...' : (
+                                <>
+                                  <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                  Delete
+                                </>
+                              )}
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

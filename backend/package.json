@@ -5,7 +5,9 @@
   "main": "dist/server.js",
   "scripts": {
     "start": "node dist/server.js",
+    "start:vault-bank": "node dist/vault-bank-server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev:vault-bank": "ts-node-dev --respawn --transpile-only src/vault-bank-server.ts",
     "build": "tsc"
   },
   "keywords": [],
@@ -20,7 +22,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/qrcode": "^1.5.6",
     "@types/speakeasy": "^2.0.10",
-    "axios": "^1.6.0",
+    "axios": "^1.20.0",
     "bcryptjs": "^3.0.3",
     "bs58": "^6.0.0",
     "cors": "^2.8.5",
@@ -32,6 +34,7 @@
     "jsonwebtoken": "^9.0.3",
     "keccak": "^3.0.4",
     "nfc-pcsc": "^0.8.1",
+    "node-forge": "^1.4.0",
     "open": "^11.0.0",
     "pg": "^8.11.3",
     "qrcode": "^1.5.4",
@@ -53,5 +56,11 @@
   "allowScripts": {
     "@pokusew/pcsclite@0.6.0": true,
     "keccak@3.0.4": true
+  },
+  "overrides": {
+    "axios": "^1.20.0",
+    "ethers": "^6.17.0",
+    "lodash": "^4.18.1",
+    "ws": "^8.21.3"
   }
 }

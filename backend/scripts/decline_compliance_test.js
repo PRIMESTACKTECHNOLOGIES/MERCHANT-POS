@@ -34,7 +34,7 @@ const AUTH = process.env.E2E_TOKEN;
 
   let token = AUTH;
   if (!token) {
-    const r = await axios.post(BASE + '/auth/login', { username: 'admin', password: 'admin1234' });
+    const r = await axios.post(BASE + '/auth/login', { username: 'admin', password: 'admin123' });
     token = r.data.token;
     console.log('✅ Got JWT', token.slice(0, 16) + '...\n');
   }

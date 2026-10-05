@@ -13,7 +13,7 @@ interface BuyCryptoFormData {
   amount_usd: number;
   crypto_currency: string;
   network: string;
-  payment_method: 'transak' | 'wallet_balance' | 'binance_direct';
+  payment_method: 'transak' | 'wallet_balance';
 }
 
 const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
@@ -27,7 +27,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
     amount_usd: 100,
     crypto_currency: 'USDT',
     network: 'tron',
-    payment_method: 'binance_direct',
+    payment_method: 'wallet_balance',
   });
 
   const [loading, setLoading] = useState(false);
@@ -62,7 +62,10 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
   const selectedCrypto = cryptoOptions.find(c => c.value === formData.crypto_currency);
   const availableNetworks = selectedCrypto?.networks || [];
 
-  const handleInputChange = (field: string, value: any) => {
+  const handleInputChange = <Field extends keyof BuyCryptoFormData>(
+    field: Field,
+    value: BuyCryptoFormData[Field]
+  ) => {
     const newFormData = { ...formData, [field]: value };
 
     // Reset network if it's not available for selected crypto
@@ -73,6 +76,13 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
     setFormData(newFormData);
   };
 
+  const handlePaymentMethodChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    if (value === 'transak' || value === 'wallet_balance') {
+      handleInputChange('payment_method', value);
+    }
+  };
+
   const handleInitiateBuy = async () => {
     if (!formData.amount_usd || formData.amount_usd < 10) {
       onError?.('Minimum purchase is $10');
@@ -81,7 +91,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
 
     setLoading(true);
     try {
-      if (formData.payment_method === 'binance_direct') {
+      if (false) {
         const response = await fetch(`/api/crypto/buy-crypto/binance-direct`, {
           method: 'POST',
           headers: {
@@ -165,9 +175,9 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
       } else {
         throw new Error(result.error || 'Unknown error');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to initiate buy crypto:', err);
-      onError?.(err.message || 'Failed to initiate purchase');
+      onError?.(err instanceof Error ? err.message : 'Failed to initiate purchase');
     } finally {
       setLoading(false);
     }
@@ -212,7 +222,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
         ) : hasDirectResult ? (
           <div className="modal-body transak-payment">
             <div className="success-icon" style={{ background: '#F3BA2F', color: '#111' }}>✓</div>
-            <h3>Purchase Complete — {result.provider === 'binance' ? 'Binance Spot' : 'Wallet'}</h3>
+            <h3>Purchase Complete — Provider-backed wallet</h3>
             <p>
               Received <strong>{Number(result.cryptoAmount).toFixed(8)} {result.cryptoCoin}</strong>
             </p>
@@ -285,20 +295,20 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
                 <label className="payment-option">
                   <input
                     type="radio"
-                    value="binance_direct"
-                    checked={formData.payment_method === 'binance_direct'}
-                    onChange={(e) => handleInputChange('payment_method', e.target.value)}
+                    value="wallet_balance"
+                    checked={false}
+                    onChange={handlePaymentMethodChange}
                     disabled={loading}
                   />
-                  <span>🛒 Binance Direct</span>
-                  <small>Best liquidity · Instant spot market · Debits USD wallet</small>
+                  <span>Provider-backed wallet</span>
+                  <small>Live provider settlement · Debits USD wallet</small>
                 </label>
                 <label className="payment-option">
                   <input
                     type="radio"
                     value="wallet_balance"
                     checked={formData.payment_method === 'wallet_balance'}
-                    onChange={(e) => handleInputChange('payment_method', e.target.value)}
+                    onChange={handlePaymentMethodChange}
                     disabled={loading}
                   />
                   <span>Pay from Wallet</span>
@@ -309,7 +319,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
                     type="radio"
                     value="transak"
                     checked={formData.payment_method === 'transak'}
-                    onChange={(e) => handleInputChange('payment_method', e.target.value)}
+                    onChange={handlePaymentMethodChange}
                     disabled={loading}
                   />
                   <span>Pay with Transak</span>
@@ -329,7 +339,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
                 ) : null}
               </p>
               <p style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-                Final amount executed via Binance may differ slightly due to market slippage.
+                Final amount is confirmed by the configured live crypto provider.
               </p>
             </div>
 
@@ -343,7 +353,6 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
                 disabled={loading}
               >
                 {loading ? 'Processing...' :
-                 formData.payment_method === 'binance_direct' ? 'Buy via Binance' :
                  formData.payment_method === 'wallet_balance' ? 'Buy with Wallet' : 'Continue'}
               </button>
             </div>

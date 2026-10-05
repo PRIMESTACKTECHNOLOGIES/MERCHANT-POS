@@ -49,6 +49,7 @@ class TransactionRepository(
         entryMode: String = "MANUAL",
         txnType: String = "SALE",
         authMode: String = "OFFLINE_APPROVED",
+        authCode: String? = null,
         timestamp: Long = System.currentTimeMillis()
     ) = withContext(Dispatchers.IO) {
         val tx = TransactionEntity(
@@ -63,6 +64,7 @@ class TransactionRepository(
             txnType = txnType,
             authMode = authMode,
             entryMode = entryMode,
+            authCode = authCode,
             txnTimestamp = timestamp,
             status = "PENDING"
         )

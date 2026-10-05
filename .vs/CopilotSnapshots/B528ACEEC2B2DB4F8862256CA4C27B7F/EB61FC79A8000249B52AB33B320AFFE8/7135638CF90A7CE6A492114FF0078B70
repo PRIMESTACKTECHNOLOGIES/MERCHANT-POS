@@ -1,0 +1,59 @@
+﻿<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Virtual Cards Preview</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f3f4f6;padding:40px}
+    .row{display:flex;gap:40px;align-items:flex-start}
+    .card-wrap{background:#fff;padding:20px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+    .eye{margin-top:12px;display:flex;align-items:center;gap:12px}
+    .eye button{background:#111;color:#fff;border:0;padding:10px 14px;border-radius:10px;cursor:pointer}
+    .small{width:320px}
+  </style>
+</head>
+<body>
+  <h1>Virtual Cards (Vault Bank)</h1>
+  <div class="row">
+    <div class="card-wrap">
+      <h3>USD Card</h3>
+      <img src="/cards/usd_card.svg" alt="USD Card" class="small" />
+    </div>
+    <div class="card-wrap">
+      <h3>EURO Card</h3>
+      <img id="euro" src="/cards/euro_card.svg" alt="EURO Card" class="small" />
+      <div class="eye">
+        <button id="toggle">👁️ Toggle credentials</button>
+        <span>Click to hide/show card number, expiry and CVV</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Simple toggle: reload the SVG inline with masked values
+    document.getElementById('toggle').addEventListener('click', async ()=>{
+      const img = document.getElementById('euro');
+      try{
+        const res = await fetch('/cards/euro_card.svg');
+        let svg = await res.text();
+        const masked = svg.includes('data-masked="true"');
+        if(!masked){
+          // mask number & cvv
+          svg = svg.replace(/<text id="card-number"[\s\S]*?<\/text>/, '<text id="card-number" x="56" y="220" fill="#ffffff" font-family="\'Courier New\', monospace" font-size="36" letter-spacing="6">**** **** **** 3197</text>');
+          svg = svg.replace(/<text id="cvv"[\s\S]*?<\/text>/, '<text id="cvv" x="240" y="280" fill="#dbeeff" font-family="Arial, Helvetica, sans-serif" font-size="18">CVV •••</text>');
+          svg = svg.replace(/<svg /, '<svg data-masked="true" ');
+        }else{
+          // unmask to original
+          svg = svg.replace(/<text id="card-number"[\s\S]*?<\/text>/, '<text id="card-number" x="56" y="220" fill="#ffffff" font-family="\'Courier New\', monospace" font-size="36" letter-spacing="6">4929 8952 0198 3197</text>');
+          svg = svg.replace(/<text id="cvv"[\s\S]*?<\/text>/, '<text id="cvv" x="240" y="280" fill="#dbeeff" font-family="Arial, Helvetica, sans-serif" font-size="18">CVV 496</text>');
+          svg = svg.replace(/data-masked="true" ?/, '');
+        }
+        const blob = new Blob([svg], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        img.src = url;
+      }catch(e){console.warn(e)}
+    });
+  </script>
+</body>
+</html>

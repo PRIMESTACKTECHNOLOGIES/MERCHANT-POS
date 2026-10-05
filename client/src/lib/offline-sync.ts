@@ -49,8 +49,8 @@ export async function replayOfflineOps(): Promise<SyncResult> {
         id: op.id,
         type: op.type,
         payload: op.payload,
-        signature: (op as any).signature || '',
-        createdAt: (op as any).signedAt || op.createdAt,
+        signature: op.signature || '',
+        createdAt: op.signedAt || op.createdAt,
       };
       if (!verifySignedQueueItem(signedItem)) {
         throw new Error('Offline queue signature mismatch');
@@ -59,8 +59,8 @@ export async function replayOfflineOps(): Promise<SyncResult> {
       markSynced(op.id);
       synced++;
       console.log(`[OfflineSync] ✅ ${op.type} synced (${op.id})`);
-    } catch (e: any) {
-      const msg = e.message || 'Unknown error';
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
       markFailed(op.id, msg);
       failed++;
       errors.push(`${op.type}: ${msg}`);
@@ -70,15 +70,19 @@ export async function replayOfflineOps(): Promise<SyncResult> {
 
   // Refresh cached balances for all affected customers
   const customerIds = [...new Set(pending
-    .filter(op => op.payload.customerId)
-    .map(op => op.payload.customerId as string)
+    .flatMap(op => {
+      const customerId = 'customerId' in op.payload ? op.payload.customerId : undefined;
+      return typeof customerId === 'string' ? [customerId] : [];
+    })
   )];
 
   for (const customerId of customerIds) {
     try {
       const bal = await getWalletBalance(customerId);
       cacheBalance(customerId, Number(bal.balance), bal.currency);
-    } catch (_) {}
+    } catch {
+      // Leave the queue intact if this best-effort cleanup cannot run.
+    }
   }
 
   clearSynced();
@@ -89,18 +93,24 @@ export async function replayOfflineOps(): Promise<SyncResult> {
 }
 
 async function replayOp(op: OfflineOp): Promise<void> {
-  const p = op.payload;
-
   switch (op.type) {
     case 'wallet_debit':
+      {
+      const p = op.payload;
       await debitWallet(p.customerId, p.amount, p.source || 'offline_pos');
       break;
+      }
 
     case 'wallet_transfer':
+      {
+      const p = op.payload;
       await walletTransfer(p.senderCustomerId, p.receiverCustomerId, p.amount, p.note);
       break;
+      }
 
     case 'wallet_topup_card':
+      {
+      const p = op.payload;
       await topupWalletWithCard(
         p.customerId,
         p.amount,
@@ -111,6 +121,7 @@ async function replayOp(op: OfflineOp): Promise<void> {
         p.emvData
       );
       break;
+      }
 
     case 'pos_transaction':
       // POS transactions are synced via the Protocol 201.3 batch — handled by syncEMVTransactions()
@@ -118,7 +129,7 @@ async function replayOp(op: OfflineOp): Promise<void> {
       break;
 
     default:
-      throw new Error(`Unknown op type: ${(op as any).type}`);
+      throw new Error(`Unknown op type: ${String((op as { type: unknown }).type)}`);
   }
 }
 

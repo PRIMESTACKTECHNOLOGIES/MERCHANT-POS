@@ -1,8 +1,7 @@
-import { TLVParser } from './tlv-parser';
-import type { EMVTag } from './tlv-parser';
 
 export interface EMVTransaction {
   id: string;
+  customerId?: string;
   timestamp: Date;
   amount: number;
   currency: string;
@@ -175,6 +174,15 @@ export class OfflineTransactionStorage {
       console.error('Failed to update transaction upload status:', error);
       return false;
     }
+  }
+
+  setCustomerId(transactionId: string, customerId: string): boolean {
+    const transactions = this.getAllTransactions();
+    const transaction = transactions.find((item) => item.id === transactionId);
+    if (!transaction) return false;
+    transaction.customerId = customerId;
+    localStorage.setItem(this.storageKey, JSON.stringify(transactions));
+    return true;
   }
 
   markTransactionPending(transactionId: string): boolean {

@@ -15,6 +15,9 @@ client/node_modules
 .vscode
 .idea
 *.iml
+.kiro
+.vs
+.qoder
 *.log
 *.pem
 *.key

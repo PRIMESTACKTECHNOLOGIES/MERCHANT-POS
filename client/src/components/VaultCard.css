@@ -1,0 +1,46 @@
+.vault-card {
+  width: min(100%, 560px);
+  aspect-ratio: 420 / 260;
+  border-radius: 18px;
+  overflow: hidden;
+  position: relative;
+  margin: 40px auto;
+  background: linear-gradient(135deg, #d6d2c8, #b8b4aa);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  font-family: Inter, sans-serif;
+}
+
+.vault-card-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.vault-card-toggle {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 13px;
+  background: rgba(26, 37, 68, 0.94);
+  color: #fff;
+  cursor: pointer;
+  font-family: Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vault-card-toggle:hover {
+  background: #1a2544;
+}
+
+/* Keep operational actions available without showing the legacy card metadata. */
+.vault-card-shell-header,
+.vault-card-shell-details > div:first-child,
+.vault-card-shell-details > div:nth-child(2),
+.vault-card-shell-details > div:nth-child(3),
+.vault-card-shell-details > div:nth-child(4) {
+  display: none !important;
+}

@@ -42,6 +42,7 @@ export async function applyOfflineSaleToWallet(
 
 export interface OfflinePosTransactionParams {
   merchantId: string;
+  customerId?: string;
   terminalId?: string;
   amountMinor: number;
   currency?: string;
@@ -56,6 +57,11 @@ export interface OfflinePosTransactionParams {
   rrn?: string;
   stan?: string;
   authCode?: string;
+  tokenReference?: string;
+  panSequence?: string;
+  posConditionCode?: string;
+  isoMti?: string;
+  isoResponseCode?: string;
   emvData?: Record<string, unknown> | string;
   tlvRaw?: string;
   ledgerEntryId?: string | null;
@@ -65,6 +71,7 @@ export interface OfflinePosTransactionParams {
 export async function recordOfflinePosTransaction(params: OfflinePosTransactionParams) {
   const {
     merchantId,
+    customerId,
     terminalId,
     amountMinor,
     currency = 'USD',
@@ -79,6 +86,11 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
     rrn,
     stan,
     authCode,
+    tokenReference,
+    panSequence,
+    posConditionCode,
+    isoMti,
+    isoResponseCode,
     emvData,
     tlvRaw,
     ledgerEntryId,
@@ -91,17 +103,23 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
   const localId = localTxnId || `LOCAL-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
   const amount = Number(amountMinor) / 100;
   const currencyCode = (currency || 'USD').toUpperCase();
+  if (!customerId?.trim()) {
+    throw new Error('customerId is required for provider-captured offline wallet funding');
+  }
 
   await db.query(
     `INSERT INTO pos2013_transactions
-      (id, merchant_id, terminal_id, batch_id, local_txn_id, stan,
+      (id, merchant_id, customer_id, terminal_id, batch_id, local_txn_id, stan,
        amount_minor, currency, pan_masked, txn_type, auth_mode,
        entry_mode, card_brand, reader_source, cvm_result, pin_verified,
-       rrn, auth_code, status, emv_data, txn_timestamp, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)`,
+       rrn, auth_code, status, emv_data, emv_field55_hex, token_reference,
+       pan_sequence, pos_condition_code, iso_mti, iso_response_code,
+       txn_timestamp, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
     [
       txnId,
       merchantId,
+      customerId,
       terminalId || 'UNKNOWN',
       batchId,
       localId,
@@ -119,6 +137,12 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
       rrn || null,
       authCode || null,
       typeof emvData === 'string' ? emvData : emvData ? JSON.stringify(emvData) : null,
+      tlvRaw || null,
+      tokenReference || null,
+      panSequence || null,
+      posConditionCode || null,
+      isoMti || null,
+      isoResponseCode || null,
       txnTimestamp,
       txnTimestamp,
     ]
@@ -146,6 +170,7 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
       JSON.stringify({
         transactionId: txnId,
         merchantId,
+        customerId,
         terminalId,
         batchId,
         localTxnId: localId,

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class WisePaymentScreen extends StatefulWidget {
-  const WisePaymentScreen({Key? key}) : super(key: key);
+  const WisePaymentScreen({super.key});
 
   @override
   State<WisePaymentScreen> createState() => _WisePaymentScreenState();
@@ -15,7 +15,7 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
   final _purposeController = TextEditingController();
 
   String _selectedCurrency = 'EUR';
-  double _exchangeRate = 1.0;
+  final double _exchangeRate = 1.0;
   double _estimatedAmount = 0.0;
   bool _isLoading = false;
 
@@ -29,7 +29,7 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
 
   void _updateExchangeRate() {
     setState(() {
-      double amount = double.tryParse(_amountController.text) ?? 0;
+      final double amount = double.tryParse(_amountController.text) ?? 0;
       _estimatedAmount = amount * _exchangeRate;
     });
   }
@@ -74,7 +74,7 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
       // final response = await apiClient.post('/wise/initiate-payment', data: payload);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           content: Text('Payment initiated successfully!'),
           backgroundColor: Colors.green,
         ),
@@ -111,11 +111,11 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('SEPA Payment via Wise'),
+        title: const Text('SEPA Payment via Wise'),
         elevation: 0,
       ),
       body: SingleChildScrollView(
-        padding: EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: Column(
@@ -124,13 +124,13 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
               // Amount input
               TextFormField(
                 controller: _amountController,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Amount',
                   hintText: '0.00',
                   prefixIcon: Icon(Icons.attach_money),
                   border: OutlineInputBorder(),
                 ),
-                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Amount is required';
@@ -145,15 +145,15 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                   return null;
                 },
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
 
               // Currency selection
               Row(
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _selectedCurrency,
-                      decoration: InputDecoration(
+                      initialValue: _selectedCurrency,
+                      decoration: const InputDecoration(
                         labelText: 'Target Currency',
                         border: OutlineInputBorder(),
                       ),
@@ -169,10 +169,10 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                       },
                     ),
                   ),
-                  SizedBox(width: 8),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Container(
-                      padding: EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         border: Border.all(color: Colors.grey),
                         borderRadius: BorderRadius.circular(4),
@@ -180,7 +180,7 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Exchange Rate',
+                          const Text('Exchange Rate',
                               style: TextStyle(
                                   fontSize: 12, color: Colors.grey)),
                           Text(
@@ -193,12 +193,12 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                   ),
                 ],
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
 
               // Estimated amount display
               if (_estimatedAmount > 0)
                 Container(
-                  padding: EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.blue.shade50,
                     borderRadius: BorderRadius.circular(4),
@@ -208,12 +208,12 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-              SizedBox(height: 24),
+              const SizedBox(height: 24),
 
               // Recipient IBAN
               TextFormField(
                 controller: _ibanController,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Recipient IBAN',
                   hintText: 'DE89370400440532013000',
                   prefixIcon: Icon(Icons.account_balance),
@@ -237,12 +237,12 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                   return null;
                 },
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
 
               // Recipient name
               TextFormField(
                 controller: _recipientNameController,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Recipient Name',
                   prefixIcon: Icon(Icons.person),
                   border: OutlineInputBorder(),
@@ -254,19 +254,19 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                   return null;
                 },
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
 
               // Purpose (optional)
               TextFormField(
                 controller: _purposeController,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Purpose (Optional)',
                   hintText: 'Payment reason',
                   border: OutlineInputBorder(),
                 ),
                 maxLines: 2,
               ),
-              SizedBox(height: 32),
+              const SizedBox(height: 32),
 
               // Submit button
               SizedBox(
@@ -274,12 +274,12 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : _submitPayment,
                   style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(vertical: 14),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                     backgroundColor: Colors.blue,
                     disabledBackgroundColor: Colors.grey,
                   ),
                   child: _isLoading
-                      ? SizedBox(
+                      ? const SizedBox(
                           height: 20,
                           width: 20,
                           child: CircularProgressIndicator(
@@ -288,17 +288,17 @@ class _WisePaymentScreenState extends State<WisePaymentScreen> {
                                 AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                         )
-                      : Text(
+                      : const Text(
                           'Initiate Payment',
                           style: TextStyle(fontSize: 16, color: Colors.white),
                         ),
                 ),
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
 
               // Info text
               Container(
-                padding: EdgeInsets.all(12),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.amber.shade50,
                   border: Border.all(color: Colors.amber),

@@ -142,6 +142,16 @@ async function getDb(): Promise<any> {
       status TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT
+      ,dwolla_transfer_url TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS bank_partner_webhook_events (
+      transfer_id TEXT PRIMARY KEY,
+      payout_id TEXT NOT NULL,
+      merchant_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      code TEXT,
+      reason TEXT,
+      received_at TEXT NOT NULL
     )`,
     `CREATE TABLE IF NOT EXISTS fx_rates (
       from_currency TEXT NOT NULL,
@@ -268,6 +278,9 @@ async function getDb(): Promise<any> {
       name TEXT,
       iban TEXT,
       swift TEXT,
+      account_number TEXT,
+      routing_number TEXT,
+      account_type TEXT,
       address TEXT,
       country TEXT,
       currency TEXT DEFAULT 'EUR',
@@ -409,6 +422,77 @@ async function getDb(): Promise<any> {
       created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
+    `CREATE TABLE IF NOT EXISTS emv_card_state (
+      token           TEXT PRIMARY KEY,
+      last_atc        INTEGER NOT NULL DEFAULT -1,
+      last_arqc       TEXT,
+      last_rrn        TEXT,
+      updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS vault_cards (
+      id              TEXT PRIMARY KEY,
+      vault_account_id TEXT NOT NULL,
+      bin             TEXT NOT NULL,
+      card_number     TEXT NOT NULL,
+      last4           TEXT NOT NULL,
+      scheme          TEXT NOT NULL,
+      product         TEXT NOT NULL,
+      country         TEXT NOT NULL,
+      expiry          TEXT NOT NULL,
+      cvv             TEXT NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'ACTIVE',
+      created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS inbound_transaction_registrations (
+      id TEXT PRIMARY KEY,
+      protocol TEXT NOT NULL DEFAULT '101.1',
+      authorization_code TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      beneficiary_name TEXT,
+      beneficiary_account TEXT,
+      sender_bic TEXT,
+      receiver_bic TEXT,
+      uetr TEXT,
+      deposit_code TEXT,
+      cusip TEXT,
+      fed_wire_code TEXT,
+      swift_mt_type TEXT,
+      iso20022_type TEXT,
+      settlement_status TEXT NOT NULL DEFAULT 'PENDING_VERIFICATION',
+      fund_verification_status TEXT NOT NULL DEFAULT 'UNVERIFIED',
+      verification_provider TEXT,
+      verification_reference TEXT,
+      verified_at TEXT,
+      merchant_id TEXT,
+      customer_id TEXT,
+      pan_masked TEXT,
+      card_registered INTEGER NOT NULL DEFAULT 0,
+      raw_document TEXT,
+      meta_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (authorization_code, protocol)
+    )`,
+    `CREATE TABLE IF NOT EXISTS fund_verification_audits (
+      id TEXT PRIMARY KEY,
+      registration_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      verification_method TEXT NOT NULL,
+      request_payload TEXT,
+      response_payload TEXT,
+      result_status TEXT NOT NULL,
+      result_reason TEXT,
+      verified_amount REAL,
+      verified_currency TEXT,
+      external_reference TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (registration_id) REFERENCES inbound_transaction_registrations(id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_inbound_tx_reg_auth_code
+       ON inbound_transaction_registrations (authorization_code, protocol)`,
+    `CREATE INDEX IF NOT EXISTS idx_inbound_tx_reg_status
+       ON inbound_transaction_registrations (settlement_status, fund_verification_status)`,
   ];
   for (const sql of vaultTableStatements) {
     try { _db.run(sql); } catch (_) {}
@@ -424,32 +508,78 @@ async function getDb(): Promise<any> {
          VALUES (?, ?, ?, ?, 1, ?)`,
         [require('uuid').v4(), gatewayApiKey, gatewaySecretKey, 'environment vault bank', NOW_ISO],
       );
+      // Always ensure the env key is active with the correct secret on every startup
+      _db.run(
+        `UPDATE vault_api_keys SET active = 1, secret_key = ? WHERE api_key = ?`,
+        [gatewaySecretKey, gatewayApiKey],
+      );
     } catch (_) {}
   }
 
+  // ── Void the $10M test inbound entry that polluted the vault ledger ─────────
+  // This was a voice-auth inbound registration (auth code "770") that was
+  // mistakenly credited to the vault as BATCH_TO_VAULT. It is not real funds.
   try {
-    const acc1 = _db.exec(`SELECT COUNT(*) FROM vault_accounts WHERE id='PROC-VAULT-EUR-001'`);
-    if (!acc1.length || !acc1[0].values.length || Number(acc1[0].values[0][0]) === 0) {
-      _db.run(`INSERT INTO vault_accounts (id,bank_name,bic,iban,currency,balance,reserved_hold,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-        ['PROC-VAULT-EUR-001','Protocol 201.3 Settlement Bank','PROCESSOR_BIC_PLACEHOLDER','PROCESSOR_IBAN_PLACEHOLDER','EUR',510000000,0,NOW_ISO,NOW_ISO]);
-    }
-    const acc2 = _db.exec(`SELECT COUNT(*) FROM vault_accounts WHERE id='PROC-VAULT-USD-002'`);
-    if (!acc2.length || !acc2[0].values.length || Number(acc2[0].values[0][0]) === 0) {
-      _db.run(`INSERT INTO vault_accounts (id,bank_name,bic,iban,currency,balance,reserved_hold,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-        ['PROC-VAULT-USD-002','Protocol 201.3 Settlement Bank','PROCESSOR_BIC_PLACEHOLDER','PROCESSOR_IBAN_PLACEHOLDER','USD',4998363,0,NOW_ISO,NOW_ISO]);
-    }
-    const wiseEur = _db.exec(`SELECT COUNT(*) FROM vault_accounts WHERE id='VAULT-WISE-EUR-001'`);
-    if (!wiseEur.length || !wiseEur[0].values.length || Number(wiseEur[0].values[0][0]) === 0) {
-      _db.run(`INSERT INTO vault_accounts (id,bank_name,bic,iban,currency,balance,reserved_hold,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-        ['VAULT-WISE-EUR-001','Wise Europe Bank','WISEBANKBIC','DE12345678901234567890','EUR',0,0,NOW_ISO,NOW_ISO]);
-    }
-    const ben = _db.exec(`SELECT COUNT(*) FROM vault_beneficiaries WHERE swift='TRWIBEB1XXX'`);
-    if (!ben.length || !ben[0].values.length || Number(ben[0].values[0][0]) === 0) {
-      const { v4: uuidv4 } = require('uuid');
-      _db.run(`INSERT INTO vault_beneficiaries (id,name,iban,swift,country,address,currency,bank_name,is_archived,created_at) VALUES (?,?,?,?,?,?,?,?,0,?)`,
-        [uuidv4(),'PRIMESTACK TECHNOLOGIES LLC','BE19905861593312','REPLACEMENTBICXXX','Belgium','Replacement provider settlement address','EUR','Replacement Provider',NOW_ISO]);
-    }
+    _db.run(
+      `UPDATE vault_ledger SET status = 'VOIDED'
+       WHERE reference = 'voice_muikk3e0' AND amount = 10000000 AND status = 'COMPLETED'`
+    );
+    // Recompute vault_accounts balance from non-voided BATCH_TO_VAULT entries only
+    _db.run(`
+      UPDATE vault_accounts
+         SET balance          = COALESCE((
+               SELECT SUM(CASE WHEN type IN ('VAULT_TO_MERCHANT','VAULT_TO_BANK') THEN -ABS(amount)
+                               WHEN type = 'BATCH_TO_VAULT' THEN ABS(amount)
+                               ELSE 0 END)
+               FROM vault_ledger
+               WHERE currency = vault_accounts.currency AND status = 'COMPLETED'
+             ), 0),
+             available_balance = COALESCE((
+               SELECT SUM(CASE WHEN type IN ('VAULT_TO_MERCHANT','VAULT_TO_BANK') THEN -ABS(amount)
+                               WHEN type = 'BATCH_TO_VAULT' THEN ABS(amount)
+                               ELSE 0 END)
+               FROM vault_ledger
+               WHERE currency = vault_accounts.currency AND status = 'COMPLETED'
+             ), 0),
+             updated_at = ?
+       WHERE id IN ('PROC-VAULT-USD-002','PROC-VAULT-EUR-001','VAULT-WISE-EUR-001')
+    `, [NOW_ISO]);
   } catch (_) {}
+
+  // Clear only the exact legacy placeholder seeds; leave all ledger-derived balances untouched.
+  _db.run(
+    `UPDATE vault_accounts
+        SET balance = 0
+      WHERE ((id = ? AND currency = 'EUR' AND balance = ?)
+          OR (id = ? AND currency = 'USD' AND balance = ?))
+        AND bic = ?
+        AND iban = ?`,
+    [
+      'PROC-VAULT-EUR-001',
+      510000000,
+      'PROC-VAULT-USD-002',
+      4998363,
+      'PROCESSOR_BIC_PLACEHOLDER',
+      'PROCESSOR_IBAN_PLACEHOLDER',
+    ],
+  );
+  _db.run(
+    `UPDATE vault_accounts
+        SET balance = 0, available_balance = 0
+      WHERE id = ?
+        AND currency = 'USD'
+        AND bic = ?
+        AND iban = ?
+        AND balance = ?
+        AND available_balance = ?`,
+    [
+      'PROC-VAULT-USD-002',
+      'PROCESSOR_BIC_PLACEHOLDER',
+      'PROCESSOR_IBAN_PLACEHOLDER',
+      6499.5,
+      1999.5,
+    ],
+  );
 
   const guarantees: Array<[string, string]> = [
     ['vault_payouts',             'idempotency_key TEXT'],
@@ -480,7 +610,22 @@ async function getDb(): Promise<any> {
     ['merchant_payouts',           'meta TEXT'],
     ['merchant_payouts',           'transaction_id TEXT'],
     ['merchant_payouts',           'settled_at TEXT'],
+    ['merchant_wallets',            'dwolla_customer_url TEXT'],
+    ['merchant_wallets',            'dwolla_funding_source_url TEXT'],
+    ['vault_payouts',               'dwolla_transfer_url TEXT'],
+    ['vault_payouts',               'bank_return_code TEXT'],
+    ['vault_payouts',               'bank_return_reason TEXT'],
     ['pos2013_transactions',       'decline_reason TEXT'],
+    ['pos2013_transactions',       'customer_id TEXT'],
+    ['pos2013_transactions',       'card_id TEXT'],
+    ['merchant_payouts',           'bank_return_code TEXT'],
+    ['merchant_payouts',           'bank_return_reason TEXT'],
+    ['vault_accounts',             'available_balance REAL NOT NULL DEFAULT 0'],
+    ['vault_accounts',             'pending_settlement REAL NOT NULL DEFAULT 0'],
+    ['vault_accounts',             'risk_hold REAL NOT NULL DEFAULT 0'],
+    ['vault_accounts',             'payout_in_progress REAL NOT NULL DEFAULT 0'],
+    ['vault_accounts',             'updated_at TEXT'],
+    ['vault_accounts',             'last_reconciled TEXT'],
   ];
 
   for (const [table, def] of guarantees) {
@@ -534,6 +679,76 @@ async function getDb(): Promise<any> {
     _db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_wallets_wallet_code ON customer_wallets(wallet_code)`);
   } catch (_) {}
 
+  try {
+    _db.run(`
+      UPDATE vault_accounts
+         SET available_balance = MAX(0, COALESCE(balance, 0) - COALESCE(reserved_hold, 0))
+       WHERE (COALESCE(available_balance, 0) = 0)
+         AND ABS(COALESCE(balance, 0) - COALESCE(reserved_hold, 0)) > 0.0001
+    `);
+  } catch (_) {}
+  try {
+    const NOW_ISO2 = new Date().toISOString();
+    _db.run(`UPDATE vault_accounts SET updated_at = COALESCE(updated_at, ?), created_at = COALESCE(created_at, ?)`, [NOW_ISO2, NOW_ISO2]);
+  } catch (_) {}
+
+  // ── Bootstrap: Register Inbound 101.1 Transaction Auth Code 0707 ──
+  try {
+    const REG_NOW = new Date().toISOString();
+    const REG_ID = 'INBOUND-REG-0707-DTC1011';
+    const AUTH_CODE = '0707';
+    const PROTOCOL = '101.1';
+    const AMOUNT = 1000000000.11;
+    const CURRENCY = 'USD';
+    _db.run(
+      `INSERT OR IGNORE INTO inbound_transaction_registrations
+        (id, protocol, authorization_code, amount, currency, beneficiary_name, beneficiary_account,
+         sender_bic, receiver_bic, uetr, deposit_code, cusip, fed_wire_code, swift_mt_type, iso20022_type,
+         settlement_status, fund_verification_status, merchant_id, customer_id, pan_masked, card_registered,
+         raw_document, meta_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               'PENDING_VERIFICATION', 'UNVERIFIED', NULL, NULL, NULL, 0, ?, ?, ?, ?)`,
+      [
+        REG_ID,
+        PROTOCOL,
+        AUTH_CODE,
+        AMOUNT,
+        CURRENCY,
+        'Musa Abubakar Abdulkadir',
+        null,
+        'TUBDDEDDXXX',
+        'SBICZAJJXXX',
+        'c9b7e2a4-fb5f-41f9-a02b-4ba90998c19b',
+        'G818-3124929DB-HSBC-26718459',
+        'SCG-664338RT667',
+        'E-8142HSBC.3156.6868.1003.4259.7142.157',
+        'MT103+',
+        'pacs.008.001.10',
+        `DTC/101.1 SWIFT Alliance Confirmation — Sender TUBDDEDDXXX / Receiver SBICZAJJXXX — Beneficiary Musa Abubakar Abdulkadir — Status POSITIVE ACK (STP) — Network Matched 100%`,
+        JSON.stringify({
+          document_type: 'DTC/101.1',
+          swift_header: '{1:F01TUBDDEDDXXXX090512886479}{2:I103SBICZAJJXXXXN}',
+          field_32A: ':32A:260911USD1000000000.11',
+          audit_dictum: 'Funds are verified good… fully cleared for interbank credit.',
+          settlement_claim: 'POSITIVE ACK STP',
+          network_match: '100% SUCCESS',
+          routing_mode: 'SWIFT FIN + ISO 20022',
+          destination_wallet_note: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb (referenced document; NOT executed by processor)',
+          visa_url_note: 'https://www.usa.visa.com/vmml/access (document reference only)',
+          alchemy_url_note: 'https://eth-mainnet.g.alchemy.com/v2/itO3MDno7oXgclJIZoW16 (document reference only)',
+          expected_card_capture: true,
+          card_details_to_be_provided: true,
+          note: 'Document format deviations detected (non-standard CUSIP/Fedwire structure). Funds MUST be verified via external provider API before any wallet credit — NO stand-in approval.',
+        }),
+        REG_NOW,
+        REG_NOW,
+      ]
+    );
+    console.log(`[BOOTSTRAP] Inbound 101.1 registration ${AUTH_CODE} ${CURRENCY} ${AMOUNT.toLocaleString()} ensured (INSERT OR IGNORE).`);
+  } catch (regErr: any) {
+    console.warn('[BOOTSTRAP] Inbound 101.1 registration bootstrap skipped:', regErr?.message);
+  }
+
   // Persist initial state
   schedulePersist();
   return _db;
@@ -561,16 +776,36 @@ class DbAdapter {
 
     try {
       if (isRead) {
-        const results = db.exec(sqliteText, params);
-        if (!results || results.length === 0) {
-          return { rows: [], rowCount: 0 };
+        let rows: any[] = [];
+        if (params && params.length > 0) {
+          const stmt = db.prepare(sqliteText);
+          try {
+            stmt.bind(params);
+            const columns = stmt.getColumnNames();
+            const valuesArr: any[][] = [];
+            while (stmt.step()) {
+              const rowArr = stmt.get();
+              valuesArr.push(Array.isArray(rowArr) ? rowArr : columns.map((_: string, i: number) => (rowArr as any)[columns[i]]));
+            }
+            rows = valuesArr.map((valArr: any[]) => {
+              const row: Record<string, any> = {};
+              columns.forEach((col: string, i: number) => { row[col] = valArr[i]; });
+              return row;
+            });
+          } finally {
+            stmt.free();
+          }
+        } else {
+          const results = db.exec(sqliteText);
+          if (results && results.length > 0) {
+            const { columns, values } = results[0];
+            rows = values.map((val: any[]) => {
+              const row: Record<string, any> = {};
+              columns.forEach((col: string, i: number) => { row[col] = val[i]; });
+              return row;
+            });
+          }
         }
-        const { columns, values } = results[0];
-        const rows = values.map((val: any[]) => {
-          const row: Record<string, any> = {};
-          columns.forEach((col: string, i: number) => { row[col] = val[i]; });
-          return row;
-        });
         return { rows, rowCount: rows.length };
       } else {
         // Write statement — use run()

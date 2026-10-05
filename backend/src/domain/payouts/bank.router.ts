@@ -81,7 +81,7 @@ function renderPayoutReceiptHtml(po: any, wallet: any, ldg: any, mtx: any): stri
     parts.push('<div class="sec" style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:20px;">');
     parts.push('<h2 style="color:#92400e;">Pending Settlement Confirmation</h2>');
     parts.push('<div class="v" style="color:#78350f;font-weight:500;margin-top:6px;">This payout has been debited from your merchant wallet. Real funds are currently being processed by the card acquiring network and will settle directly into <span class="mono">' + (bank.bank_name || '') + ' ' + (bank.account_number || '') + '</span> within 1&ndash;3 business days.</div>');
-    parts.push('<div style="margin-top:12px;font-size:13px;color:#92400e;">Once you see the deposit appear in ' + (bank.bank_name || '') + ' online banking, click Approve on payout row and attach your ABSA reference.</div>');
+    parts.push('<div style="margin-top:12px;font-size:13px;color:#92400e;">Once you see the deposit appear in ' + (bank.bank_name || '') + ' online banking, click Approve on payout row and attach your bank reference.</div>');
     parts.push('<div class="mono" style="margin-top:10px;font-size:12px;color:#78350f;">POST /api/payout/payouts/' + po.id + '/approve</div>');
     parts.push('</div>');
   }
@@ -89,7 +89,7 @@ function renderPayoutReceiptHtml(po: any, wallet: any, ldg: any, mtx: any): stri
   if (confirmation) {
     parts.push('Payout closed successfully. Keep this receipt for your accounting records and tax audit trail. Transaction triple-matched: wallet denorm, mwtx journal, general ledger AUTHORIZED DEBIT, payout status COMPLETED.');
   } else {
-    parts.push('1. Card processor runs automatic settlement (1&ndash;3 business days). 2. Check your ABSA bank statement for the deposit. 3. Approve payout with your bank reference. 4. Re-download this receipt after approval &mdash; it will update to COMPLETED automatically.');
+    parts.push('1. Card processor runs automatic settlement (1&ndash;3 business days). 2. Check your bank statement for the deposit. 3. Approve payout with your bank reference. 4. Re-download this receipt after approval &mdash; it will update to COMPLETED automatically.');
   }
   parts.push('</div></div>');
   parts.push('<div class="foot"><div>JUKRUTI LOGISTICS PTY LTD &middot; Merchant ' + po.merchant_id + ' &middot; Offline POS Protocol 201.3</div>');
@@ -121,7 +121,7 @@ router.get('/bank/wise/diagnostics', authenticateToken, async (_req, res) => {
       ? Boolean(process.env.WISE_API_KEY?.trim() || process.env.BANK_PAYOUT_API_KEY?.trim())
       : false,
     message: provider === 'manual'
-      ? 'Payout mode: MANUAL. Wallet debits immediately on payout creation. Confirm receipt once funds arrive in ABSA.'
+      ? 'Payout mode: MANUAL. Wallet debits immediately on payout creation. Confirm receipt once funds arrive in your bank.'
       : provider === 'external'
       ? `Payout mode: EXTERNAL. Processor URL: ${process.env.BANK_PAYOUT_API_URL || '(not set)'}. Each new payout calls this endpoint.`
       : provider === 'internal' && downstream === 'wise'
@@ -709,7 +709,7 @@ router.post('/wise/sync', authenticateToken, async (_req, res) => {
     });
   }
 
-  const baseUrl = '';
+  const baseUrl = (process.env.WISE_API_URL?.trim() || 'https://api.wise.com/2026Q3').replace(/\/+$/, '');
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
   const axios = (await import('axios')).default;
   const { v4: uuid } = await import('uuid');

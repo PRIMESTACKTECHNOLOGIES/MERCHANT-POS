@@ -1,7 +1,7 @@
-import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
+﻿import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { OverviewPage } from "./pages/OverviewPage";
-import { NotificationProvider } from "./contexts/NotificationContext";
+import { NotificationProvider } from "./contexts/NotificationProvider";
 import { TerminalsPage } from "./pages/TerminalsPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -18,6 +18,8 @@ import { WalletsPage } from "./pages/WalletsPage";
 import { WalletTransferPage } from "./pages/WalletTransferPage";
 import { VerifyTransactionPage } from "./pages/VerifyTransactionPage";
 import { HotWalletPage } from "./pages/HotWalletPage";
+import { MerchantWalletPage } from "./pages/MerchantWalletPage";
+import { CustomerFundsPage } from "./pages/CustomerFundsPage";
 import { VaultDashboardPage } from "./pages/VaultDashboardPage";
 import CustomerWalletPage from "./pages/CustomerWalletPage";
 import CustomerWalletProfilePage from "./pages/CustomerWalletProfilePage";
@@ -29,6 +31,7 @@ import { Toast } from "./components/Toast";
 
 import type { ReactElement } from "react";
 const BYPASS_AUTH = false;
+const IS_VAULT_BANK_DASHBOARD = import.meta.env.VITE_APP_MODE === "vault-bank";
 
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const token = localStorage.getItem("token") || localStorage.getItem("jwt_token");
@@ -55,6 +58,53 @@ function DashboardLayoutWrapper() {
 }
 
 function App() {
+  if (IS_VAULT_BANK_DASHBOARD) {
+    return (
+      <NotificationProvider>
+        <Toast />
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/vault-bank"
+            element={
+              <ProtectedRoute>
+                <main className="min-h-screen bg-slate-50 p-4 lg:p-8">
+                  <VaultDashboardPage />
+                </main>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/customer-wallet-profile/:customerId"
+            element={
+              <ProtectedRoute>
+                <CustomerWalletProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/customer-wallet/:customerId"
+            element={
+              <ProtectedRoute>
+                <CustomerWalletPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="*"
+            element={
+              <ProtectedRoute>
+                <main className="min-h-screen bg-slate-50 p-4 lg:p-8">
+                  <VaultDashboardPage />
+                </main>
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </NotificationProvider>
+    );
+  }
+
   return (
     <NotificationProvider>
       <Toast />
@@ -64,6 +114,17 @@ function App() {
 
         {/* PUBLIC — full screen for customer, no sidebar */}
         <Route path="/customer-entry" element={<CustomerEntryPage />} />
+
+        <Route
+          path="/vault-bank"
+          element={
+            <ProtectedRoute>
+              <main className="min-h-screen bg-slate-50 p-4 lg:p-8">
+                <VaultDashboardPage />
+              </main>
+            </ProtectedRoute>
+          }
+        />
         
         {/* Protected Dashboard Routes with Layout */}
         <Route element={<ProtectedRoute><DashboardLayoutWrapper /></ProtectedRoute>}>
@@ -90,7 +151,8 @@ function App() {
           <Route path="/customer-wallet/:customerId" element={<CustomerWalletPage />} />
           <Route path="/customer-wallet-profile/:customerId" element={<CustomerWalletProfilePage />} />
           <Route path="/hot-wallet" element={<HotWalletPage />} />
-          <Route path="/vault" element={<VaultDashboardPage />} />
+          <Route path="/customer-funds" element={<CustomerFundsPage />} />
+          <Route path="/merchant-wallet" element={<MerchantWalletPage />} />
           <Route path="/wallet" element={<Navigate to="/wallets" replace />} />
           <Route path="/customer-wallet" element={<Navigate to="/wallets" replace />} />
           <Route path="/customer-wallets" element={<Navigate to="/wallets" replace />} />

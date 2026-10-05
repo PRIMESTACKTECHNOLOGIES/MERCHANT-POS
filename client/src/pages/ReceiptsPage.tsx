@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
 import {
   fetchReceipts,
-  generateReceipt,
   getReceipt,
   printReceipt,
-  generateThermalReceipt,
   downloadThermalTxt,
   type Receipt,
   type ThermalCopy,
@@ -35,18 +33,6 @@ export function ReceiptsPage() {
     }
   };
 
-  const handleGenerateReceipt = async (transactionId: string) => {
-    try {
-      const receipt = await generateReceipt(transactionId);
-      setSelectedReceiptId(receipt.receiptId);
-      setFullReceipt(receipt);
-      loadReceipts();
-    } catch (error) {
-      console.error('Failed to generate receipt:', error);
-      alert((error as Error).message);
-    }
-  };
-
   const openReceipt = async (receiptId: string) => {
     setSelectedReceiptId(receiptId);
     try {
@@ -63,18 +49,6 @@ export function ReceiptsPage() {
       setPrintResult(r);
       setShowPrintModal(true);
       setCopyTab('combined');
-    } catch (e) {
-      console.error(e);
-      alert((e as Error).message);
-    }
-  };
-
-  const handlePrintByTxn = async (transactionId: string, copy: ThermalCopy) => {
-    try {
-      const r = await generateThermalReceipt(transactionId, copy, 'json');
-      setPrintResult(r);
-      setShowPrintModal(true);
-      setCopyTab(copy);
     } catch (e) {
       console.error(e);
       alert((e as Error).message);
@@ -183,7 +157,6 @@ body { width: 80mm; padding: 2mm; font-family: "Courier New", Consolas, "Lucida 
     ]) ||
     browserText;
 
-  const thermalText: string = browserText || escposText;
 
   return (
     <div className="p-8 max-w-7xl mx-auto">

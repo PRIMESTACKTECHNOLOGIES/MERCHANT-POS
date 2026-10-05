@@ -1,5 +1,6 @@
 import { db } from "../../config/db";
 import { POS_BRAND_NAME, POS_PROTOCOL_VERSION, VAULT_DISPLAY_NAME, transactionChannel } from "../../config/brand";
+import { processorConfig, acquirerConfig } from "../../config/acquirer";
 
 const ESC = "\x1B";
 const GS = "\x1D";
@@ -111,6 +112,21 @@ export interface ThermalTxnFull {
   transaction_channel?: 'ONLINE' | 'OFFLINE';
   pos_brand_name?: string;
   vault_display_name?: string;
+  processor_name?: string;
+  processor_model?: string;
+  processor_version?: string;
+  processor_protocol?: string;
+  processor_ip?: string;
+  processor_key_id?: string;
+  processor_activation_code?: string;
+  processor_merchant_id?: string;
+  processor_terminal_id?: string;
+  acquirer_host?: string;
+  acquirer_port?: number;
+  acquirer_protocol?: string;
+  software_name?: string;
+  software_vendor?: string;
+  software_build?: string;
 }
 
 export class ThermalReceiptService {
@@ -178,12 +194,15 @@ export class ThermalReceiptService {
         s.merchant_name AS ms_name, s.support_email AS merchant_email,
         s.license_number AS merchant_license, s.tax_id AS merchant_tax_id,
         s.merchant_address AS ms_address, s.merchant_phone AS ms_phone,
-        ter.name AS terminal_name, ter.floor_limit AS terminal_floor_limit_permanent
+        s.extended_settings AS ms_extended,
+        ter.name AS terminal_name, ter.floor_limit AS terminal_floor_limit_permanent,
+        cust.name AS cust_name, cust.email AS cust_email, cust.phone AS cust_phone
       FROM pos2013_transactions t
       LEFT JOIN pos2013_batches b ON t.batch_id = b.batch_id
       LEFT JOIN merchant_business_info m ON t.merchant_id = m.merchant_id
       LEFT JOIN merchant_settings s ON t.merchant_id = s.merchant_id
       LEFT JOIN terminals ter ON t.terminal_id = ter.terminal_id
+      LEFT JOIN customers cust ON t.customer_id = cust.id
       WHERE t.id = ? AND t.merchant_id = ?
       LIMIT 1
     `;
@@ -222,10 +241,10 @@ export class ThermalReceiptService {
         (tx.stan && tx.stan === row.stan)
       ) || batchFileJson;
 
-    full.customer_name   = (emv.customer_name || emv.cardholder_full || emv.cardholder_name || batchFileJson?.customer_name || bfTx?.cardholder || bfTx?.cardholder_full || bfTx?.cardholder_name || bfTx?.customer?.name || "").trim() || null;
+    full.customer_name   = (emv.customer_name || emv.cardholder_full || emv.cardholder_name || batchFileJson?.customer_name || bfTx?.cardholder || bfTx?.cardholder_full || bfTx?.cardholder_name || bfTx?.customer?.name || row.cust_name || "").trim() || null;
     full.customer_id     = emv.customer_id || bfTx?.customer_id || null;
-    full.customer_phone  = emv.customer_phone || bfTx?.customer_phone || null;
-    full.customer_email  = emv.customer_email || bfTx?.customer_email || null;
+    full.customer_phone  = emv.customer_phone || bfTx?.customer_phone || row.cust_phone || null;
+    full.customer_email  = emv.customer_email || bfTx?.customer_email || row.cust_email || null;
     full.pi_id           = emv.pi_id || emv.pi || bfTx?.pi_id || batchFileJson?.pi_id || null;
 
     full.card_program    = emv.card_program || emv.card_class || emv.account_type || (emv.card_gold_debit ? "GOLD DEBIT" : null) || null;
@@ -320,18 +339,60 @@ export class ThermalReceiptService {
       full.merchant_phone = row.ms_phone;
     }
 
+    // Parse extended_settings from merchant_settings for profile details
+    let msExt: any = {};
+    try { if (row.ms_extended) msExt = JSON.parse(row.ms_extended); } catch { msExt = {}; }
+    const msProfile = msExt?.profile || {};
+    const msBusiness = msExt?.business || {};
+
     if (!full.terminal_name) full.terminal_name = "Main Terminal";
-    const mnRaw = String(full.merchant_name || "").trim();
-    const isPlaceholder = mnRaw.length === 0 || /default\s*store/i.test(mnRaw);
-    const msRaw = String(row.ms_name || "").trim();
-    const msOk = msRaw.length > 0 && !/default\s*store/i.test(msRaw);
-    full.merchant_name = isPlaceholder ? (msOk ? msRaw : POS_BRAND_NAME) : full.merchant_name;
+
+    // Merchant name: merchant_business_info → extended_settings profile/business → merchant_settings.merchant_name → POS brand
+    const mnRaw  = String(full.merchant_name || "").trim();
+    const isPH   = mnRaw.length === 0 || /default\s*store/i.test(mnRaw);
+    const msName = String(row.ms_name || "").trim();
+    const msNameOk = msName.length > 0 && !/default\s*store/i.test(msName);
+    const profName = String(msProfile.companyName || msProfile.name || msBusiness.legalName || "").trim();
+    const profNameOk = profName.length > 0 && !/default\s*store/i.test(profName);
+    full.merchant_name = isPH
+      ? (profNameOk ? profName : msNameOk ? msName : POS_BRAND_NAME)
+      : full.merchant_name;
+
+    // Address: merchant_business_info → extended_settings profile → hardcoded default
+    if (!full.merchant_address) {
+      full.merchant_address = String(row.ms_address || msProfile.address || msProfile.companyName || "").trim() || "Wilmington, DE, USA";
+    }
+
+    // Phone: merchant_business_info → extended_settings profile
+    if (!full.merchant_phone) {
+      full.merchant_phone = String(row.ms_phone || msProfile.phone || "").trim() || "+1 (302) 000-0000";
+    }
+
+    // Email: merchant_settings.support_email → extended_settings profile.email
+    if (!full.merchant_email) {
+      full.merchant_email = String(row.merchant_email || msProfile.email || "").trim() || undefined;
+    }
+
     if (!full.receipt_footer) full.receipt_footer = "Thank you for your business!";
-    if (!full.merchant_address) full.merchant_address = "Wilmington, DE, USA";
-    if (!full.merchant_phone) full.merchant_phone = "+1 (302) 000-0000";
     full.transaction_channel = transactionChannel(full.auth_mode, full.batch_id);
     full.pos_brand_name = POS_BRAND_NAME;
     full.vault_display_name = VAULT_DISPLAY_NAME;
+
+    full.processor_name = processorConfig.name;
+    full.processor_model = processorConfig.model;
+    full.processor_version = processorConfig.version;
+    full.processor_protocol = processorConfig.protocol;
+    full.processor_ip = processorConfig.ip;
+    full.processor_key_id = processorConfig.keyId;
+    full.processor_activation_code = processorConfig.activationCode;
+    full.processor_merchant_id = processorConfig.merchantId;
+    full.processor_terminal_id = processorConfig.terminalId;
+    full.acquirer_host = acquirerConfig.host || undefined;
+    full.acquirer_port = acquirerConfig.port;
+    full.acquirer_protocol = acquirerConfig.protocol;
+    full.software_name = "PRIMESTACK POS 201.3";
+    full.software_vendor = "PRIMESTACK PAYMENT TECHNOLOGIES";
+    full.software_build = processorConfig.model + "-v" + processorConfig.version;
 
     return full;
   }
@@ -348,13 +409,17 @@ export class ThermalReceiptService {
     const isDeclined = statusRaw.includes("DECLIN") || statusRaw.includes("FAIL") || statusRaw.includes("REJECT");
     const approved = !isDeclined && (statusRaw.includes("APPROV") || statusRaw.includes("AUTH"));
 
+    const channel = tx.transaction_channel || transactionChannel(tx.auth_mode, tx.batch_id);
     out.push(ALIGN_CENTER);
     out.push(BOLD_ON);
-    out.push(DOUBLE_H);
     out.push(String(finalMerchantName).toUpperCase());
-    out.push(`${VAULT_DISPLAY_NAME} VAULT · ${tx.transaction_channel || transactionChannel(tx.auth_mode, tx.batch_id)} TRANSACTION`);
+    out.push(NORMAL);
+    out.push(`Powered by ${tx.pos_brand_name || POS_BRAND_NAME} · ${tx.vault_display_name || VAULT_DISPLAY_NAME} VAULT`);
+    out.push(BOLD_ON);
+    out.push(`--- ${channel} PROTOCOL ---`);
     out.push(NORMAL);
     out.push(BOLD_OFF);
+    out.push(`PROTOCOL USED: ${channel === 'ONLINE' ? '201.3 ONLINE - LIVE ACQUIRER' : '201.3 OFFLINE - STANDALONE COLLECTION'}`);
     out.push(tx.merchant_address || "");
     if (tx.merchant_phone) out.push(`TEL: ${tx.merchant_phone}`);
     if (tx.merchant_email) out.push(`EMAIL: ${tx.merchant_email}`);
@@ -363,7 +428,6 @@ export class ThermalReceiptService {
 
     out.push(ALIGN_CENTER);
     out.push(BOLD_ON);
-    out.push(DOUBLE_H);
     out.push(`*** ${copyLabel} ***`);
     out.push(NORMAL);
     out.push(BOLD_OFF);
@@ -384,8 +448,7 @@ export class ThermalReceiptService {
     if (isDeclined && (tx.decline_reason || tx.status)) {
       out.push(ALIGN_CENTER);
       out.push(BOLD_ON);
-      out.push(DOUBLE_H);
-      out.push("✗ ✗ ✗  DECLINED / FAILED  ✗ ✗ ✗");
+      out.push("*** DECLINED / FAILED ***");
       out.push(NORMAL);
       out.push(BOLD_OFF);
       out.push(LF);
@@ -442,7 +505,6 @@ export class ThermalReceiptService {
     out.push(BOLD_ON);
     out.push("TOTAL TRANSACTION AMOUNT");
     out.push(LF);
-    out.push(DOUBLE_WH);
     out.push(this.fmtAmountMinor(tx.amount_minor, tx.currency));
     out.push(NORMAL);
     out.push(BOLD_OFF);
@@ -558,22 +620,43 @@ export class ThermalReceiptService {
       out.push(LF);
     }
 
+    out.push(BOLD_ON);
+    out.push("PROCESSOR & SOFTWARE DETAILS");
+    out.push(BOLD_OFF);
+    out.push(this.padR(40, "SOFTWARE:", tx.software_name || "PRIMESTACK POS 201.3"));
+    out.push(this.padR(40, "VENDOR:", tx.software_vendor || "PRIMESTACK PAYMENT TECH"));
+    out.push(this.padR(40, "BUILD:", tx.software_build || "N/A"));
+    out.push(this.padR(40, "PROCESSOR:", tx.processor_name || "PRIMESTACK PROCESSOR"));
+    out.push(this.padR(40, "MODEL:", tx.processor_model || "N/A"));
+    out.push(this.padR(40, "VERSION:", tx.processor_version || "N/A"));
+    out.push(this.padR(40, "PROTOCOL:", `VER ${tx.processor_protocol || POS_PROTOCOL_VERSION} (${channel})`));
+    if (tx.acquirer_host) {
+      out.push(this.padR(40, "ACQUIRER:", `${tx.acquirer_host}:${tx.acquirer_port || ''}`));
+      out.push(this.padR(40, "ACQ PROTOCOL:", (tx.acquirer_protocol || '').toUpperCase()));
+    }
+    out.push(...this.padRLong(40, "PROCESSOR IP:", tx.processor_ip || 'N/A', 20));
+    out.push(...this.padRLong(40, "KEY ID:", tx.processor_key_id || 'N/A', 20));
+    if (tx.processor_activation_code) {
+      out.push(...this.padRLong(40, "ACT CODE:", tx.processor_activation_code, 20));
+    }
+    out.push(this.padR(40, "PROC MID:", tx.processor_merchant_id || "N/A"));
+    out.push(this.padR(40, "PROC TID:", tx.processor_terminal_id || "N/A"));
+    out.push(this.line40("─"));
+    out.push(LF);
+
     out.push(ALIGN_CENTER);
     if (approved) {
       out.push(BOLD_ON);
-      out.push(DOUBLE_H);
-      out.push("✓ ✓ ✓  APPROVED / AUTHORIZED  ✓ ✓ ✓");
+      out.push("*** APPROVED / AUTHORIZED ***");
       out.push(NORMAL);
       out.push(BOLD_OFF);
     } else if (isDeclined) {
       out.push(BOLD_ON);
-      out.push(DOUBLE_H);
-      out.push("✗ ✗ ✗  DECLINED — DO NOT HONOR  ✗ ✗ ✗");
+      out.push("*** DECLINED - DO NOT HONOR ***");
       out.push(NORMAL);
       out.push(BOLD_OFF);
     } else {
       out.push(BOLD_ON);
-      out.push(DOUBLE_H);
       out.push(`STATUS: ${statusRaw}`);
       out.push(NORMAL);
       out.push(BOLD_OFF);
@@ -632,9 +715,15 @@ export class ThermalReceiptService {
 
     const sections: string[] = [];
 
+    const htmlChannel = tx.transaction_channel || transactionChannel(tx.auth_mode, tx.batch_id);
+    const protocolText = htmlChannel === 'ONLINE' ? '201.3 ONLINE - LIVE ACQUIRER' : '201.3 OFFLINE - STANDALONE COLLECTION';
     sections.push(`<header>
       <h1>${esc(String(finalMerchantName).toUpperCase())}</h1>
-      <div class="addr">${esc(`${tx.vault_display_name || VAULT_DISPLAY_NAME} VAULT · ${tx.pos_brand_name || POS_BRAND_NAME} POS`)}</div>
+      <div class="addr">${esc(`Powered by ${tx.pos_brand_name || POS_BRAND_NAME} · ${tx.vault_display_name || VAULT_DISPLAY_NAME} VAULT`)}</div>
+      <div class="channel-badge channel-${htmlChannel.toLowerCase()}">
+        <b>═══ ${esc(htmlChannel)} PROTOCOL ═══</b>
+      </div>
+      <div class="proto-used"><b>PROTOCOL USED:</b> ${esc(protocolText)}</div>
       <div class="addr">${esc(tx.merchant_address || "")}</div>
       ${tx.merchant_phone ? `<div class="addr">TEL: ${esc(tx.merchant_phone)}</div>` : ""}
       ${tx.merchant_email ? `<div class="addr">EMAIL: ${esc(tx.merchant_email)}</div>` : ""}
@@ -702,8 +791,8 @@ export class ThermalReceiptService {
         ${tr("AUTH MODE", (tx.auth_mode || "OFFLINE_AUTH").toUpperCase())}
         ${tr("POS BRAND", tx.pos_brand_name || POS_BRAND_NAME)}
         ${tr("VAULT", tx.vault_display_name || VAULT_DISPLAY_NAME)}
-        ${tr("CHANNEL", tx.transaction_channel || transactionChannel(tx.auth_mode, tx.batch_id))}
-        ${tr("PROTOCOL", `VER ${tx.protocol_version || POS_PROTOCOL_VERSION}`)}
+        ${tr("CHANNEL", `${htmlChannel} · ${protocolText}`)}
+        ${tr("PROTOCOL", `VER ${tx.protocol_version || POS_PROTOCOL_VERSION} (${htmlChannel})`)}
         ${tx.offline_approval_type ? tr("OFFLINE AUTH", String(tx.offline_approval_type).toUpperCase()) : ""}
         ${tx.pi_id ? `<tr><th>PI ID:</th><td>${esc(tx.pi_id)}</td></tr>` : ""}
         ${tr("STAN", tx.stan || "N/A")}
@@ -778,6 +867,26 @@ export class ThermalReceiptService {
         </table>
       </section>`);
     }
+
+    sections.push(`<section>
+      <h3>PROCESSOR &amp; SOFTWARE DETAILS</h3>
+      <table>
+        ${tr("SOFTWARE", tx.software_name || "PRIMESTACK POS 201.3")}
+        ${tr("VENDOR", tx.software_vendor || "PRIMESTACK PAYMENT TECH")}
+        ${tr("BUILD", tx.software_build || "N/A")}
+        ${tr("PROCESSOR", tx.processor_name || "PRIMESTACK PROCESSOR")}
+        ${tr("MODEL", tx.processor_model || "N/A")}
+        ${tr("VERSION", tx.processor_version || "N/A")}
+        ${tr("PROTOCOL", `VER ${tx.processor_protocol || POS_PROTOCOL_VERSION} (${htmlChannel})`)}
+        ${tx.acquirer_host ? tr("ACQUIRER", `${tx.acquirer_host}:${tx.acquirer_port || ''}`) : ""}
+        ${tx.acquirer_protocol ? tr("ACQ PROTOCOL", String(tx.acquirer_protocol).toUpperCase()) : ""}
+        ${tr("PROCESSOR IP", tx.processor_ip || "N/A")}
+        ${tr("KEY ID", tx.processor_key_id || "N/A")}
+        ${tx.processor_activation_code ? `<tr><th>ACT CODE:</th><td>${esc(tx.processor_activation_code)}</td></tr>` : ""}
+        ${tr("PROC MID", tx.processor_merchant_id || "N/A")}
+        ${tr("PROC TID", tx.processor_terminal_id || "N/A")}
+      </table>
+    </section>`);
 
     sections.push(`<section class="status ${statusClass}"><h3>${esc(statusText)}</h3></section>`);
 

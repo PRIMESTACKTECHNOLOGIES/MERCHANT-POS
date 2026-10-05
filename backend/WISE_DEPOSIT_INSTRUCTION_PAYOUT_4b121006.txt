@@ -1,0 +1,37 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║   ACH DEPOSIT INSTRUCTION — Fund Wise BUSINESS profile to close          ║
+║   payout 4b121006-2df1-4d ($200 USD, merchant MRC-1001 → Wise)          ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║                                                                          ║
+║  Send $200.00 USD via ACH (or domestic US wire) from your operating     ║
+║  bank account to the Wise USD receiving account below.                  ║
+║  This is the PHYSICAL movement that matches the $200 already debited    ║
+║  on your POS ledger (MRC-1001 USD wallet at 2026-09-11 16:14:18).       ║
+║                                                                          ║
+║  ── Bank details to send to ────────────────────────────────────────     ║
+║    Beneficiary / Account Holder  :  PRIMESTACK TECHNOLOGIES LLC         ║
+║    Bank Name                       :  Wise US Inc                        ║
+║                                      (partner bank: Column Bank, N.A.)  ║
+║    Routing / ABA #                 :  084009519                         ║
+║    Account #                       :  343612919064346                   ║
+║    Account Type                    :  CHECKING                           ║
+║    SWIFT / BIC                     :  TRWIUS35XXX                       ║
+║    Bank Address                    :  108 W 13th St, Wilmington,        ║
+║                                      DE 19801, United States            ║
+║                                                                          ║
+║  ── REQUIRED Reference / Memo ────────────────────────────────────      ║
+║    MUST include on the ACH / wire:  Profile 94913186                    ║
+║                                      Payout 4b121006                    ║
+║    (So Wise credits it to the correct BUSINESS profile.)                ║
+║                                                                          ║
+║  ── After the ACH lands ──────────────────────────────────────────      ║
+║    1. Your Wise USD balance becomes ~ $200.51                           ║
+║       (= $0.51 current + $200 new deposit)                              ║
+║    2. Wise fires an incoming-transfer#credited webhook → POS           ║
+║       captures it in wise_webhook_events.                               ║
+║    3. Developer → Wise Diagnostics → Sync Now polls the balance.       ║
+║    4. POST /api/payout/payouts/4b121006-2df1-4d23-bcf0-847ea0f3983c    ║
+║       /approve  { external_reference:"<Wise incomingTransferId>" }      ║
+║       → payout status → COMPLETED.                                     ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝

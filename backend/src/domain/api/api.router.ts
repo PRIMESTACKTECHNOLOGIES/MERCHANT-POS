@@ -76,7 +76,14 @@ router.get('/wallet/customer/:customerId/balances', async (req, res) => {
   try {
     const { customerId } = req.params;
     const wallets = await walletsService.listCustomerWallets(customerId);
-    res.json({ wallets: wallets.map((w: any) => ({ balance: Number(w.balance), currency: w.currency, wallet_code: w.wallet_code, id: w.id })) });
+    res.json({
+      wallets: wallets.map((w: any) => ({
+        balance: Number(w.balance),
+        currency: w.currency,
+        wallet_code: w.wallet_code,
+        id: w.id,
+      })),
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

@@ -12,7 +12,7 @@
  *    → Bank sends real money → Mark POS sale 'settled'
  *
  * REQUIREMENTS:
- *  - Backend at :7000 (admin/admin1234)
+ *  - Backend at :7000 (admin/admin123)
  *  - Optional: BINANCE_API_KEY / OKX_KEY / BYBIT_KEY env for live fills
  *    (if not present, uses custom-crypto mock exchange — still exercises code path)
  * ──────────────────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ function step(no, title, pass, extra) {
   // ── 0. Login ──────────────────────────────────────────────────────────
   let ok = true;
   try {
-    const r = await axios.post(BASE + '/auth/login', { username: 'admin', password: 'admin1234' });
+    const r = await axios.post(BASE + '/auth/login', { username: 'admin', password: 'admin123' });
     TOKEN = r.data.token;
     ok = step(0, 'Admin login → bearer token', !!TOKEN, TOKEN ? `JWT length ${TOKEN.length}` : 'no token');
   } catch (e) {

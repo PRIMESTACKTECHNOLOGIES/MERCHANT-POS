@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { walletsController } from './wallets.controller';
 import { walletCardController } from './wallet-card.controller';
+import { authenticateToken } from '../../middleware/auth.middleware';
 
 const router = Router();
 const wc = walletsController;
@@ -16,10 +17,12 @@ router.post('/offline/sync', wcc.sync.bind(wcc));
 router.get('/merchant-balance/:merchantId',      wc.getMerchantBalance.bind(wc));
 router.get('/merchant-transactions/:merchantId', wc.getMerchantTransactions.bind(wc));
 router.post('/merchant/transfer-to-customer',    wc.merchantToCustomerTransfer.bind(wc));
+router.post('/merchant/settle-emv-2013',         wc.settleEmv2013.bind(wc));
 
 // ── Customers ──────────────────────────────────────────────────────────────
 router.get('/customers',                    wc.getCustomers.bind(wc));
 router.post('/customers',                   wc.createCustomer.bind(wc));
+router.delete('/customers/:customerId',     authenticateToken, wc.deleteCustomer.bind(wc));
 router.get('/customers/:customerId/profile', wc.getCustomerProfile.bind(wc));
 router.patch('/customers/:customerId/kyc',  wc.updateCustomerKYC.bind(wc));
 
@@ -34,7 +37,9 @@ router.get('/transactions/:customerId', wc.getTransactions.bind(wc));
 router.post('/transfer', wc.walletTransfer.bind(wc));
 
 // ── Send customer asset to hot wallet ─────────────────────────────────────
-router.post('/send-to-hot-wallet', wc.sendToHotWallet.bind(wc));
+router.post('/send-to-hot-wallet', authenticateToken, wc.sendToHotWallet.bind(wc));
+router.post('/provider-send-to-merchant', authenticateToken, wc.callProviderAndSendToMerchant.bind(wc));
+router.post('/provider-pull-to-merchant', authenticateToken, wc.pullProviderFundsToMerchant.bind(wc));
 
 // ── Bank accounts ──────────────────────────────────────────────────────────
 router.post('/bank-accounts',              wc.addBankAccount.bind(wc));
@@ -49,14 +54,12 @@ router.get('/crypto-wallets-all',                wc.getAllCustomersCryptoWallets
 router.get('/crypto-wallets/:customerId',      wc.getCryptoWallets.bind(wc));
 router.get('/crypto-price/:cryptoCoin',        wc.getCryptoPrice.bind(wc));
 router.post('/buy-crypto',                     wc.buyCryptoWithWallet.bind(wc));
-router.post('/buy-crypto/binance-direct',       wc.buyCryptoDirectBinance.bind(wc));
 router.post('/sell-crypto',                    wc.sellCrypto.bind(wc));
 router.post('/swap-crypto',                    wc.swapCrypto.bind(wc));
 router.get('/crypto-transactions/:customerId', wc.getCryptoTransactions.bind(wc));
 router.post('/merchant/buy-crypto',            wc.buyCryptoWithMerchant.bind(wc));
 router.post('/merchant/swap-crypto',           wc.swapCryptoWithMerchant.bind(wc));
 router.post('/crypto-withdraw',                wc.withdrawCrypto.bind(wc));
-router.get('/binance/spot-balances',           wc.getBinanceSpotBalances.bind(wc));
 
 // ── Transak Fiat On/Off-Ramp ──────────────────────────────────────────────
 router.get('/transak/config',                          wc.transakConfig.bind(wc));
@@ -81,6 +84,5 @@ router.post('/transak/apple-pay/session',              wc.createTransakApplePayS
 
 // ── Hot Wallet management ──────────────────────────────────────────────────
 router.get('/hot-wallet-balance',                       wc.getHotWalletBalance.bind(wc));
-router.post('/hot-wallet/autobuy-usdt-topup',           wc.autobuyTopupHotWalletUsdt.bind(wc));
 
 export { router as walletsRouter };

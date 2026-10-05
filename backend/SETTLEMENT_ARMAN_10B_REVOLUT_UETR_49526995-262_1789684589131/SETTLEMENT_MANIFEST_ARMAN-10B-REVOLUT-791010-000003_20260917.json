@@ -1,0 +1,91 @@
+{
+  "generatedAt": "2026-09-17T22:36:29.233Z",
+  "settlement_bundle_dir": "SETTLEMENT_ARMAN_10B_REVOLUT_UETR_49526995-262_1789684589131",
+  "status": "QUEUED_AWAITING_MANUAL_RAIL_EXECUTION",
+  "uetr": "49526995-2623-4981-B467-8435AB095EE0",
+  "internal_reference": "ARMAN-10B-REVOLUT-791010-000003",
+  "approval_stan": {
+    "approval": "791010",
+    "stan": "000003",
+    "protocol": "201.3"
+  },
+  "idempotency": {
+    "key": "arman-10b-revolut-85719BBA9FBCAE1526403EA8",
+    "request_hash": "e72f218e08533abc2057c137432cd253cd33c9cc462fae31293443371ded986d"
+  },
+  "amounts": {
+    "sweep_from_merchant_wallets_usd": 10000000000,
+    "vault_account_before_usd": 10004998363,
+    "payout_vault_debit_usd": 10000000000,
+    "vault_account_after_usd": 4998363,
+    "fee_usd": 0,
+    "net_to_beneficiary_usd": 10000000000,
+    "merchant_wallets_balance_after_usd": 245
+  },
+  "balances_after": {
+    "merchant_wallets.MRC-1001.USD": 245,
+    "accounts.PROC-VAULT-USD-002.USD": 4998363
+  },
+  "beneficiary": {
+    "id": "0c969ce3-255b-4510-ad4b-9d56872dbc80",
+    "name": "MR. ARMAN ARAKELYAN",
+    "type": "individual",
+    "bank_swift_bic": "REVOGB21",
+    "bank_account_number_last8": "24772651",
+    "bank_country": "GB",
+    "destination_country": "AE",
+    "destination_type": "card",
+    "card": {
+      "masked": "4165 **** **** 2651",
+      "bin": "416598",
+      "last4": "2651",
+      "scheme": "VISA",
+      "expiry": "05/30"
+    },
+    "contact": {
+      "email": "usbusiness191@gmail.com",
+      "phone": "+971553857165"
+    }
+  },
+  "payout": {
+    "id": "ddc93c76-9f61-41c5-844a-e56b82e67be9",
+    "source_account_id": "PROC-VAULT-USD-002",
+    "beneficiary_id": "0c969ce3-255b-4510-ad4b-9d56872dbc80",
+    "destination_type": "card",
+    "amount": 10000000000,
+    "currency": "USD",
+    "channel": "WIRE",
+    "status": "QUEUED",
+    "uetr": "49526995-2623-4981-B467-8435AB095EE0",
+    "purpose": "PUSH-TO-CARD REVOLUT VISA 416598****2651 / EMV 201.3 SETTLEMENT SWEEP",
+    "created_at": "2026-09-17 22:36:29"
+  },
+  "generated_files": {
+    "mt103_swift": "MT103_ARMAN-10B-REVOLUT-791010-000003_UETR_49526995_20260917.txt",
+    "wise_batch_csv": "WISE_BATCH_ARMAN-10B-REVOLUT-791010-000003_20260917.csv",
+    "rtgs_instruction_html": "RTGS_INSTRUCTION_ARMAN-10B-REVOLUT-791010-000003_UETR_49526995-262_20260917.html"
+  },
+  "forensic_ids": {
+    "sweep_merchant_wallet_transaction_id": "(see merchant_wallet_transactions: INTERNAL_REF ARMAN-10B-REVOLUT-791010-000003)",
+    "sweep_ledger_debit_id": "fe9b63d2-…",
+    "sweep_ledger_credit_id": "cb42e189-…",
+    "payout_ledger_debit_id": "76abb89e-16fa-4332-a030-8557b4d50947",
+    "payout_ledger_credit_payable_id": "80f0ca61-af9d-4052-9382-4dc7fa4f7acf",
+    "emv_card_authorization_id": "2a0ca062-08e7-4459-a8c3-31fad4a38f7f",
+    "emv_pos_transaction_id": "e0e222eb-9300-486a-a643-a88146aebd32",
+    "emv_ledger": {
+      "auth": "ledger_17896828188…",
+      "cap": "c483e57e-…",
+      "set": "511444cd-…"
+    }
+  },
+  "integrity": {
+    "emv_sha256": "b522d97b817b1dd286f7ae6d0828a43bd80ff98015ee0faf24cdacf23af47a1e",
+    "emv_sha1": "b1eef69999a7e21da25537bb14c15c9b46bf6371",
+    "emv_md5": "c7b4575625b10aa6d63dcbdc5bc2142d",
+    "ed25519_pkfp": "a327073909e2f0239ccab41aa5bd0dc73e9c1aaebf2fd292c22f2650a27f943f",
+    "ed25519_sig_b64": "oYHDUPpeI+1FyN2sE2hWHEdiAcPzcF1XaMS5RO0ghMBIKgSkCzTuHX4Vi+NYlIKpl9CxYlVh7r4dHmDABOqZDA==",
+    "psr": "VERTEZED PSR-3739313031303A54-D6F477"
+  },
+  "next_action": "MANUAL 5-STEP EXECUTION → then stamp real UETR/bank-ref into core_payouts to close reconciliation loop."
+}

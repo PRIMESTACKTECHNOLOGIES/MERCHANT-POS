@@ -57,10 +57,20 @@ export class BankTransferController {
       });
     } catch (e: any) {
       console.error('[BankTransfer Controller] Error creating account:', e);
-      const status = Number(e?.response?.status) || (String(e?.message || '').startsWith('Transak authentication rejected:') ? 401 : 500);
+      const msg: string = String(e?.message || 'Virtual account creation failed');
+      // Detect HTTP status from transak service wrapped message "(HTTP 429)" or keywords.
+      const fromMessage = /\(HTTP\s+(\d{3})\)/.exec(msg);
+      let status: number;
+      if (e?.response?.status) status = Number(e.response.status);
+      else if (fromMessage) status = Number(fromMessage[1]);
+      else if (/rate-limited|429|too many requests|retry in \d+s/i.test(msg)) status = 429;
+      else if (/LIVE_TRANSAK_REQUIRED|production|TRANSAK_MODE/i.test(msg)) status = 412;
+      else if (/authentication rejected|forbidden|invalid|unauthorized/i.test(msg)) status = 401;
+      else if (/required|missing|verify|address|otp/i.test(msg)) status = 400;
+      else status = 500;
       res.status(status).json({
         success: false,
-        error: e.message,
+        error: msg,
       });
     }
   }

@@ -152,7 +152,11 @@ export class DashboardController {
       res.json({ success: true, ...summary });
     } catch (e: any) {
       console.error('[Dashboard Controller] Error fetching unprocessed:', e);
-      res.status(500).json({ success: false, error: e.message });
+      const message = e instanceof Error && e.message
+        ? e.message
+        : 'Batch settlement is unavailable.';
+      const status = message.startsWith('LIVE_PROCESSOR_REQUIRED:') ? 409 : 500;
+      res.status(status).json({ success: false, message, error: message });
     }
   }
 
@@ -172,7 +176,11 @@ export class DashboardController {
       res.json(result);
     } catch (e: any) {
       console.error('[Dashboard Controller] Error processing batch:', e);
-      res.status(500).json({ success: false, error: e.message });
+      const message = e instanceof Error && e.message
+        ? e.message
+        : 'Batch settlement is unavailable.';
+      const status = message.startsWith('LIVE_PROCESSOR_REQUIRED:') ? 409 : 500;
+      res.status(status).json({ success: false, message, error: message });
     }
   }
 }
