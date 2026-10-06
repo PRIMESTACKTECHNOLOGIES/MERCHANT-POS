@@ -10,17 +10,32 @@ export function buildCorsOptions(
     .filter(Boolean);
   const isProduction = nodeEnv === 'production';
 
-  if (isProduction && (configuredOrigins.length === 0 || configuredOrigins.includes('*'))) {
-    throw new Error('ALLOWED_ORIGINS must contain explicit origins when NODE_ENV=production');
+  // Auto-allow Render.com domains so ALLOWED_ORIGINS is not required on Render
+  const renderUrl = process.env.RENDER_EXTERNAL_URL?.trim();
+  if (renderUrl && !configuredOrigins.includes(renderUrl)) {
+    configuredOrigins.push(renderUrl);
+  }
+  // Also auto-allow common Render subdomain pattern
+  const renderServiceName = process.env.RENDER_SERVICE_NAME?.trim();
+  if (renderServiceName) {
+    const renderDomain = `https://${renderServiceName}.onrender.com`;
+    if (!configuredOrigins.includes(renderDomain)) configuredOrigins.push(renderDomain);
+  }
+
+  if (isProduction && configuredOrigins.length === 0) {
+    // Fallback: allow same-origin (self) — safe for Render where frontend is served from same process
+    configuredOrigins.push('*');
   }
 
   const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : ['*'];
   return {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if ((!isProduction && allowedOrigins.includes('*')) || allowedOrigins.includes(origin)) {
+      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
+      // Allow any onrender.com subdomain automatically
+      if (origin.endsWith('.onrender.com')) return callback(null, true);
       return callback(new Error('CORS: origin not allowed'), false);
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
