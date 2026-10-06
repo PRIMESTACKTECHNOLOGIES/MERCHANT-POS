@@ -705,7 +705,46 @@ if (process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1')
         maxAge: process.env.NODE_ENV === 'production' ? '7d' : '0',
       }));
 
-      app.get('*', (req: Request, res: Response, next: NextFunction) => {
+      // Build a minimal inline runtime JSON config that gets injected into
+      // <head> of index.html. Values are taken from backend process env at
+      // BOOT TIME, so changing the Render env and re-deploying (without a
+      // full Docker rebuild + re-Vite-build) swaps the backend URL.
+      // Priority order used by client/src/lib/backendUrl.ts:
+      //   1. localStorage pos_backend_url (user override in /developer)
+      //   2. window.APP_CONFIG.api_url   <-- NEW runtime injection below
+      //   3. import.meta.env.VITE_API_URL (set only at Vite build time, stale)
+      //   4. window.location.origin      (same-origin, Render single-host)
+      const runtimeCfg = {
+        api_url: (
+          process.env.API_URL ||
+          process.env.VITE_API_URL ||
+          process.env.APP_CONFIG_API_URL ||
+          ''
+        ).toString().replace(/\/$/, ''),
+        app_mode: (process.env.VITE_APP_MODE || process.env.APP_MODE || 'merchant-pos').toString(),
+        processor_enabled: process.env.CARD_PROCESSOR_ENABLED === 'true' || process.env.CARD_PROCESSOR_ENABLED === '1',
+      };
+      const injectHeadScript = `
+<script id="__APP_CONFIG__">
+  window.APP_CONFIG = Object.freeze(${JSON.stringify(runtimeCfg)});
+</script>`;
+
+      // Pre-load the raw index.html into memory once at boot, inject the
+      // <script> once, then re-use the cached rendered string. Avoids
+      // fs.readFile + string.replace on every SPA route hit.
+      let indexHtml: string | null = null;
+      try {
+        const rawHtml = fs.readFileSync(path.join(clientDist, 'index.html'), 'utf8') as string;
+        indexHtml = rawHtml.replace(/<head>/, `<head>${injectHeadScript}`);
+        if (indexHtml === rawHtml) {
+          // Fallback if <head> tag has attributes or casing differences
+          indexHtml = rawHtml.replace(/<head([^>]*)>/i, `<head$1>${injectHeadScript}`);
+        }
+      } catch (htmlErr: any) {
+        console.warn('[app] Failed to pre-render client index.html with runtime config:', htmlErr?.message || htmlErr);
+      }
+
+      const serveIndex = (req: Request, res: Response, next: NextFunction) => {
         const url = req.path || '';
         if (
           req.method !== 'GET' ||
@@ -728,10 +767,25 @@ if (process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1')
         ) {
           return next();
         }
-        res.sendFile(path.join(clientDist, 'index.html'));
-      });
+        if (!indexHtml) {
+          return res.status(500).json({ error: 'Client index.html not prepared on backend' });
+        }
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.type('text/html; charset=utf-8');
+        res.send(indexHtml);
+      };
+
+      // Root / route falls through to here when SERVE_FRONTEND is enabled
+      app.get('*', serveIndex);
 
       console.log(`[app] Frontend serving enabled from ${clientDist}`);
+      if (runtimeCfg.api_url) {
+        console.log(`[app] Frontend runtime API_URL override active: ${runtimeCfg.api_url}`);
+      } else {
+        console.log('[app] Frontend runtime API_URL not set; client will default to same-origin (window.location.origin)');
+      }
     } else {
       console.warn(`[app] SERVE_FRONTEND enabled but frontend dist not found at ${clientDist}. Skipping frontend serve.`);
     }

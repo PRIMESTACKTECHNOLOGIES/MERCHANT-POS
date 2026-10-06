@@ -22,6 +22,15 @@ services:
         value: /app/data/database.sqlite
       - key: SERVE_FRONTEND
         value: "true"
+      # Runtime frontend API origin override. Injected by backend into
+      # window.APP_CONFIG.api_url at boot (no client rebuild needed).
+      # Accepted env var names (checked in order): API_URL / VITE_API_URL / APP_CONFIG_API_URL
+      # Set this to the Render HTTPS URL of THIS service so the dashboard
+      # always points at the correct backend even if you swap domains later.
+      - key: VITE_API_URL
+        value: "https://merchant-pos-0nno.onrender.com"
+      - key: ENABLE_RUNTIME_API_URL
+        value: "true"
 
       # ── JWT / Auth ─────────────────────────────────────────────────────────
       - key: JWT_SECRET
