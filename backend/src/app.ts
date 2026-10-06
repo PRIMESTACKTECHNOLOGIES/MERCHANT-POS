@@ -104,7 +104,12 @@ app.use("/auth/login", loginRateLimiter);
 app.use("/auth", authRouter);
 
 // â”€â”€ Health checks (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.get("/", (_req, res) => {
+app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+app.get("/", (_req, res, next) => {
+  if (process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') {
+    return next();
+  }
   return res.json({
     status: "ok",
     service: "POS 201.3 Backend",
@@ -113,8 +118,6 @@ app.get("/", (_req, res) => {
     auth_endpoints:  ["POST /auth/login"],
   });
 });
-app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
-app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 
 // ── ONE-TIME SETUP: Fix protocol rules + seed operator card auth codes ────────
 if (process.env.NODE_ENV !== "production" && process.env.ENABLE_LOCAL_SETUP_ENDPOINTS === "true") {

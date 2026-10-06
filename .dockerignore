@@ -10,6 +10,8 @@ backend/dist
 pos_offline.sqlite
 .env
 .env.*
+backend/.env
+backend/.env.*
 !.env.example
 !.env.production.example
 android_pos_app/
