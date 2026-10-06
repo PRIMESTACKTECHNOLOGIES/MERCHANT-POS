@@ -77,7 +77,6 @@
           if(w||h){
             if(!devtoolsOpen){
               devtoolsOpen=true;
-              // Clear the page content when DevTools detected
               document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666"><p>Access denied.</p></div>';
             }
           } else {
@@ -85,17 +84,6 @@
           }
         }
         setInterval(check,500);
-      })();
-
-      // ── Anti-DevTools: debugger trap (slows down inspection) ─────────────
-      (function antiDebug(){
-        try{
-          (function(){
-            // This creates an infinite loop in the debugger
-            // making it impossible to step through code
-          }).constructor('debugger')();
-        }catch(e){}
-        setTimeout(antiDebug,100);
       })();
 
       // ── Watermark: embed company identity ─────────────────────────────────

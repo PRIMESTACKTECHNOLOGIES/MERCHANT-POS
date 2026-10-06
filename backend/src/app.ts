@@ -105,13 +105,6 @@ app.use("/auth", authRouter);
 
 // â”€â”€ Health checks (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get("/", (_req, res) => {
-  // In production serve the React dashboard; in dev return API info
-  if (process.env.NODE_ENV === 'production') {
-    const indexPath = require('path').join(__dirname, 'public', 'index.html');
-    return res.sendFile(indexPath, (err: any) => {
-      if (err) return res.json({ status: 'ok', service: 'POS 201.3 Backend', timestamp: new Date().toISOString() });
-    });
-  }
   return res.json({
     status: "ok",
     service: "POS 201.3 Backend",
@@ -699,19 +692,6 @@ app.use("/merchant/v1/cashouts", cashoutsRouter);
 app.use("/internal/payment-receiver", paymentReceiverRouter);
 
 
-
-// â”€â”€ Serve React frontend (production) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const clientBuildPath = path.join(__dirname, "public");
-app.use(express.static(clientBuildPath));
-// SPA fallback â€” any route not matched by the API returns index.html
-app.get("*", (_req, res) => {
-  const indexPath = path.join(clientBuildPath, "index.html");
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      res.status(200).json({ status: "ok", message: "POS 201.3 API running" });
-    }
-  });
-});
 
 // â”€â”€ Global error handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
