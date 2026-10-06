@@ -16,6 +16,7 @@ client/node_modules
 .idea
 *.iml
 .kiro
+.kilo
 .vs
 .qoder
 *.log

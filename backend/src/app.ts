@@ -1,4 +1,4 @@
-﻿import express, { Request, Response, NextFunction } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors, { type CorsOptions } from "cors";
 import path from "path";
 import { db } from "./config/db";
@@ -691,9 +691,53 @@ app.use("/merchant/v1/cashouts", cashoutsRouter);
 // Internal payment receiver for standalone testing and internal integrations
 app.use("/internal/payment-receiver", paymentReceiverRouter);
 
+// ── Serve React dashboard (client/dist) when SERVE_FRONTEND is enabled ─────
+if (process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') {
+  const clientDist = path.join(__dirname, 'client');
+  try {
+    const fs = require('fs');
+    if (fs.existsSync(clientDist) && fs.existsSync(path.join(clientDist, 'index.html'))) {
+      app.use(express.static(clientDist, {
+        index: false,
+        maxAge: process.env.NODE_ENV === 'production' ? '7d' : '0',
+      }));
 
+      app.get('*', (req: Request, res: Response, next: NextFunction) => {
+        const url = req.path || '';
+        if (
+          req.method !== 'GET' ||
+          url.startsWith('/api') ||
+          url.startsWith('/auth') ||
+          url.startsWith('/merchant') ||
+          url.startsWith('/wallet') ||
+          url.startsWith('/vault') ||
+          url.startsWith('/v2') ||
+          url.startsWith('/core') ||
+          url.startsWith('/coins') ||
+          url.startsWith('/health') ||
+          url.startsWith('/issuer') ||
+          url.startsWith('/payouts') ||
+          url.startsWith('/ledger') ||
+          url.startsWith('/wallet-cards') ||
+          url.startsWith('/internal') ||
+          url.startsWith('/recon') ||
+          url.match(/\.[a-z0-9]{2,8}$/i)
+        ) {
+          return next();
+        }
+        res.sendFile(path.join(clientDist, 'index.html'));
+      });
 
-// â”€â”€ Global error handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      console.log(`[app] Frontend serving enabled from ${clientDist}`);
+    } else {
+      console.warn(`[app] SERVE_FRONTEND enabled but frontend dist not found at ${clientDist}. Skipping frontend serve.`);
+    }
+  } catch (e: any) {
+    console.warn('[app] Failed to mount frontend static handler:', e?.message || e);
+  }
+}
+
+// ── Global error handler ────────────────────────────────────────────────────
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   console.error("[Error]", err.message || err);
   const status = err.status || 500;
