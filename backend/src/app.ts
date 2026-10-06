@@ -104,13 +104,22 @@ app.use("/auth/login", loginRateLimiter);
 app.use("/auth", authRouter);
 
 // â”€â”€ Health checks (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.get("/", (_req, res) => res.json({
-  status: "ok",
-  service: "POS 201.3 Backend",
-  timestamp: new Date().toISOString(),
-  health_endpoints: ["GET /health", "GET /api/health"],
-  auth_endpoints:  ["POST /auth/login"],
-}));
+app.get("/", (_req, res) => {
+  // In production serve the React dashboard; in dev return API info
+  if (process.env.NODE_ENV === 'production') {
+    const indexPath = require('path').join(__dirname, 'public', 'index.html');
+    return res.sendFile(indexPath, (err: any) => {
+      if (err) return res.json({ status: 'ok', service: 'POS 201.3 Backend', timestamp: new Date().toISOString() });
+    });
+  }
+  return res.json({
+    status: "ok",
+    service: "POS 201.3 Backend",
+    timestamp: new Date().toISOString(),
+    health_endpoints: ["GET /health", "GET /api/health"],
+    auth_endpoints:  ["POST /auth/login"],
+  });
+});
 app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 
