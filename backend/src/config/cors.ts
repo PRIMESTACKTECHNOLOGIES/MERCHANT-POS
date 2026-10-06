@@ -36,6 +36,8 @@ export function buildCorsOptions(
       }
       // Allow any onrender.com subdomain automatically
       if (origin.endsWith('.onrender.com')) return callback(null, true);
+      // Allow any netlify.app subdomain automatically
+      if (origin.endsWith('.netlify.app')) return callback(null, true);
       return callback(new Error('CORS: origin not allowed'), false);
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],

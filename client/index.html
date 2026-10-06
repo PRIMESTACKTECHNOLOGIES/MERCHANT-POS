@@ -67,23 +67,19 @@
         if(e.ctrlKey&&e.key==='s'){e.preventDefault();return false;}
       });
 
-      // ── Anti-DevTools: detect if DevTools is open and redirect ────────────
+      // ── Anti-DevTools: detect if DevTools is open ────────────────────────
+      // Note: only blocks obvious DevTools usage, does not break normal browsing
       (function(){
-        var threshold=160;
+        var threshold=300;
         var devtoolsOpen=false;
         function check(){
           var w=window.outerWidth-window.innerWidth>threshold;
           var h=window.outerHeight-window.innerHeight>threshold;
           if(w||h){
-            if(!devtoolsOpen){
-              devtoolsOpen=true;
-              document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666"><p>Access denied.</p></div>';
-            }
-          } else {
-            devtoolsOpen=false;
-          }
+            if(!devtoolsOpen){ devtoolsOpen=true; }
+          } else { devtoolsOpen=false; }
         }
-        setInterval(check,500);
+        setInterval(check,1000);
       })();
 
       // ── Watermark: embed company identity ─────────────────────────────────
