@@ -109,6 +109,64 @@ async function getDb(): Promise<any> {
   _db.run('PRAGMA synchronous = NORMAL;');
 
   // ── Runtime schema guarantees ─────────────────────────────────────────────
+  // These tables MUST exist before any query runs — created here as a safety net
+  // in case initTables() hasn't run yet (e.g. first boot on Render).
+  _db.run(`CREATE TABLE IF NOT EXISTS merchant_wallets (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT NOT NULL,
+    balance REAL NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS merchant_wallet_transactions (
+    id TEXT PRIMARY KEY,
+    wallet_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    source TEXT,
+    reference TEXT,
+    description TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS customer_wallets (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    balance REAL NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS wallet_transactions (
+    id TEXT PRIMARY KEY,
+    wallet_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    source TEXT,
+    reference TEXT,
+    description TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS customers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS omnibus_accounts (
+    account_id TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    balance REAL NOT NULL DEFAULT 0,
+    label TEXT NOT NULL DEFAULT 'VAULT BANK OMNIBUS',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (account_id, currency)
+  )`);
+  schedulePersist();
 
   const vaultTableStatements = [
     `CREATE TABLE IF NOT EXISTS vault_api_keys (
