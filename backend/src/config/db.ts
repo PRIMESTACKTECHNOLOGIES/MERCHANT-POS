@@ -226,17 +226,7 @@ async function getDb(): Promise<any> {
   schedulePersist();
 
   // ── Trigger full initTables in background to create ALL remaining tables ──
-  // This runs asynchronously — does not block the first query.
-  // Prevents "no such table" errors on Render first boot.
-  setImmediate(async () => {
-    try {
-      const { initTables } = await import('../domain/setup/init_tables');
-      await initTables();
-      console.log('[DB] initTables completed — all tables ready');
-    } catch (e: any) {
-      console.warn('[DB] initTables warning:', e?.message || e);
-    }
-  });
+  // Removed — server.ts calls initTables() before listen(), which is the correct place.
 
   const vaultTableStatements = [
     `CREATE TABLE IF NOT EXISTS vault_api_keys (

@@ -17,12 +17,15 @@ const PORT = parseInt(
   10,
 );
 
-// Ensure the SQLite data directory exists (needed when DATABASE_PATH is set)
-const dbPath = path.join(__dirname, '..', 'data', 'database.sqlite');
+// Ensure the SQLite data directory exists — use same path logic as db.ts
+const dbPath = process.env.DATABASE_PATH?.trim()
+  ? path.resolve(process.env.DATABASE_PATH.trim())
+  : path.join(__dirname, '..', 'data', 'database.sqlite');
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
+console.log('[server] DB path:', dbPath);
 
 const start = async () => {
   await initTables();
