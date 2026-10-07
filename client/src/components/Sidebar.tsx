@@ -199,6 +199,10 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
           <Icons.Receipt />
           Receipts
         </NavLink>
+        <NavLink to="/vault-bank" className={linkClass} onClick={() => onClose?.()}>
+          <Icons.Wallet />
+          Vault Bank
+        </NavLink>
       </nav>
       
       <div style={{ marginTop: 'auto', padding: '0 16px 16px' }}>
