@@ -151,9 +151,28 @@ async function getDb(): Promise<any> {
   )`);
   _db.run(`CREATE TABLE IF NOT EXISTS customers (
     id TEXT PRIMARY KEY,
+    merchant_id TEXT,
+    created_by_admin_user_id TEXT,
     name TEXT NOT NULL,
     email TEXT,
     phone TEXT,
+    wallet_code TEXT,
+    id_type TEXT,
+    id_number TEXT,
+    id_expiry TEXT,
+    id_country TEXT,
+    date_of_birth TEXT,
+    nationality TEXT,
+    address_line1 TEXT,
+    address_line2 TEXT,
+    city TEXT,
+    country TEXT,
+    postal_code TEXT,
+    occupation TEXT,
+    kyc_status TEXT DEFAULT 'PENDING',
+    kyc_verified_at TEXT,
+    risk_level TEXT DEFAULT 'LOW',
+    notes TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -165,6 +184,46 @@ async function getDb(): Promise<any> {
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (account_id, currency)
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS admin_users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    full_name TEXT,
+    display_name TEXT,
+    email TEXT,
+    phone TEXT,
+    country TEXT,
+    timezone TEXT,
+    company_name TEXT,
+    avatar_url TEXT,
+    two_factor_enabled INTEGER DEFAULT 0,
+    theme_preference TEXT DEFAULT 'light',
+    language_preference TEXT DEFAULT 'en',
+    api_key TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS user_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    device_info TEXT,
+    ip_address TEXT,
+    last_active TEXT DEFAULT CURRENT_TIMESTAMP,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS user_roles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    permissions TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS user_role_assignments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    role_id TEXT NOT NULL,
+    expires_at TEXT,
+    UNIQUE(user_id, role_id)
   )`);
   _db.run(`CREATE TABLE IF NOT EXISTS merchant_wallet_transaction_voids (
     id TEXT PRIMARY KEY,
