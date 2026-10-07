@@ -106,6 +106,25 @@ app.use("/auth", authRouter);
 // â”€â”€ Health checks (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+
+// ── One-time password reset (protected by RESET_TOKEN env var) ───────────────
+app.post("/api/admin/reset-password", async (req: Request, res: Response) => {
+  const resetToken = (process.env.RESET_TOKEN || '').trim();
+  const { token, newPassword } = req.body || {};
+  if (!resetToken) return res.status(503).json({ error: 'RESET_TOKEN not configured' });
+  if (token !== resetToken) return res.status(401).json({ error: 'Invalid reset token' });
+  if (!newPassword || String(newPassword).length < 6) return res.status(400).json({ error: 'newPassword must be at least 6 chars' });
+  try {
+    const bcrypt = await import('bcryptjs');
+    const hash = await bcrypt.hash(String(newPassword), 10);
+    const { db: rDb } = await import('./config/db');
+    await rDb.query('UPDATE admin_users SET password_hash = ? WHERE username = ?', [hash, 'admin']);
+    console.log('[PasswordReset] Admin password updated successfully');
+    return res.json({ ok: true, message: 'Password updated. Remove RESET_TOKEN from env after use.' });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
 app.get("/", (_req, res, next) => {
   if (process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') {
     return next();
