@@ -1,5 +1,6 @@
 package com.pos2013.offline.ui
 
+import android.R
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -25,8 +26,10 @@ import com.pos2013.offline.data.api.ApiClient
 import com.pos2013.offline.data.api.PosChargeRequest
 import com.pos2013.offline.data.model.EmvCardData
 import com.pos2013.offline.data.model.WalletTopupEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
@@ -384,7 +387,6 @@ class MainActivity : AppCompatActivity() {
         nav.addView(navBtn("🏠", "POS") { /* home */ })
         nav.addView(navBtn("📋", "History") { startActivity(Intent(this, TransactionHistoryActivity::class.java)) })
         nav.addView(navBtn("👥", "Customers") { startActivity(Intent(this, CustomerActivity::class.java)) })
-        nav.addView(navBtn("📊", "Dashboard") { startActivity(Intent(this, DashboardSyncActivity::class.java)) })
         nav.addView(navBtn("⚙", "Settings") { startActivity(Intent(this, SettingsActivity::class.java)) })
         return nav
     }
@@ -974,12 +976,53 @@ class MainActivity : AppCompatActivity() {
             if (rawPan.length < 13) { toast("Invalid card number"); return@setOnClickListener }
             if (!expiry.matches(Regex("\\d{2}/\\d{2}"))) { toast("Enter expiry MM/YY"); return@setOnClickListener }
             if (cvv.length < 3) { toast("Enter CVV"); return@setOnClickListener }
+            if (authCode.isNullOrBlank()) {
+                toast("Enter Authorization Code first (required for card registration)")
+                return@setOnClickListener
+            }
 
             val panMasked = "*".repeat(rawPan.length - 4) + rawPan.takeLast(4)
             dialog.dismiss()
+
+            // ── STEP 1: Validate & register card via backend BEFORE charge ──
             if (isNetworkAvailable()) {
-                submitOnlineCharge(amount, rawPan, expiry, cvv, authCode = authCode)
+                lifecycleScope.launch {
+                    setResult("⏳ Step 1/3: Validating card & registering auth code...", "#FEF3C7")
+                    try {
+                        val prefs = getSharedPreferences("pos_settings", Context.MODE_PRIVATE)
+                        val mid = prefs.getString("merchant_id", "")?.trim().orEmpty()
+                        val walletsApi = ApiClient.createWalletsApi(PosApplication.getServerUrl(this@MainActivity))
+                        val valResp = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            walletsApi.validateCard(
+                                com.pos2013.offline.data.api.CardValidationRequest(
+                                    pan = rawPan,
+                                    expiry = expiry,
+                                    cvv = cvv,
+                                    authCode = authCode,
+                                    merchantId = mid.ifBlank { null }
+                                )
+                            )
+                        }
+                        if (!valResp.isSuccessful || valResp.body()?.valid != true) {
+                            val err = valResp.body()?.error ?: valResp.body()?.message ?: "HTTP ${valResp.code()}"
+                            setResult("❌ CARD VALIDATION FAILED\n$err\nCharge not attempted.", "#FEE2E2")
+                            toast("Card validation declined")
+                            return@launch
+                        }
+                        setResult("✅ Card registered — Step 2/3: Authorizing charge...", "#FEF3C7")
+
+                        // ── STEP 2/3: Submit charge to online processor ──
+                        submitOnlineCharge(amount, rawPan, expiry, cvv, authCode = authCode,
+                            panMaskedExtra = panMasked,
+                            brandExtra = valResp.body()?.cardBrand)
+                    } catch (e: Exception) {
+                        setResult("❌ Validation error: ${e.localizedMessage ?: e.message}", "#FEE2E2")
+                        toast("Card validation error")
+                    }
+                }
             } else {
+                // Offline: skip validation (cannot reach validator) → queue as pending
+                setResult("⚠ Offline mode — card validation skipped. Will be validated at next sync.", "#FEF3C7")
                 processOfflineQueue(amount, panMasked, expiry, authCode = authCode)
             }
         }
@@ -998,17 +1041,32 @@ class MainActivity : AppCompatActivity() {
         cvv: String?,
         emv: Map<String, Any?>? = null,
         tlvRaw: String? = null,
-        authCode: String? = null
+        authCode: String? = null,
+        panMaskedExtra: String? = null,
+        brandExtra: String? = null
     ) {
         val prefs = getSharedPreferences("pos_settings", Context.MODE_PRIVATE)
         val merchantId = prefs.getString("merchant_id", "")?.trim().orEmpty()
         val terminalId = prefs.getString("terminal_id", "")?.trim().orEmpty()
+        val merchantName = prefs.getString("merchant_name", "").orEmpty().ifBlank { "Merchant" }
+        val merchantAddress = prefs.getString("merchant_address", "").orEmpty()
+        val merchantPhone   = prefs.getString("merchant_phone", "").orEmpty()
+        val buildVersion    = packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
+        val buildCode       = packageManager.getPackageInfo(packageName, 0).versionCode ?: 1
+
         if (merchantId.isBlank() || terminalId.isBlank()) {
             setResult("❌ Configure Merchant ID and Terminal ID in Settings", "#FEE2E2")
             return
         }
 
-        setResult("⏳ Sending online authorization...", "#FEF3C7")
+        val stan = generateNextStan()
+        val panMasked = panMaskedExtra
+            ?: if (pan.length >= 4) "*".repeat(pan.length - 4) + pan.takeLast(4) else "****-****"
+        val txnId = lastTransactionId
+        val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+            .format(java.util.Date())
+
+        setResult("⏳ Step 2/3: Sending online authorization...", "#FEF3C7")
         lifecycleScope.launch {
             try {
                 val api = ApiClient.createPayment2013Api(PosApplication.getServerUrl(this@MainActivity))
@@ -1024,18 +1082,44 @@ class MainActivity : AppCompatActivity() {
                         authCode = authCode,
                         emv = emv,
                         tlvRaw = tlvRaw,
-                        stan = generateNextStan()
+                        stan = stan
                     )
                 )
                 val body = response.body()
                 if (response.isSuccessful && body?.status == "APPROVED" && !body.authCode.isNullOrBlank()) {
                     lastTransactionId = body.paymentIntentId
                     setResult(
-                        "✅ APPROVED\nApproval code: ${body.authCode}\nRef: ${body.paymentIntentId ?: "-"}",
+                        "✅ APPROVED (Step 3/3)\nApproval code: ${body.authCode}\nRef: ${body.paymentIntentId ?: "-"}",
                         "#DCFCE7"
                     )
                     resetAmount()
-                    toast("Payment approved")
+                    toast("Payment approved — Receipt ready")
+
+                    // ── Show thermal receipt dialog with full metadata + download/share ──
+                    val receiptText = buildThermalReceiptText(
+                        merchantName = merchantName,
+                        merchantAddress = merchantAddress,
+                        merchantPhone = merchantPhone,
+                        merchantId = merchantId,
+                        terminalId = terminalId,
+                        stan = stan,
+                        authCode = body.authCode,
+                        txnRef = body.paymentIntentId ?: txnId.orEmpty(),
+                        amountStr = "AED ${String.format("%.2f", amount)}",
+                        panMasked = panMasked,
+                        expiry = expiry,
+                        brand = (brandExtra ?: body.brand ?: detectBrand(pan)).uppercase(),
+                        entryMode = if (emv != null) "EMV CONTACTLESS" else "MANUAL KEY ENTRY",
+                        protocol = "ONLINE / ISO8583-1993:2003 (EMV 2000)",
+                        processor = "PRIMESTACK VAULT-BANK ACQUIRER",
+                        softwareName = "Primestack POS Merchant",
+                        softwareVer = buildVersion,
+                        buildNo = "#$buildCode",
+                        ts = ts,
+                        currency = "AED",
+                        responseCode = body.responseCode ?: "00"
+                    )
+                    showThermalReceiptDialog(receiptText, body.paymentIntentId ?: "txn-${System.currentTimeMillis()}")
                 } else if (response.isSuccessful && body?.status == "PENDING") {
                     setResult(
                         "⏳ ACCEPTED FOR BANK BATCH\nReference: ${body.paymentIntentId ?: "-"}\nApproval code will be returned after bank authorization",
@@ -1052,6 +1136,268 @@ class MainActivity : AppCompatActivity() {
                 setResult("❌ Online authorization failed\n${e.localizedMessage ?: e.message}", "#FEE2E2")
             }
         }
+    }
+
+    private fun detectBrand(pan: String): String {
+        val d = pan.replace(" ", "")
+        return when {
+            d.startsWith("4") -> "VISA"
+            d.startsWith("5") || d.startsWith("2") -> "MASTERCARD"
+            d.startsWith("34") || d.startsWith("37") -> "AMEX"
+            d.startsWith("6") -> "DISCOVER"
+            else -> "CARD"
+        }
+    }
+
+    private fun buildThermalReceiptText(
+        merchantName: String, merchantAddress: String, merchantPhone: String,
+        merchantId: String, terminalId: String, stan: String,
+        authCode: String, txnRef: String, amountStr: String,
+        panMasked: String, expiry: String?, brand: String, entryMode: String,
+        protocol: String, processor: String, softwareName: String,
+        softwareVer: String, buildNo: String, ts: String,
+        currency: String, responseCode: String
+    ): String {
+        val line = "----------------------------------------"
+        val star = "****************************************"
+        val pan4 = panMasked.takeLast(4)
+        val width = 40
+        fun pad(l: String, r: String) =
+            l.take(width - r.length - 1) + " ".repeat((width - r.length - 1 - l.length).coerceAtLeast(1)) + r
+        fun center(s: String): String {
+            val padlen = ((width - s.length) / 2).coerceAtLeast(0)
+            return " ".repeat(padlen) + s
+        }
+        fun big(s: String): String {
+            val padlen = ((width - s.length) / 2).coerceAtLeast(0)
+            return " ".repeat(padlen) + s
+        }
+        return buildString {
+            appendLine(center(merchantName.uppercase()))
+            if (merchantAddress.isNotBlank()) appendLine(center(merchantAddress))
+            if (merchantPhone.isNotBlank())   appendLine(center("Tel: $merchantPhone"))
+            appendLine(line)
+            appendLine(pad("MID", merchantId))
+            appendLine(pad("TID", terminalId))
+            appendLine(pad("STAN", stan.padStart(6, '0')))
+            appendLine(pad("DATE/TIME", ts))
+            appendLine(line)
+            appendLine(center("*** SALES RECEIPT ***"))
+            appendLine(star)
+            appendLine(pad("TXN REF", txnRef.takeLast(16)))
+            appendLine(pad("AUTH CODE", authCode))
+            appendLine(pad("RESPONSE", "RC $responseCode  APPROVED"))
+            appendLine(pad("AMOUNT", amountStr))
+            appendLine(pad("CURRENCY", currency))
+            appendLine(star)
+            appendLine(pad("CARD BRAND", brand))
+            appendLine(pad("CARD NO.", "****-****-****-$pan4"))
+            if (!expiry.isNullOrBlank()) appendLine(pad("EXPIRY", expiry))
+            appendLine(pad("ENTRY MODE", entryMode))
+            appendLine(line)
+            appendLine(center("PROTOCOL & AQUIRING INFO"))
+            appendLine(pad("PROTOCOL", protocol))
+            appendLine(pad("PROCESSOR", processor))
+            appendLine(pad("ACQUIRER HOST", "vault-bank-9000"))
+            appendLine(pad("ACQUIRER PORT", "9000/TCP"))
+            appendLine(pad("ISO8583 VER", "ISO8583:2003"))
+            appendLine(line)
+            appendLine(center("SOFTWARE & TERMINAL INFO"))
+            appendLine(pad("SOFTWARE", softwareName))
+            appendLine(pad("VERSION", softwareVer))
+            appendLine(pad("BUILD", buildNo))
+            appendLine(pad("VENDOR", "PRIMESTACK FZCO"))
+            appendLine(line)
+            appendLine()
+            appendLine(center("**** CUSTOMER COPY ****"))
+            appendLine()
+            appendLine(center("Thank you for your purchase!"))
+            appendLine(center("Please retain for your records."))
+            appendLine()
+            appendLine()
+            appendLine()
+            appendLine(center("-------- SIGNATURE --------"))
+            appendLine()
+        }
+    }
+
+    private fun showThermalReceiptDialog(receiptText: String, txnRef: String) {
+        val ctx = this
+        val scroll = ScrollView(ctx)
+        val outer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+        }
+
+        // ── Paper-like receipt box (monospace, 80-char thermal look) ──
+        val receiptTv = TextView(ctx).apply {
+            text = receiptText
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setBackgroundColor(Color.parseColor("#F8FAFC"))
+            setTextColor(Color.parseColor("#0F172A"))
+            setPadding(dp(14), dp(16), dp(14), dp(16))
+            elevation = 3f
+            setShadowLayer(2f, 0f, 1f, Color.parseColor("#94A3B8"))
+            letterSpacing = -0.01f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        outer.addView(receiptTv)
+
+        // ── Row 1: Download + Print ────────────────────────────────────
+        val row1 = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(14), 0, 0)
+        }
+        val btnDownload = Button(ctx).apply {
+            text = "📥  Save to Downloads"
+            textSize = 12f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setBackgroundColor(Color.parseColor("#2563EB"))
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(12), 0, dp(12))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = dp(6) }
+        }
+        val btnPrint = Button(ctx).apply {
+            text = "🖨  Print"
+            textSize = 12f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setBackgroundColor(Color.parseColor("#64748B"))
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(12), 0, dp(12))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginStart = dp(6) }
+        }
+        row1.addView(btnDownload); row1.addView(btnPrint)
+        outer.addView(row1)
+
+        // ── Row 2: Share + Close ───────────────────────────────────────
+        val row2 = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        val btnShare = Button(ctx).apply {
+            text = "📤  Share Receipt"
+            textSize = 12f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setBackgroundColor(Color.parseColor("#16A34A"))
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(12), 0, dp(12))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = dp(6) }
+        }
+        val btnClose = Button(ctx).apply {
+            text = "✓  Close"
+            textSize = 12f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(12), 0, dp(12))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginStart = dp(6) }
+        }
+        row2.addView(btnShare); row2.addView(btnClose)
+        outer.addView(row2)
+
+        scroll.addView(outer)
+
+        val dialog = AlertDialog.Builder(ctx, R.style.Theme_Material_Dialog_NoActionBar)
+            .setTitle(null)
+            .setView(scroll)
+            .setCancelable(true)
+            .create()
+
+        val safeRef = txnRef.filter { it.isLetterOrDigit() }.take(24).ifBlank { "receipt-${System.currentTimeMillis()}" }
+
+        btnClose.setOnClickListener { dialog.dismiss() }
+
+        btnDownload.setOnClickListener {
+            try {
+                val filename = "POS_RECEIPT_${safeRef}_${System.currentTimeMillis()}.txt"
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Downloads.DISPLAY_NAME, filename)
+                        put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain")
+                        put(android.provider.MediaStore.Downloads.RELATIVE_PATH,
+                            android.os.Environment.DIRECTORY_DOWNLOADS + "/PrimestackPOS")
+                    }
+                    val uri = ctx.contentResolver.insert(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        ctx.contentResolver.openOutputStream(uri).use { os ->
+                            os?.write(receiptText.toByteArray(Charsets.UTF_8))
+                        }
+                        toast("✅ Receipt saved: Downloads/PrimestackPOS/$filename")
+                    } else toast("❌ Could not create file")
+                } else {
+                    @Suppress("DEPRECATION")
+                    val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS)
+                    if (dir != null) {
+                        dir.mkdirs()
+                        val f = java.io.File(dir, filename)
+                        f.writeText(receiptText, Charsets.UTF_8)
+                        toast("✅ Receipt saved to: ${f.absolutePath}")
+                    } else toast("❌ Could not save to Downloads")
+                }
+            } catch (e: Exception) {
+                toast("❌ Save failed: ${e.message?.take(60)}")
+            }
+        }
+
+        btnShare.setOnClickListener {
+            try {
+                val share = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "Primestack POS Receipt $safeRef")
+                    putExtra(Intent.EXTRA_TEXT, receiptText)
+                }
+                ctx.startActivity(Intent.createChooser(share, "Share Receipt"))
+            } catch (e: Exception) { toast("Share error: ${e.message}") }
+        }
+
+        btnPrint.setOnClickListener {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                    val mgr = getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+                    val adapter = object : android.print.PrintDocumentAdapter() {
+                        override fun onStart() { super.onStart() }
+                        override fun onFinish() { super.onFinish() }
+                        override fun onLayout(
+                            old: android.print.PrintAttributes?, new: android.print.PrintAttributes?,
+                            cancel: android.os.CancellationSignal,
+                            cb: LayoutResultCallback, extras: android.os.Bundle?
+                        ) {
+                            val info = android.print.PrintDocumentInfo.Builder("receipt_$safeRef.pdf")
+                                .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                                .setPageCount(1)
+                                .build()
+                            cb.onLayoutFinished(info, true)
+                        }
+                        override fun onWrite(
+                            pages: Array<android.print.PageRange>?,
+                            dest: android.os.ParcelFileDescriptor,
+                            cancel: android.os.CancellationSignal,
+                            cb: WriteResultCallback
+                        ) {
+                            try {
+                                java.io.FileOutputStream(dest.fileDescriptor).use { os ->
+                                    os.write(receiptText.toByteArray(Charsets.UTF_8))
+                                }
+                                cb.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+                            } catch (e: Exception) { cb.onWriteFailed(e.message) }
+                        }
+                    }
+                    mgr.print("Receipt $safeRef", adapter, null)
+                } else toast("Print not available on this device")
+            } catch (e: Exception) { toast("Print error: ${e.message}") }
+        }
+
+        runOnUiThread { dialog.show() }
     }
 
     // ── Store offline transaction in Room ─────────────────────────────────────
