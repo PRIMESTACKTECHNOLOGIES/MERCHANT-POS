@@ -166,7 +166,77 @@ async function getDb(): Promise<any> {
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (account_id, currency)
   )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS merchant_wallet_transaction_voids (
+    id TEXT PRIMARY KEY,
+    transaction_id TEXT NOT NULL,
+    wallet_id TEXT NOT NULL,
+    amount REAL NOT NULL,
+    reason TEXT,
+    voided_by TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS customer_wallet_transaction_voids (
+    id TEXT PRIMARY KEY,
+    transaction_id TEXT NOT NULL,
+    wallet_id TEXT NOT NULL,
+    amount REAL NOT NULL,
+    reason TEXT,
+    voided_by TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS pos2013_transactions (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT,
+    customer_id TEXT,
+    terminal_id TEXT,
+    batch_id TEXT NOT NULL DEFAULT '',
+    local_txn_id TEXT,
+    stan TEXT,
+    amount_minor INTEGER,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    pan_masked TEXT,
+    txn_type TEXT,
+    auth_mode TEXT,
+    entry_mode TEXT,
+    auth_code TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    txn_timestamp TEXT,
+    decline_reason TEXT,
+    emv_data TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS terminals (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT NOT NULL,
+    terminal_id TEXT NOT NULL UNIQUE,
+    terminal_secret TEXT NOT NULL,
+    name TEXT,
+    offline_enabled INTEGER DEFAULT 0,
+    floor_limit REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS admin_users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    full_name TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
   schedulePersist();
+
+  // ── Trigger full initTables in background to create ALL remaining tables ──
+  // This runs asynchronously — does not block the first query.
+  // Prevents "no such table" errors on Render first boot.
+  setImmediate(async () => {
+    try {
+      const { initTables } = await import('../domain/setup/init_tables');
+      await initTables();
+      console.log('[DB] initTables completed — all tables ready');
+    } catch (e: any) {
+      console.warn('[DB] initTables warning:', e?.message || e);
+    }
+  });
 
   const vaultTableStatements = [
     `CREATE TABLE IF NOT EXISTS vault_api_keys (
