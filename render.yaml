@@ -275,3 +275,64 @@ services:
       # ── Allow legacy crypto rail ───────────────────────────────────────────
       - key: ALLOW_LEGACY_CUSTOMER_CRYPTO_WITHDRAW_RAIL
         value: "1"
+
+  # ── VAULT BANK SETTLEMENT SERVER ─────────────────────────────────────────────
+  - type: web
+    name: vault-bank
+    env: docker
+    plan: starter
+    branch: main
+    region: frankfurt
+    dockerfilePath: ./Dockerfile.vault
+    healthCheckPath: /status
+    disk:
+      name: vault-bank-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: VAULT_BANK_MODE
+        value: TEST
+      - key: VAULT_SETTLEMENT_PORT
+        value: "9001"
+      - key: PORT
+        value: "9001"
+      - key: VAULT_BANK_TCP_PORT
+        value: "9000"
+      - key: VAULT_BANK_BIND_HOST
+        value: 0.0.0.0
+      - key: VAULT_SETTLEMENT_HOST
+        value: 127.0.0.1
+      - key: VAULT_BANK_OMNIBUS_ID
+        value: VAULT_BANK_OMNIBUS
+      - key: VAULT_ACTIVE_API_KEY
+        sync: false
+      - key: VAULT_BANK_API_KEY
+        sync: false
+      - key: VAULT_BANK_SECRET_KEY
+        sync: false
+      - key: OPERATOR_CARD_USD_HOLDER
+        value: AJI ALOSIOUS
+      - key: OPERATOR_CARD_USD_NUMBER
+        sync: false
+      - key: OPERATOR_CARD_USD_EXPIRY
+        value: 05/30
+      - key: OPERATOR_CARD_USD_CVV
+        sync: false
+      - key: OPERATOR_CARD_USD_SCHEME
+        value: VISA
+      - key: OPERATOR_CARD_USD_CURRENCY
+        value: USD
+      - key: OPERATOR_CARD_EUR_HOLDER
+        value: DANIA ALOSIOUS
+      - key: OPERATOR_CARD_EUR_NUMBER
+        sync: false
+      - key: OPERATOR_CARD_EUR_EXPIRY
+        value: 06/29
+      - key: OPERATOR_CARD_EUR_CVV
+        sync: false
+      - key: OPERATOR_CARD_EUR_SCHEME
+        value: VISA
+      - key: OPERATOR_CARD_EUR_CURRENCY
+        value: EUR
+      - key: VAULT_SQLITE_PATH
+        value: /app/data/vault.sqlite
