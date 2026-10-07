@@ -1,12 +1,13 @@
 package com.pos2013.offline.data.api
 
+import com.google.gson.annotations.SerializedName
+import com.pos2013.offline.data.model.OfflineSaleRequest
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
-import okhttp3.Interceptor
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import com.pos2013.offline.data.model.OfflineSaleRequest
 import retrofit2.http.*
 import java.util.concurrent.TimeUnit
 
@@ -113,7 +114,8 @@ data class WalletTopupResponse(
     val success: Boolean,
     val transactionId: String? = null,
     val authCode: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val message: String? = null
 )
 
 data class WalletBalanceResponse(val balance: Double, val currency: String)
@@ -133,7 +135,41 @@ data class WalletTransactionResponse(
 data class CreateCustomerRequest(
     val name: String,
     val email: String? = null,
-    val phone: String? = null
+    val phone: String? = null,
+    val merchantId: String? = null
+)
+
+data class ProviderCredentialsTestRequest(
+    val endpoint: String,
+    val apiKey: String,
+    val secretKey: String,
+    val merchantId: String? = null
+)
+
+data class ProviderCredentialsTestResponse(
+    val success: Boolean = false,
+    val message: String? = null,
+    val error: String? = null,
+    val availableBalance: Double? = null,
+    val currency: String? = null
+)
+
+data class CardValidationRequest(
+    val pan: String,
+    val expiry: String,
+    val cvv: String,
+    val authCode: String? = null,
+    val merchantId: String? = null
+)
+
+data class CardValidationResponse(
+    val valid: Boolean,
+    val message: String? = null,
+    val error: String? = null,
+    val cardBrand: String? = null,
+    val cardholderName: String? = null,
+    val panMasked: String? = null,
+    val btcustomerId: String? = null
 )
 
 data class CustomerResponse(
@@ -141,7 +177,15 @@ data class CustomerResponse(
     val name: String,
     val email: String? = null,
     val phone: String? = null,
-    val createdAt: String? = null
+    val createdAt: String? = null,
+    @SerializedName("wallet_code")
+    val wallet_code: String? = null,
+    @SerializedName("wallet_balance")
+    val wallet_balance: Double? = null,
+    @SerializedName("wallet_currency")
+    val wallet_currency: String? = null,
+    @SerializedName("merchant_id")
+    val merchant_id: String? = null
 )
 
 // ── Terminal models ────────────────────────────────────────────────────────────
@@ -187,7 +231,9 @@ data class PosChargeResponse(
     val authCode: String? = null,
     val settlementId: String? = null,
     val reason: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val brand: String? = null,
+    val responseCode: String? = null
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -234,6 +280,9 @@ interface WalletsApi {
     @GET("wallet/customers")
     suspend fun getCustomers(): Response<List<CustomerResponse>>
 
+    @GET("wallet/customers-by-merchant/{merchantId}")
+    suspend fun getCustomersByMerchant(@Path("merchantId") merchantId: String): Response<List<CustomerResponse>>
+
     @POST("wallet/topup")
     suspend fun topup(@Body request: WalletTopupRequest): Response<WalletTopupResponse>
 
@@ -248,7 +297,26 @@ interface WalletsApi {
 
     @GET("wallet/transactions/{customerId}")
     suspend fun getTransactions(@Path("customerId") customerId: String): Response<List<WalletTransactionResponse>>
+
+    @POST("wallet/validate-card")
+    suspend fun validateCard(@Body request: CardValidationRequest): Response<CardValidationResponse>
+
+    @POST("wallet/test-provider-credentials")
+    suspend fun testProviderCredentials(@Body request: ProviderCredentialsTestRequest): Response<ProviderCredentialsTestResponse>
+
+    @POST("wallet/send-to-merchant-wallet")
+    suspend fun sendFundsToMerchantWallet(@Body request: SendToMerchantRequest): Response<WalletTopupResponse>
 }
+
+data class SendToMerchantRequest(
+    val customerId: String,
+    val merchantId: String,
+    val amount: Double,
+    val currency: String? = null,
+    val providerEndpoint: String? = null,
+    val providerApiKey: String? = null,
+    val providerSecretKey: String? = null
+)
 
 /** Dashboard / Stats endpoints — requires JWT */
 interface DashboardApi {
@@ -286,17 +354,8 @@ interface SettingsApi {
 
 object ApiClient {
 
-    /**
-     * Default backend base URL — primary server IP.
-     *   Mobile 1 (172.16.0.121) → http://172.16.0.121:7000/
-     *   Mobile 2 (172.16.0.140) → http://172.16.0.140:7000/  (same backend)
-     *   Emulator                → http://10.0.2.2:7000/
-     *   Cloud / Render          → https://pos-offline-api.onrender.com/
-     * Override via Settings screen on the device.
-     * PosApplication.resolveServerUrl() auto-probes both IPs at startup.
-     */
-    const val DEFAULT_URL  = "http://172.16.0.210:7000/"
-    const val FALLBACK_URL = "http://172.16.0.121:7000/"
+    const val DEFAULT_URL  = "https://merchant-pos-0nno.onrender.com/"
+    const val FALLBACK_URL = "https://merchant-pos-0nno.onrender.com/"
 
     /** OkHttpClient — attaches JWT bearer token when provided */
     private fun buildOkHttp(jwtToken: String? = null): OkHttpClient {

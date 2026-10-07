@@ -634,6 +634,8 @@ export const initTables = async () => {
     await db.query(`
       CREATE TABLE IF NOT EXISTS customers (
         id TEXT PRIMARY KEY,
+        merchant_id TEXT,
+        created_by_admin_user_id TEXT,
         name TEXT NOT NULL,
         email TEXT,
         phone TEXT,
@@ -683,6 +685,17 @@ export const initTables = async () => {
         await db.query(`ALTER TABLE customers ADD COLUMN ${col} ${def}`);
       } catch { /* column already exists â€” ignore */ }
     }
+
+    // Customer merchant ownership isolation
+    try {
+      await db.query(`ALTER TABLE customers ADD COLUMN merchant_id TEXT`);
+    } catch { /* column already exists */ }
+    try {
+      await db.query(`ALTER TABLE customers ADD COLUMN created_by_admin_user_id TEXT`);
+    } catch { /* column already exists */ }
+    try {
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_customers_merchant ON customers(merchant_id)`);
+    } catch { /* ignore */ }
 
     // Customer Wallets Table â€” one wallet per (customer, currency) so AED stays AED, USD stays USD
     await db.query(`

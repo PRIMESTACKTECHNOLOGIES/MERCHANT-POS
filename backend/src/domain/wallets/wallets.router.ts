@@ -20,11 +20,12 @@ router.post('/merchant/transfer-to-customer',    wc.merchantToCustomerTransfer.b
 router.post('/merchant/settle-emv-2013',         wc.settleEmv2013.bind(wc));
 
 // ── Customers ──────────────────────────────────────────────────────────────
-router.get('/customers',                    wc.getCustomers.bind(wc));
-router.post('/customers',                   wc.createCustomer.bind(wc));
-router.delete('/customers/:customerId',     authenticateToken, wc.deleteCustomer.bind(wc));
-router.get('/customers/:customerId/profile', wc.getCustomerProfile.bind(wc));
-router.patch('/customers/:customerId/kyc',  wc.updateCustomerKYC.bind(wc));
+router.get('/customers',                              wc.getCustomers.bind(wc));
+router.get('/customers-by-merchant/:merchantId',       wc.getCustomersByMerchant.bind(wc));
+router.post('/customers',                              wc.createCustomer.bind(wc));
+router.delete('/customers/:customerId',                authenticateToken, wc.deleteCustomer.bind(wc));
+router.get('/customers/:customerId/profile',           wc.getCustomerProfile.bind(wc));
+router.patch('/customers/:customerId/kyc',             wc.updateCustomerKYC.bind(wc));
 
 // ── Fiat wallet ────────────────────────────────────────────────────────────
 router.post('/topup',                   wc.topup.bind(wc));
@@ -32,6 +33,11 @@ router.post('/topup/card',              wc.topupWithCard.bind(wc));
 router.post('/debit',                   wc.debit.bind(wc));
 router.get('/balance/:customerId',      wc.getBalance.bind(wc));
 router.get('/transactions/:customerId', wc.getTransactions.bind(wc));
+
+// ── Card validation & provider credentials ─────────────────────────────────
+router.post('/validate-card',           wc.validateCard.bind(wc));
+router.post('/test-provider-credentials', wc.testProviderCredentials.bind(wc));
+router.post('/send-to-merchant-wallet', wc.sendFundsToMerchantWallet.bind(wc));
 
 // ── Wallet-to-wallet transfer ──────────────────────────────────────────────
 router.post('/transfer', wc.walletTransfer.bind(wc));
