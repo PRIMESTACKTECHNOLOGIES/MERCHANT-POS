@@ -276,6 +276,17 @@ app.use("/api/card-auth", cardAuthRouter);
 // â”€â”€ Public funding webhook endpoint
 app.use('/webhooks', fundingWebhookRouter);
 // ── Core API routes (JWT-authenticated) ──────────────────────────────────────
+
+// ── Legacy path aliases (frontend calls /wallet/* and /merchant/v1/* for these) ──
+// These must come BEFORE the /api/* mounts so Express matches them first.
+app.use('/wallet', walletsRouter);
+app.use('/merchant/v1/terminals', terminalsRouter);
+app.use('/merchant/v1/transactions', transactionsRouter);
+app.use('/merchant/v1/settings', settingsRouter);
+app.use('/merchant/v1/batches', batchesRouter);
+app.use('/merchant/v1/products', productsRouter);
+app.use('/merchant/v1/receipts', receiptsRouter);
+
 app.use('/api/wallets', walletsRouter);
 app.use('/api/wallets/vba', transakVbaRouter);
 app.use('/api', apiRouter);
