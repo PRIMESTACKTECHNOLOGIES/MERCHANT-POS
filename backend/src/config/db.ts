@@ -1,4 +1,4 @@
-// Load .env FIRST — db.ts constructor runs at import time, before server.ts dotenv.config()
+﻿// Load .env FIRST — db.ts constructor runs at import time, before server.ts dotenv.config()
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -146,13 +146,49 @@ async function getDb(): Promise<any> {
   )`);
   _db.run(`CREATE TABLE IF NOT EXISTS wallet_transactions (
     id TEXT PRIMARY KEY,
-    wallet_id TEXT NOT NULL,
+    wallet_id TEXT,
+    customer_id TEXT,
     type TEXT NOT NULL,
     amount REAL NOT NULL,
     currency TEXT NOT NULL DEFAULT 'USD',
     source TEXT,
     reference TEXT,
     description TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS customer_crypto_wallets (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    coin TEXT NOT NULL,
+    network TEXT NOT NULL DEFAULT 'mainnet',
+    balance REAL NOT NULL DEFAULT 0,
+    address TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(customer_id, coin)
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS customer_crypto_withdrawals (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    coin TEXT NOT NULL,
+    network TEXT NOT NULL,
+    amount REAL NOT NULL,
+    address TEXT NOT NULL,
+    tx_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    error TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS transak_webhook_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT,
+    event_name TEXT,
+    order_id TEXT,
+    status TEXT,
+    verified INTEGER DEFAULT 0,
+    raw_payload TEXT,
+    signature TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
   _db.run(`CREATE TABLE IF NOT EXISTS customers (
@@ -254,6 +290,19 @@ async function getDb(): Promise<any> {
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
+  // ── Missing tables: created at startup so no query ever fails ────────────────
+  for (const _tbl of [
+    `CREATE TABLE IF NOT EXISTS crypto_transactions (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, type TEXT NOT NULL, coin TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'mainnet', amount REAL NOT NULL, fiat_amount REAL, fiat_currency TEXT DEFAULT 'USD', price_at_time REAL, status TEXT NOT NULL DEFAULT 'COMPLETED', source TEXT, reference TEXT, tx_hash TEXT, from_address TEXT, to_address TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS wallet_transfers (id TEXT PRIMARY KEY, sender_customer_id TEXT NOT NULL, receiver_customer_id TEXT NOT NULL, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', note TEXT, status TEXT NOT NULL DEFAULT 'COMPLETED', created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS bank_accounts (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, bank_name TEXT, account_holder TEXT, account_number TEXT, routing_number TEXT, iban TEXT, swift_code TEXT, currency TEXT DEFAULT 'USD', is_default INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS bank_payouts (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, bank_account_id TEXT, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL DEFAULT 'PENDING', reference TEXT, note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS merchant_bank_accounts (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, bank_name TEXT, account_holder TEXT, account_number TEXT, routing_number TEXT, iban TEXT, swift_code TEXT, currency TEXT DEFAULT 'USD', is_default INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS merchant_payouts (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, bank_account_id TEXT, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL DEFAULT 'PENDING', reference TEXT, approved_by TEXT, rejected_by TEXT, rejection_reason TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS hot_wallet_transactions (id TEXT PRIMARY KEY, type TEXT NOT NULL, coin TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'mainnet', amount REAL NOT NULL, from_address TEXT, to_address TEXT, tx_hash TEXT, status TEXT NOT NULL DEFAULT 'COMPLETED', reference TEXT, merchant_id TEXT, customer_id TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS merchant_crypto_wallets (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, coin TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'mainnet', balance REAL NOT NULL DEFAULT 0, address TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(merchant_id, coin))`,
+    `CREATE TABLE IF NOT EXISTS merchant_settings (merchant_id TEXT PRIMARY KEY, api_key TEXT, webhook_url TEXT, test_mode INTEGER DEFAULT 0, merchant_name TEXT, support_email TEXT, features TEXT, extended_settings TEXT, payment_config TEXT, license_number TEXT, tax_id TEXT, merchant_address TEXT, merchant_phone TEXT, bank_name TEXT, bank_account_holder TEXT, bank_account_number TEXT, bank_routing_number TEXT, bank_iban TEXT, bank_swift_code TEXT, usdt_address_tron TEXT, usdt_address_bsc TEXT, usdt_address_polygon TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS virtual_accounts (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, customer_id TEXT, currency TEXT NOT NULL DEFAULT 'USD', account_number TEXT, routing_number TEXT, iban TEXT, reference TEXT, provider TEXT, status TEXT NOT NULL DEFAULT 'ACTIVE', created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+  ]) { try { _db.run(_tbl); } catch (_e) {} }
   _db.run(`CREATE TABLE IF NOT EXISTS vault_reserve (
     id TEXT PRIMARY KEY,
     merchant_id TEXT,
