@@ -510,20 +510,24 @@ export const initTables = async () => {
       `);
 
     // Seed Admin User
+    // IMPORTANT: Only set the password when creating the user for the first time.
+    // Never overwrite an existing password — that would reset any password changes
+    // made via the dashboard or reset endpoint every time the server restarts.
     const adminUsername = process.env.ADMIN_USERNAME || "admin";
     const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
-    const hash = await bcrypt.hash(adminPassword, 10);
     const userRes = await db.query("SELECT * FROM admin_users WHERE username = ?", [adminUsername]);
 
     let adminId: string;
     if (userRes.rowCount === 0) {
+      // First boot — create the user with the configured password
+      const hash = await bcrypt.hash(adminPassword, 10);
       adminId = uuidv4();
       await db.query("INSERT INTO admin_users (id, username, password_hash, full_name) VALUES (?, ?, ?, ?)", [adminId, adminUsername, hash, "System Administrator"]);
-      console.log(`âœ… Default admin user created: ${adminUsername} / ${adminPassword}`);
+      console.log(`[Auth] Default admin user created: ${adminUsername}`);
     } else {
-      await db.query("UPDATE admin_users SET password_hash = ? WHERE username = ?", [hash, adminUsername]);
+      // User already exists — NEVER touch the password. Preserve whatever is stored.
       adminId = (userRes.rows[0] as any).id;
-      console.log(`âœ… Admin password ensured for ${adminUsername}`);
+      console.log(`[Auth] Admin user exists: ${adminUsername} — password unchanged`);
     }
 
     // Seed Security Roles

@@ -275,6 +275,45 @@ app.use("/api/card-auth", cardAuthRouter);
 
 // â”€â”€ Public funding webhook endpoint
 app.use('/webhooks', fundingWebhookRouter);
+// ── Core API routes (JWT-authenticated) ──────────────────────────────────────
+app.use('/api/wallets', walletsRouter);
+app.use('/api/wallets/vba', transakVbaRouter);
+app.use('/api', apiRouter);
+app.use('/api/vault', vaultRouter);
+app.use('/api/vault/cardtopup', cardTopupRouter);
+app.use('/api/settlements', settlementsRouter);
+app.use('/api/transactions', transactionsRouter);
+app.use('/api/products', productsRouter);
+app.use('/api/terminals', terminalsRouter);
+app.use('/api/settings', settingsRouter);
+app.use('/api/batches', batchesRouter);
+app.use('/api/receipts', receiptsRouter);
+app.use('/api/cashouts', cashoutsRouter);
+app.use('/api/payouts/bank', payoutBankRouter);
+app.use('/api/payouts/crypto', payoutCryptoRouter);
+app.use('/api/payouts/mt103', mt103Router);
+app.use('/api/payouts', unifiedPayoutsRouter);
+app.use('/api/ledger', ledgerRouter);
+app.use('/api/dashboard', dashboardRouter);
+app.use('/api/bank-transfer', bankTransferRouter);
+app.use('/api/batch-file', batchFileRouter);
+app.use('/api/payment-receiver', paymentReceiverRouter);
+app.use('/api/conflict-resolution', conflictResolutionRouter);
+app.use('/api/audit', auditTrailRouter);
+app.use('/api/crypto-wallets', cryptoWalletsRouter);
+app.use('/api/wallet-transfer', walletTransferRouter);
+app.use('/api/accounts', coreAccountsRouter);
+app.use('/api/beneficiaries', coreBeneficiariesRouter);
+app.use('/api/payouts', corePayoutsRouter);
+app.use('/api/wallet-cards', walletCardsRouter);
+app.use('/api/card-tokens', cardTokensRouter);
+app.use('/api/issuer', issuerProcessorRouter);
+app.use('/api/approval-codes', approvalCodeRouter);
+app.use('/api/processor-identity', processorIdentityRouter);
+app.use('/api/developer', developerIntegrationRouter);
+app.use('/api/prisma-lapos', prismaLaposRouter);
+app.use('/api/pos', posRouter);
+app.use('/api/recon', pos1011ReconRouter);
 
 // ── Transak Order Webhook (HMAC-signed) ──────────────────────────────────────
 app.post('/webhooks/transak', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
@@ -307,6 +346,9 @@ app.post('/webhooks/transak', express.raw({ type: 'application/json' }), async (
     const cryptoAmount = Number(webhookData?.cryptoAmount || 0);
     const fiatCurrency = String(webhookData?.fiatCurrency || 'USD').toUpperCase();
     const coin        = String(webhookData?.cryptoCurrency || 'USDT').toUpperCase();
+    // isBuyOrSell: 'BUY' = on-ramp (user bought crypto), 'SELL' = off-ramp (user sold crypto for fiat)
+    const isBuyOrSell  = String(webhookData?.isBuyOrSell || webhookData?.productsAvailed || 'BUY').toUpperCase();
+    const isOffRamp    = isBuyOrSell === 'SELL';
     const { db } = await import('./config/db');
     const { v4: uuidv4 } = await import('uuid');
     try {
@@ -315,37 +357,57 @@ app.post('/webhooks/transak', express.raw({ type: 'application/json' }), async (
         [orderId || `evt-${Date.now()}`, eventID || 'UNKNOWN', orderId || null, status || 'RECEIVED', verified ? 1 : 0, payload.substring(0, 8000), signature.substring(0, 256)]
       );
     } catch { /* ignore */ }
-    console.log(`[Transak Webhook] eventID=${eventID} status=${status} orderId=${orderId} customer=${partnerCustomerId}`);
+    console.log(`[Transak Webhook] eventID=${eventID} status=${status} orderId=${orderId} customer=${partnerCustomerId} flow=${isBuyOrSell}`);
     if ((eventID === 'ORDER_COMPLETED' || status === 'COMPLETED') && orderId) {
       try {
         const alreadyProcessed = await db.query(`SELECT id FROM wallet_transactions WHERE reference = ? AND source LIKE 'transak%' LIMIT 1`, [orderId]).catch(() => ({ rows: [] }));
         if (!alreadyProcessed.rows?.length) {
           const now = new Date().toISOString();
           const walletsSvc = await import('./domain/wallets/wallets.service');
-          if (partnerCustomerId && fiatAmount > 0) {
-            try { await walletsSvc.walletsService.topupWallet(partnerCustomerId, fiatAmount, 'transak_order_completed', orderId, fiatCurrency); } catch { /* non-fatal */ }
-          }
-          if (partnerCustomerId && cryptoAmount > 0) {
-            try {
-              const cw = await walletsSvc.walletsService.getOrCreateCryptoWallet(partnerCustomerId, coin);
-              await db.query('UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cryptoAmount, cw.id]);
-            } catch { /* non-fatal */ }
-          }
-          if (fiatAmount > 0) {
-            try {
-              const merchantId = 'MRC-1001';
-              await db.query(`INSERT INTO omnibus_accounts (account_id, currency, balance, label, created_at, updated_at) VALUES ('VAULT_BANK_OMNIBUS', ?, ?, 'VAULT BANK OMNIBUS', ?, ?) ON CONFLICT(account_id, currency) DO UPDATE SET balance = balance + excluded.balance, updated_at = excluded.updated_at`, [fiatCurrency, fiatAmount, now, now]);
-              let mw = (await db.query('SELECT id FROM merchant_wallets WHERE merchant_id = ? AND currency = ? LIMIT 1', [merchantId, fiatCurrency])).rows[0] as any;
-              if (!mw) { const mwId = uuidv4(); await db.query('INSERT INTO merchant_wallets (id, merchant_id, balance, currency) VALUES (?, ?, 0, ?)', [mwId, merchantId, fiatCurrency]); mw = { id: mwId }; }
-              await db.query('UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?', [fiatAmount, now, mw.id]);
-              await db.query(`INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description, created_at) VALUES (?, ?, 'credit', ?, ?, 'transak_order_completed', ?, ?, ?)`, [uuidv4(), mw.id, fiatAmount, fiatCurrency, orderId, `Transak ORDER_COMPLETED: ${fiatCurrency} ${fiatAmount}`, now]);
-              console.log(`[Transak] Merchant wallet credited: ${fiatCurrency} ${fiatAmount}`);
-            } catch (e: any) { console.warn('[Transak] Merchant credit error:', e.message); }
+          if (isOffRamp) {
+            // ── OFF-RAMP (SELL): user sold crypto → Transak pays fiat directly to user's bank
+            // Debit the customer's crypto wallet to reflect the sold amount.
+            if (partnerCustomerId && cryptoAmount > 0) {
+              try {
+                const cw = await walletsSvc.walletsService.getOrCreateCryptoWallet(partnerCustomerId, coin);
+                await db.query(
+                  'UPDATE customer_crypto_wallets SET balance = MAX(0, balance - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                  [cryptoAmount, cw.id]
+                );
+                await db.query(
+                  `INSERT OR IGNORE INTO wallet_transactions (id, customer_id, type, amount, currency, source, reference, description, created_at) VALUES (?, ?, 'debit', ?, ?, 'transak_offramp', ?, ?, ?)`,
+                  [uuidv4(), partnerCustomerId, cryptoAmount, coin, orderId, `Transak OFF-RAMP: sold ${cryptoAmount} ${coin} for ${fiatAmount} ${fiatCurrency}` , now]
+                ).catch(() => {});
+                console.log(`[Transak] OFF-RAMP: debited ${cryptoAmount} ${coin} from customer=${partnerCustomerId}` );
+              } catch (e: any) { console.warn('[Transak] OFF-RAMP debit error:', e.message); }
+            }
+          } else {
+            // ── ON-RAMP (BUY): user bought crypto → credit their crypto + merchant fiat wallets
+            if (partnerCustomerId && fiatAmount > 0) {
+              try { await walletsSvc.walletsService.topupWallet(partnerCustomerId, fiatAmount, 'transak_order_completed', orderId, fiatCurrency); } catch { /* non-fatal */ }
+            }
+            if (partnerCustomerId && cryptoAmount > 0) {
+              try {
+                const cw = await walletsSvc.walletsService.getOrCreateCryptoWallet(partnerCustomerId, coin);
+                await db.query('UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cryptoAmount, cw.id]);
+              } catch { /* non-fatal */ }
+            }
+            if (fiatAmount > 0) {
+              try {
+                const merchantId = 'MRC-1001';
+                await db.query(`INSERT INTO omnibus_accounts (account_id, currency, balance, label, created_at, updated_at) VALUES ('VAULT_BANK_OMNIBUS', ?, ?, 'VAULT BANK OMNIBUS', ?, ?) ON CONFLICT(account_id, currency) DO UPDATE SET balance = balance + excluded.balance, updated_at = excluded.updated_at`, [fiatCurrency, fiatAmount, now, now]);
+                let mw = (await db.query('SELECT id FROM merchant_wallets WHERE merchant_id = ? AND currency = ? LIMIT 1', [merchantId, fiatCurrency])).rows[0] as any;
+                if (!mw) { const mwId = uuidv4(); await db.query('INSERT INTO merchant_wallets (id, merchant_id, balance, currency) VALUES (?, ?, 0, ?)', [mwId, merchantId, fiatCurrency]); mw = { id: mwId }; }
+                await db.query('UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?', [fiatAmount, now, mw.id]);
+                await db.query(`INSERT INTO merchant_wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description, created_at) VALUES (?, ?, 'credit', ?, ?, 'transak_onramp_completed', ?, ?, ?)`, [uuidv4(), mw.id, fiatAmount, fiatCurrency, orderId, `Transak ON-RAMP ORDER_COMPLETED: ${fiatCurrency} ${fiatAmount}` , now]);
+                console.log(`[Transak] ON-RAMP: Merchant wallet credited: ${fiatCurrency} ${fiatAmount}` );
+              } catch (e: any) { console.warn('[Transak] Merchant credit error:', e.message); }
+            }
           }
         }
       } catch (e: any) { console.warn('[Transak] ORDER_COMPLETED error:', e.message); }
     }
-    res.status(200).json({ ok: true, verified, eventID, acknowledged: true });
+    res.status(200).json({ ok: true, verified, eventID, isBuyOrSell, acknowledged: true });
   } catch (e: any) { console.error('[Transak Webhook Error]', e?.message || e); res.status(200).json({ ok: true, error: 'acknowledged' }); }
 });
 
