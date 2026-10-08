@@ -138,7 +138,8 @@ export class PaymentsService {
   } {
     const reasons: string[] = [];
 
-    const enabledRaw = String(process.env.CARD_PROCESSOR_ENABLED || 'false').trim().toLowerCase();
+    // Default to enabled — only disable if explicitly set to false/0/no/off
+    const enabledRaw = String(process.env.CARD_PROCESSOR_ENABLED || 'true').trim().toLowerCase();
     const enabledFlag = ['1', 'true', 'on', 'yes'].includes(enabledRaw);
 
     const acquirerActive = Boolean(acquirerConfig.host);

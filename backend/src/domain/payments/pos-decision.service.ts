@@ -81,7 +81,8 @@ function buildEmvPayload(emv: any): Record<string, unknown> | undefined {
 }
 
 function _isProcessorEnabled(): { enabled: boolean; usableUrl: boolean; acquirerActive: boolean; reason: string } {
-  const enabledRaw = String(process.env.CARD_PROCESSOR_ENABLED || 'false').trim().toLowerCase();
+  // Default to enabled — only disable if explicitly set to false/0/no/off
+  const enabledRaw = String(process.env.CARD_PROCESSOR_ENABLED || 'true').trim().toLowerCase();
   const enabled = ['1', 'true', 'on', 'yes'].includes(enabledRaw);
   const acquirerActive = Boolean(acquirerConfig.host);
 
