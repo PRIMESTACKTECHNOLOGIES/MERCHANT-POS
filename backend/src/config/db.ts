@@ -240,6 +240,52 @@ async function getDb(): Promise<any> {
     voided_by TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS customer_crypto_withdrawals (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    wallet_id TEXT,
+    coin TEXT NOT NULL,
+    network TEXT NOT NULL,
+    amount REAL NOT NULL,
+    to_address TEXT NOT NULL,
+    tx_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    fee REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS vault_reserve (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT,
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    reason TEXT,
+    release_ts TEXT,
+    status TEXT NOT NULL DEFAULT 'HELD',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  _db.run(`CREATE TABLE IF NOT EXISTS pos2013_transactions (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT,
+    customer_id TEXT,
+    terminal_id TEXT,
+    batch_id TEXT NOT NULL DEFAULT '',
+    local_txn_id TEXT,
+    stan TEXT,
+    rrn TEXT,
+    amount_minor INTEGER,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    pan_masked TEXT,
+    txn_type TEXT,
+    auth_mode TEXT,
+    entry_mode TEXT,
+    auth_code TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    txn_timestamp TEXT,
+    decline_reason TEXT,
+    emv_data TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
   _db.run(`CREATE TABLE IF NOT EXISTS customer_wallet_transaction_voids (
     id TEXT PRIMARY KEY,
     transaction_id TEXT NOT NULL,

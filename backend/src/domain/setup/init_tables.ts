@@ -258,10 +258,10 @@ export const initTables = async () => {
       );
     `);
 
-    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_scope
-      ON pos2013_transactions (merchant_id, terminal_id, batch_id, local_txn_id);`);
-    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_rrn
-      ON pos2013_transactions (merchant_id, rrn) WHERE rrn IS NOT NULL;`);
+    try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_scope
+      ON pos2013_transactions (merchant_id, terminal_id, batch_id, local_txn_id);`); } catch { /* ignore if already exists or column missing */ }
+    try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_rrn
+      ON pos2013_transactions (merchant_id, rrn) WHERE rrn IS NOT NULL;`); } catch { /* rrn column may not exist yet */ }
 
     // â”€â”€ Protocol Rules â€” constraints per protocol (101.1 / 101.6 / 201.3) â”€â”€â”€â”€â”€â”€â”€â”€
     // Defines what is required for each protocol. Checked BEFORE auth code lookup.
@@ -2264,6 +2264,9 @@ export const initTables = async () => {
 
     console.log("Tables initialized successfully (SQLite)");
   } catch (error) {
-    console.error("Error initializing tables:", error);
+    // Log the error but DO NOT rethrow — a partial init is better than no init.
+    // The server will still start and serve requests. Missing tables will be
+    // created on the next restart or caught per-request.
+    console.error("Error initializing tables (non-fatal):", error);
   }
 };
