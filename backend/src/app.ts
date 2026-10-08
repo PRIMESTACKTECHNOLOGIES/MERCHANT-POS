@@ -50,6 +50,7 @@ import bankPartnerWebhookRouter from './domain/payouts/bank-partner-webhook.rout
 import developerIntegrationRouter from './domain/developer/developer-integration.router';
 import { prismaLaposRouter } from './domain/payments/prisma-lapos/prisma-lapos.router';
 import { cardTopupRouter } from './domain/vault/cardTopup.router';
+import { transakVbaRouter } from './domain/wallets/transakVba.router';
 
 export const app = express();
 
@@ -460,6 +461,7 @@ app.use('/api/processor', processorIdentityRouter);
 app.use('/api/developer', developerIntegrationRouter);
 app.use('/api/prisma-pos', express.json({ limit: '1mb' }), prismaLaposRouter);
 app.use('/api/card-topup', express.json({ limit: '1mb' }), cardTopupRouter);
+app.use('/api/wallets/vba', transakVbaRouter);
 
 
 // ── POST /api/wallets/customer-to-merchant ──────────────────────────────────
