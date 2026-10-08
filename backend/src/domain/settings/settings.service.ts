@@ -15,7 +15,7 @@ const DEFAULT_TERMINAL_SETTINGS = {
 export class SettingsService {
   async getSettings(merchantId: string) {
     try {
-      const res = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = $1", [merchantId]);
+      const res = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = ?", [merchantId]);
       if (res.rows.length > 0) {
         const row = res.rows[0];
         
@@ -72,7 +72,7 @@ export class SettingsService {
     try {
       const { 
         api_key, webhook_url, test_mode, merchant_name, support_email, features,
-        business, banking, notifications,         security, paymentConfig, terminal
+        business, banking, notifications, security, paymentConfig, terminal
       } = data;
       
       const rawFeatures = features || { manualEntry: false, refunds: false, tips: false };
@@ -98,32 +98,31 @@ export class SettingsService {
         }
       };
       const extendedJson = JSON.stringify(extendedSettings);
-      
       const paymentConfigJson = JSON.stringify(paymentConfig || []);
 
       // Check if exists
-      const check = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = $1", [merchantId]);
+      const check = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = ?", [merchantId]);
       
       if (check.rows.length === 0) {
-        // Insert if missing
         await db.query(`
           INSERT INTO merchant_settings 
           (merchant_id, api_key, webhook_url, test_mode, merchant_name, support_email, features, extended_settings, payment_config)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [merchantId, api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson]);
         
         return { merchant_id: merchantId, ...data };
       }
 
-      const res = await db.query(`
+      await db.query(`
         UPDATE merchant_settings 
-        SET api_key = $2, webhook_url = $3, test_mode = $4, merchant_name = $5, support_email = $6, features = $7, extended_settings = $8, payment_config = $9, updated_at = CURRENT_TIMESTAMP
-        WHERE merchant_id = $1
-        RETURNING *
-      `, [merchantId, api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson]);
-      
+        SET api_key = ?, webhook_url = ?, test_mode = ?, merchant_name = ?, support_email = ?,
+            features = ?, extended_settings = ?, payment_config = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE merchant_id = ?
+      `, [api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson, merchantId]);
+
+      const res = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = ?", [merchantId]);
       if (!res.rows || res.rows.length === 0) {
-        return { merchant_id: merchantId, ...data, features: features || {}, business: business || {}, banking: banking || {}, notifications: notifications || {}, security: security || {}, terminal: extendedSettings.terminal, paymentConfig: paymentConfig || [] };
+        return { merchant_id: merchantId, ...data, features: forcedFeatures, business: business || {}, banking: banking || {}, notifications: notifications || {}, security: security || {}, terminal: extendedSettings.terminal, paymentConfig: paymentConfig || [] };
       }
       const row = res.rows[0];
       const extended = row.extended_settings ? JSON.parse(row.extended_settings) : {};
@@ -157,7 +156,7 @@ export class SettingsService {
 
   async regenerateApiKey(merchantId: string) {
     const newApiKey = `mk_${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
-    await db.query(`UPDATE merchant_settings SET api_key = $1 WHERE merchant_id = $2`, [newApiKey, merchantId]);
+    await db.query(`UPDATE merchant_settings SET api_key = ? WHERE merchant_id = ?`, [newApiKey, merchantId]);
     return { api_key: newApiKey };
   }
 }
