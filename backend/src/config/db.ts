@@ -96,6 +96,12 @@ async function getDb(): Promise<any> {
   });
 
   // Open existing file or create fresh
+  // FORCE_DB_RESET=1 deletes the old file so all tables rebuild correctly
+  if (process.env.FORCE_DB_RESET === '1' && fs.existsSync(DB_PATH)) {
+    console.warn('[DB] FORCE_DB_RESET=1 — deleting old database and rebuilding from scratch');
+    fs.unlinkSync(DB_PATH);
+  }
+
   if (fs.existsSync(DB_PATH)) {
     const fileBuffer = fs.readFileSync(DB_PATH);
     _db = new SQL.Database(fileBuffer);
