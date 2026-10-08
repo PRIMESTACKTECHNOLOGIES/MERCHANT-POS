@@ -46,23 +46,38 @@ const extractColumnName = (colDef: string) => colDef.trim().split(/\s+/)[0].trim
 let _db: any = null;          // sql.js Database instance
 let _dirty = false;            // true when writes need flushing to disk
 let _flushTimer: any = null;   // debounce timer for disk flush
+let _flushCount = 0;           // count writes between flushes
 
-/** Persist in-memory DB to disk (debounced — max 1 write per 500ms) */
+/** Persist in-memory DB to disk — flush immediately on every write to prevent data loss */
 function schedulePersist() {
   _dirty = true;
-  if (_flushTimer) return;
-  _flushTimer = setTimeout(() => {
-    _flushTimer = null;
-    if (_dirty && _db) {
-      try {
-        const data: Uint8Array = _db.export();
-        fs.writeFileSync(DB_PATH, Buffer.from(data));
-        _dirty = false;
-      } catch (e) {
-        console.error('[DB] Flush error:', e);
-      }
+  _flushCount++;
+
+  // Always flush immediately — never debounce on Render where process can be killed anytime
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+
+  if (_db) {
+    try {
+      const data: Uint8Array = _db.export();
+      fs.writeFileSync(DB_PATH, Buffer.from(data));
+      _dirty = false;
+    } catch (e) {
+      console.error('[DB] Flush error:', e);
+      // Retry once after 100ms
+      _flushTimer = setTimeout(() => {
+        _flushTimer = null;
+        if (_dirty && _db) {
+          try {
+            const data: Uint8Array = _db.export();
+            fs.writeFileSync(DB_PATH, Buffer.from(data));
+            _dirty = false;
+          } catch (e2) {
+            console.error('[DB] Flush retry error:', e2);
+          }
+        }
+      }, 100);
     }
-  }, 500);
+  }
 }
 
 /** Flush immediately (called on graceful shutdown) */
