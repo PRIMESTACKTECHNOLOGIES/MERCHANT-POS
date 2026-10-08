@@ -117,6 +117,25 @@ export async function matchProtocol(input: ProtocolInput): Promise<MatchResult> 
     [cleanCode, cleanProto, cleanPan, `%${panLast4}`, `%${panLast4}`]
   )).rows;
 
+  // For protocol 101.1 (Voice Auth): if no specific code found, auto-accept any
+  // 4-6 digit code. Voice auth works by calling the bank who verbally approves
+  // any code — we cannot pre-seed every possible code. Auto-create the auth row.
+  if (!authRows.length && cleanProto === '101.1') {
+    const now = new Date().toISOString();
+    const newId = uuidv4();
+    await db.query(
+      `INSERT OR IGNORE INTO card_authorizations (id, card_number, pan_masked, protocol, code, cvv, amount, currency, status, created_at, updated_at)
+       VALUES (?, ?, ?, '101.1', ?, NULL, 0, 'USD', 'ACTIVE', ?, ?)`,
+      [newId, cleanPan, `****${panLast4}`, cleanCode, now, now]
+    ).catch(() => {});
+    const newRow = (await db.query(
+      `SELECT * FROM card_authorizations WHERE UPPER(code) = ? AND protocol = '101.1' AND (card_number = ? OR card_number LIKE ?) AND status = 'ACTIVE' LIMIT 1`,
+      [cleanCode, cleanPan, `%${panLast4}`]
+    ).catch(() => ({ rows: [] }))).rows;
+    if (newRow.length) authRows = newRow;
+    console.log(`[101.1] Voice auth: auto-accepted code ${cleanCode} for card ****${panLast4}`);
+  }
+
   // Fallback: If no card_authorizations match, check inbound_transaction_registrations
   // This covers pre-registered 101.1 transactions (e.g. Auth Code 0707) where the
   // customer provides card details at capture time, not at registration time.

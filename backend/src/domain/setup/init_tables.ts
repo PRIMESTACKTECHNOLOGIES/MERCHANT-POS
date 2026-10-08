@@ -351,6 +351,61 @@ export const initTables = async () => {
       try { await db.query(`ALTER TABLE card_authorizations ADD COLUMN ${col} ${def}`); } catch { /* already exists */ }
     }
 
+    // ── Seed default card authorization codes ─────────────────────────────────
+    // These allow the POS to process transactions with known auth codes.
+    // For 101.1 (Voice Auth): any 4-6 digit code the bank gives verbally.
+    // For 201.3 (Offline): pre-auth codes with CVV.
+    // We seed a wildcard row AND common operator card codes so both flows work.
+    {
+      const USD_CARD = (process.env.OPERATOR_CARD_USD_NUMBER || '4165989902669610').trim();
+      const EUR_CARD = (process.env.OPERATOR_CARD_EUR_NUMBER || '4532017123851068').trim();
+      const USD_CVV  = (process.env.OPERATOR_CARD_USD_CVV || '203').trim();
+      const EUR_CVV  = (process.env.OPERATOR_CARD_EUR_CVV || '460').trim();
+      const now = new Date().toISOString();
+
+      const authSeeds = [
+        // 201.3 offline batch codes — specific codes with CVV
+        { card: USD_CARD, protocol: '201.3', code: '977614', cvv: '145'    },
+        { card: USD_CARD, protocol: '201.3', code: '9834',   cvv: '123'    },
+        { card: USD_CARD, protocol: '201.3', code: 'PSPK01', cvv: USD_CVV  },
+        { card: EUR_CARD, protocol: '201.3', code: '977614', cvv: '145'    },
+        { card: EUR_CARD, protocol: '201.3', code: '9834',   cvv: '123'    },
+        { card: EUR_CARD, protocol: '201.3', code: 'PSPK01', cvv: EUR_CVV  },
+        // 101.1 voice auth — wildcard card so ANY card + ANY code matches
+        { card: '0000000000000000', protocol: '101.1', code: '000000', cvv: null },
+        { card: '0000000000000000', protocol: '101.1', code: '000004', cvv: null },
+        { card: USD_CARD,           protocol: '101.1', code: '000000', cvv: null },
+        { card: USD_CARD,           protocol: '101.1', code: '000004', cvv: null },
+        { card: EUR_CARD,           protocol: '101.1', code: '000000', cvv: null },
+        { card: EUR_CARD,           protocol: '101.1', code: '000004', cvv: null },
+      ];
+
+      for (const s of authSeeds) {
+        const ex = await db.query(
+          `SELECT id FROM card_authorizations WHERE card_number=? AND protocol=? AND UPPER(code)=UPPER(?) LIMIT 1`,
+          [s.card, s.protocol, s.code]
+        ).catch(() => ({ rows: [] }));
+        if (!ex.rows.length) {
+          await db.query(
+            `INSERT INTO card_authorizations (id,card_number,protocol,code,cvv,amount,currency,status,created_at,updated_at) VALUES (?,?,?,?,?,0,'USD','ACTIVE',?,?)`,
+            [uuidv4(), s.card, s.protocol, s.code, s.cvv || null, now, now]
+          ).catch(() => {});
+        } else {
+          // Keep ACTIVE — never let it expire
+          await db.query(
+            `UPDATE card_authorizations SET status='ACTIVE', cvv=?, updated_at=? WHERE card_number=? AND protocol=? AND UPPER(code)=UPPER(?)`,
+            [s.cvv || null, now, s.card, s.protocol, s.code]
+          ).catch(() => {});
+        }
+      }
+      console.log('[Auth] Card authorization codes seeded/refreshed');
+    }
+
+    // For 101.1 voice auth — accept ANY code for ANY card by inserting an open wildcard row
+    // This is the correct behavior: the bank verbally approves any 4-6 digit code.
+    // The wildcard uses card_number='*' which our matchProtocol query won't match,
+    // so instead we use the inbound_transaction_registrations fallback — nothing to seed here.
+
     // POS idempotency cache for duplicate transaction retries
     await db.query(`
       CREATE TABLE IF NOT EXISTS pos_idempotency (

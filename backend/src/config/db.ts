@@ -159,13 +159,14 @@ async function getDb(): Promise<any> {
   _db.run(`CREATE TABLE IF NOT EXISTS customer_crypto_wallets (
     id TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL,
-    coin TEXT NOT NULL,
+    crypto_coin TEXT NOT NULL,
     network TEXT NOT NULL DEFAULT 'mainnet',
     balance REAL NOT NULL DEFAULT 0,
-    address TEXT,
+    crypto_address TEXT,
+    status TEXT DEFAULT 'active',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(customer_id, coin)
+    UNIQUE(customer_id, crypto_coin)
   )`);
   _db.run(`CREATE TABLE IF NOT EXISTS customer_crypto_withdrawals (
     id TEXT PRIMARY KEY,
@@ -292,7 +293,7 @@ async function getDb(): Promise<any> {
   )`);
   // ── Missing tables: created at startup so no query ever fails ────────────────
   for (const _tbl of [
-    `CREATE TABLE IF NOT EXISTS crypto_transactions (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, type TEXT NOT NULL, coin TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'mainnet', amount REAL NOT NULL, fiat_amount REAL, fiat_currency TEXT DEFAULT 'USD', price_at_time REAL, status TEXT NOT NULL DEFAULT 'COMPLETED', source TEXT, reference TEXT, tx_hash TEXT, from_address TEXT, to_address TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS crypto_transactions (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, crypto_coin TEXT NOT NULL, transaction_type TEXT NOT NULL DEFAULT 'buy', fiat_amount REAL NOT NULL DEFAULT 0, crypto_amount REAL NOT NULL DEFAULT 0, fiat_currency TEXT NOT NULL DEFAULT 'USD', exchange_rate REAL NOT NULL DEFAULT 0, source TEXT, provider_mode TEXT, status TEXT NOT NULL DEFAULT 'completed', reference TEXT, tx_hash TEXT, is_mock INTEGER DEFAULT 0, meta TEXT, binance_order_id TEXT, fills_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS wallet_transfers (id TEXT PRIMARY KEY, sender_customer_id TEXT NOT NULL, receiver_customer_id TEXT NOT NULL, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', note TEXT, status TEXT NOT NULL DEFAULT 'COMPLETED', created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS bank_accounts (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, bank_name TEXT, account_holder TEXT, account_number TEXT, routing_number TEXT, iban TEXT, swift_code TEXT, currency TEXT DEFAULT 'USD', is_default INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS bank_payouts (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, bank_account_id TEXT, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL DEFAULT 'PENDING', reference TEXT, note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
