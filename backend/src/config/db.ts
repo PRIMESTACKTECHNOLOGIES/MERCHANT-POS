@@ -273,7 +273,11 @@ async function getDb(): Promise<any> {
   _db.run(`CREATE TABLE IF NOT EXISTS user_roles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    display_name TEXT,
+    description TEXT,
     permissions TEXT,
+    is_system_role INTEGER DEFAULT 0,
+    priority INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`);
   _db.run(`CREATE TABLE IF NOT EXISTS user_role_assignments (
@@ -318,6 +322,7 @@ async function getDb(): Promise<any> {
     `CREATE TABLE IF NOT EXISTS merchant_crypto_wallets (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, coin TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'mainnet', balance REAL NOT NULL DEFAULT 0, address TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(merchant_id, coin))`,
     `CREATE TABLE IF NOT EXISTS merchant_settings (merchant_id TEXT PRIMARY KEY, api_key TEXT, webhook_url TEXT, test_mode INTEGER DEFAULT 0, merchant_name TEXT, support_email TEXT, features TEXT, extended_settings TEXT, payment_config TEXT, license_number TEXT, tax_id TEXT, merchant_address TEXT, merchant_phone TEXT, bank_name TEXT, bank_account_holder TEXT, bank_account_number TEXT, bank_routing_number TEXT, bank_iban TEXT, bank_swift_code TEXT, usdt_address_tron TEXT, usdt_address_bsc TEXT, usdt_address_polygon TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS virtual_accounts (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, customer_id TEXT, currency TEXT NOT NULL DEFAULT 'USD', account_number TEXT, routing_number TEXT, iban TEXT, reference TEXT, provider TEXT, status TEXT NOT NULL DEFAULT 'ACTIVE', created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS payout_instructions (id TEXT PRIMARY KEY, merchant_id TEXT, customer_id TEXT, type TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', amount REAL NOT NULL DEFAULT 0, destination TEXT, reference TEXT, status TEXT NOT NULL DEFAULT 'PENDING', provider TEXT, provider_reference TEXT, meta TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
   ]) { try { _db.run(_tbl); } catch (_e) {} }
   _db.run(`CREATE TABLE IF NOT EXISTS vault_reserve (
     id TEXT PRIMARY KEY,
@@ -920,6 +925,16 @@ async function getDb(): Promise<any> {
     ['vault_accounts',             'payout_in_progress REAL NOT NULL DEFAULT 0'],
     ['vault_accounts',             'updated_at TEXT'],
     ['vault_accounts',             'last_reconciled TEXT'],
+    // user_roles extended columns (added by init_tables but table pre-exists without them)
+    ['user_roles', 'display_name TEXT'],
+    ['user_roles', 'description TEXT'],
+    ['user_roles', 'is_system_role INTEGER DEFAULT 0'],
+    ['user_roles', 'priority INTEGER DEFAULT 0'],
+    // merchant_crypto_withdrawals extra columns
+    ['merchant_crypto_withdrawals', 'network TEXT'],
+    ['merchant_crypto_withdrawals', 'fee REAL DEFAULT 0'],
+    ['merchant_crypto_withdrawals', 'provider TEXT'],
+    ['merchant_crypto_withdrawals', 'provider_reference TEXT'],
   ];
 
   for (const [table, def] of guarantees) {
