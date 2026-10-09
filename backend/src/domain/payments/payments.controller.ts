@@ -38,16 +38,21 @@ export class PaymentsController {
 
       // ── Protocol detection ─────────────────────────────────────────────────
       // Explicit protocol from the caller wins (101.1, 101.6, 201.3).
-      // If omitted, fall back to entryMode heuristic.
-      const explicitProtocol = String(protocol || '').trim();
+      // "NORMAL" / empty / anything else = standard card charge, no auth code needed.
+      const explicitProtocol = String(protocol || '').trim().toUpperCase();
       const rawMode = String(entryMode || '').toUpperCase();
       const isProtocol101_1 = explicitProtocol === '101.1' || rawMode === 'VOICE_AUTH' || rawMode === '101.1';
       const isProtocol101_6 = explicitProtocol === '101.6' || rawMode === '101.6' || rawMode === 'EMV' || rawMode === 'CHIP';
       const isProtocol201_3 = explicitProtocol === '201.3' || rawMode === 'OFFLINE_201_3' || rawMode === '201.3' || rawMode === 'MANUAL_MOTO' || rawMode === 'MOTO';
       const hasAuthCode = !!(authCode && String(authCode).trim());
-      const requiresAuth = isProtocol201_3 || isProtocol101_1 || isProtocol101_6 || hasAuthCode;
+      // Only require auth code if a specific protocol that needs one is explicitly chosen
+      // NORMAL / blank / unknown = no auth code required — just charge the card
+      const requiresAuth = (isProtocol201_3 || isProtocol101_1 || isProtocol101_6) && hasAuthCode
+        || (isProtocol201_3 && hasAuthCode)
+        || (isProtocol101_1)
+        || (isProtocol101_6 && hasAuthCode);
       const effectiveProtocolStr =
-        isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : isProtocol201_3 ? '201.3' : '201.3';
+        isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : isProtocol201_3 ? '201.3' : 'NORMAL';
 
       let effectiveAuthCode = authCode ? String(authCode).trim() : '';
       let generatedCode = false;
@@ -127,13 +132,16 @@ export class PaymentsController {
           } catch { /* non-fatal â€” DB validation already passed */ }
         }
         console.log(`[Protocol ${isProtocol201_3?'201.3':isProtocol101_1?'101.1':'101.6'}] Auth code verified: ${effectiveAuthCode}`);
-      } else if (requiresAuth && !effectiveAuthCode) {
-        const protocol = isProtocol201_3 ? '201.3' : isProtocol101_1 ? '101.1' : '101.6';
-        return res.status(400).json({
-          success: false, status: 'DECLINED',
-          error: `Protocol ${protocol} requires an Authorization Code.`,
-          reason: `[${protocol}_NO_AUTH_CODE] Authorization code is mandatory.`,
-        });
+      } else if (isProtocol101_1 && !effectiveAuthCode) {
+        // 101.1 without auth code → auto-generate one (already handled above)
+        // If generation failed and we still have no code, decline cleanly
+        if (!generatedCode) {
+          return res.status(400).json({
+            success: false, status: 'DECLINED',
+            error: 'Protocol 101.1 requires an Authorization Code (voice auth).',
+            reason: '[101.1_NO_AUTH_CODE] Authorization code is mandatory for voice auth.',
+          });
+        }
       }
 
       console.log("Charge request received", { amountMinor, currency, merchantId, terminalId, stan });
