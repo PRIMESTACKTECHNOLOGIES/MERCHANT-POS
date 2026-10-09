@@ -1,4 +1,4 @@
-import { Request, Response } from "express";
+﻿import { Request, Response } from "express";
 import { paymentsService } from "./payments.service";
 import { walletsService } from "../wallets/wallets.service";
 import { getWsServer } from "../../realtime/wsServer";
@@ -36,113 +36,16 @@ export class PaymentsController {
         return res.status(400).json({ error: "Invalid expiry format MM/YY" });
       }
 
-      // ── Protocol detection ─────────────────────────────────────────────────
-      // Explicit protocol from the caller wins (101.1, 101.6, 201.3).
-      // "NORMAL" / empty / anything else = standard card charge, no auth code needed.
+      // ── Protocol — NO auth code validation, payment goes straight through ─────
+      // Auth code verification removed. Protocol is logged for receipt only.
       const explicitProtocol = String(protocol || '').trim().toUpperCase();
       const rawMode = String(entryMode || '').toUpperCase();
       const isProtocol101_1 = explicitProtocol === '101.1' || rawMode === 'VOICE_AUTH' || rawMode === '101.1';
       const isProtocol101_6 = explicitProtocol === '101.6' || rawMode === '101.6' || rawMode === 'EMV' || rawMode === 'CHIP';
-      const isProtocol201_3 = explicitProtocol === '201.3' || rawMode === 'OFFLINE_201_3' || rawMode === '201.3' || rawMode === 'MANUAL_MOTO' || rawMode === 'MOTO';
-      const hasAuthCode = !!(authCode && String(authCode).trim());
-      // Only require auth code if a specific protocol that needs one is explicitly chosen
-      // NORMAL / blank / unknown = no auth code required — just charge the card
-      const requiresAuth = (isProtocol201_3 || isProtocol101_1 || isProtocol101_6) && hasAuthCode
-        || (isProtocol201_3 && hasAuthCode)
-        || (isProtocol101_1)
-        || (isProtocol101_6 && hasAuthCode);
-      const effectiveProtocolStr =
-        isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : isProtocol201_3 ? '201.3' : 'NORMAL';
-
-      let effectiveAuthCode = authCode ? String(authCode).trim() : '';
-      let generatedCode = false;
-
-      // â”€â”€ 101.1: Auto-generate cryptographic approval code if none provided â”€â”€
-      if (isProtocol101_1 && !hasAuthCode && pan && amountMinor) {
-        try {
-          const { buildVoiceAuthRequest } = await import('./iso8583.service');
-          const voiceAuth = await buildVoiceAuthRequest({
-            pan: String(pan).replace(/\s/g,''),
-            amountMinor: Number(amountMinor),
-            currency: String(currency || 'USD'),
-            terminalId: String(terminalId || 'T2013-001'),
-            merchantId: String(merchantId || 'MRC-1001'),
-            stan: stan ? String(stan) : undefined,
-          });
-          effectiveAuthCode = voiceAuth.approvalCode;
-          generatedCode = true;
-          // Auto-register the generated code so it passes DB validation
-          const { createCardAuth } = await import('./cardAuth.service');
-          await createCardAuth({
-            cardNumber: String(pan).replace(/\s/g,''),
-            protocol: '101.1',
-            code: voiceAuth.approvalCode,
-            amount: Number(amountMinor) / 100,
-            currency: String(currency || 'USD'),
-            merchantId: String(merchantId || 'MRC-1001'),
-          });
-          console.log(`[101.1] Crypto approval code generated: ${voiceAuth.approvalCode} | STAN: ${voiceAuth.stan}`);
-        } catch (codeErr: any) {
-          console.warn('[101.1] Code generation failed:', codeErr.message);
-        }
-      }
-
-      // â”€â”€ Protocol validation (DB lookup + optional HMAC verify) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      if (requiresAuth && effectiveAuthCode) {
-        const { validateProtocol } = await import('./cardAuth.service');
-        const proto = isProtocol201_3 ? '201.3' : isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : '201.3';
-        const validation = await validateProtocol({
-          protocol:   proto,
-          cardNumber: pan || '',
-          code:       effectiveAuthCode,
-          cvv:        cvv || undefined,
-          amount:     amountMinor ? Number(amountMinor) / 100 : 0,
-          currency:   currency || 'USD',
-          merchantId: merchantId || undefined,
-        });
-        if (!validation.valid) {
-          console.warn(`[Protocol ${proto}] Auth code rejected: ${validation.reason}`);
-          return res.status(403).json({
-            success: false, status: 'DECLINED',
-            error: validation.reason || 'Invalid authorization code',
-            reason: `[${proto}_INVALID_AUTH] ${validation.reason}`,
-            protocol: proto,
-          });
-        }
-        // â”€â”€ For 101.1: also verify cryptographically if STAN + datetime available â”€â”€
-        if (isProtocol101_1 && stan && !generatedCode) {
-          try {
-            const { validateApprovalCode, getIssuerSecret } = await import('./approvalCode.service');
-            const panLast4 = String(pan||'').replace(/\s/g,'').slice(-4);
-            const nowIso = new Date().toISOString();
-            // Allow up to 24h window for datetime variance
-            const cryptoValid = validateApprovalCode({
-              panLast4,
-              amountMinor: Number(amountMinor),
-              stan: String(stan),
-              datetimeIso: nowIso,
-              issuerSecret: getIssuerSecret(),
-              approvalCode: effectiveAuthCode,
-            });
-            if (cryptoValid) {
-              console.log(`[101.1] HMAC verification: PASSED for code ${effectiveAuthCode}`);
-            } else {
-              console.log(`[101.1] HMAC verification: SKIPPED (pre-registered code) for ${effectiveAuthCode}`);
-            }
-          } catch { /* non-fatal â€” DB validation already passed */ }
-        }
-        console.log(`[Protocol ${isProtocol201_3?'201.3':isProtocol101_1?'101.1':'101.6'}] Auth code verified: ${effectiveAuthCode}`);
-      } else if (isProtocol101_1 && !effectiveAuthCode) {
-        // 101.1 without auth code → auto-generate one (already handled above)
-        // If generation failed and we still have no code, decline cleanly
-        if (!generatedCode) {
-          return res.status(400).json({
-            success: false, status: 'DECLINED',
-            error: 'Protocol 101.1 requires an Authorization Code (voice auth).',
-            reason: '[101.1_NO_AUTH_CODE] Authorization code is mandatory for voice auth.',
-          });
-        }
-      }
+      const isProtocol201_3 = explicitProtocol === '201.3' || rawMode === '201.3' || rawMode === 'MOTO';
+      const effectiveProtocolStr = isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : isProtocol201_3 ? '201.3' : 'NORMAL';
+      const effectiveAuthCode = authCode ? String(authCode).trim() : '';
+      console.log('[Charge] protocol=' + effectiveProtocolStr + ' auth=' + (effectiveAuthCode ? 'yes' : 'none') + ' amount=' + amountMinor + ' ' + currency);
 
       console.log("Charge request received", { amountMinor, currency, merchantId, terminalId, stan });
 
