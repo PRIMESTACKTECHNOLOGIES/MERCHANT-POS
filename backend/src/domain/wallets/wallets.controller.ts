@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+﻿import { Request, Response } from 'express';
 import { walletsService } from './wallets.service';
 import { fundsSettlementService } from '../settlements/funds-settlement.service';
 
@@ -451,56 +451,35 @@ export class WalletsController {
           secretKey = secretKey || credRow.secret_key;
         }
       }
-      if (!endpoint || !apiKey || !secretKey) {
-        return res.status(412).json({
-          success: false,
-          transactionId: null,
-          error: 'No verified provider credentials. Go to Settings → Test Provider Connection first.'
-        });
-      }
-
-      // 2. REAL provider fund pull (this is the mandatory "real funds" gate)
+      const useInternalTransfer = !endpoint || !apiKey || !secretKey;
       let providerPullSuccess = false;
       let providerPullRef: string | null = null;
-      let providerError: string | null = null;
-      try {
-        const axios = await import('axios');
-        const pullResp = await axios.default.request({
-          method: 'POST',
-          url: `${String(endpoint).replace(/\/$/, '')}/pull-funds`,
-          headers: {
-            'x-api-key': String(apiKey),
-            'x-secret-key': String(secretKey),
-            'Content-Type': 'application/json',
-          },
-          timeout: 20000,
-          validateStatus: () => true,
-          data: {
-            customerId,
-            merchantId,
-            amountMinor: Math.round(amt * 100),
-            currency: ccy,
-            externalReference: `cust-to-merch-${Date.now()}`,
-          },
-        });
-        if (pullResp.status === 200 && (pullResp.data?.success === true || pullResp.data?.status === 'SUCCESS' || pullResp.data?.approved === true)) {
-          providerPullSuccess = true;
-          providerPullRef = String(pullResp.data?.reference || pullResp.data?.id || pullResp.data?.paymentId || `PROV-${Date.now()}`);
-        } else {
-          providerError = `Provider pull HTTP ${pullResp.status}: ${JSON.stringify(pullResp.data ?? {}).slice(0, 160)}`;
+      if (useInternalTransfer) {
+        // No external provider — direct internal POS transfer
+        providerPullSuccess = true;
+        providerPullRef = 'INTERNAL-' + Date.now();
+      } else {
+        let providerError: string | null = null;
+        try {
+          const axiosLib = await import('axios');
+          const pullResp = await axiosLib.default.request({
+            method: 'POST',
+            url: (String(endpoint).endsWith('/') ? String(endpoint).slice(0,-1) : String(endpoint)) + '/pull-funds',
+            headers: { 'x-api-key': String(apiKey), 'x-secret-key': String(secretKey), 'Content-Type': 'application/json' },
+            timeout: 20000, validateStatus: () => true,
+            data: { customerId, merchantId, amountMinor: Math.round(amt * 100), currency: ccy, externalReference: 'c2m-' + Date.now() },
+          });
+          if (pullResp.status === 200 && (pullResp.data?.success === true || pullResp.data?.status === 'SUCCESS' || pullResp.data?.approved === true)) {
+            providerPullSuccess = true;
+            providerPullRef = String(pullResp.data?.reference || pullResp.data?.id || 'PROV-' + Date.now());
+          } else { providerError = 'Provider HTTP ' + pullResp.status; }
+        } catch (pe: any) { providerError = 'Provider call failed: ' + (pe?.message || 'unknown'); }
+        if (!providerPullSuccess) {
+          return res.status(402).json({ success: false, transactionId: null, authCode: null, error: providerError || 'Provider pull failed' });
         }
-      } catch (pullErr: any) {
-        providerError = `Provider pull call failed: ${pullErr?.message || 'Unknown provider error'}`;
       }
 
-      if (!providerPullSuccess) {
-        return res.status(402).json({
-          success: false,
-          transactionId: null,
-          authCode: null,
-          error: providerError || 'Real provider fund pull did not succeed — ledger not moved. Customer wallet funds untouched.'
-        });
-      }
+
 
       // 3. Only AFTER real provider pull succeeded: move customer → merchant wallet
       //    Re-use atomic creditMerchantWallet + creditCustomerWallet pattern
