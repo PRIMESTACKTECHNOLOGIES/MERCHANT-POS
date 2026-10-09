@@ -925,6 +925,11 @@ async function getDb(): Promise<any> {
     ['vault_accounts',             'payout_in_progress REAL NOT NULL DEFAULT 0'],
     ['vault_accounts',             'updated_at TEXT'],
     ['vault_accounts',             'last_reconciled TEXT'],
+    ['terminals',                  'last_seen_at TEXT'],
+    ['terminals',                  'activation_code TEXT'],
+    ['terminals',                  'model TEXT'],
+    ['terminals',                  'version TEXT'],
+    ['terminals',                  'ip_address TEXT'],
     // user_roles extended columns (added by init_tables but table pre-exists without them)
     ['user_roles', 'display_name TEXT'],
     ['user_roles', 'description TEXT'],

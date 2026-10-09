@@ -46,6 +46,17 @@ export class TerminalsService {
       if (!result.rows.length) return { valid: false, message: "Terminal not found" };
       const terminal = result.rows[0] as any;
       if (terminal.terminal_secret !== secretKey) return { valid: false, message: "Invalid secret key" };
+
+      // Update last_seen_at so dashboard shows ONLINE status
+      const now = new Date().toISOString();
+      await db.query(
+        `UPDATE terminals SET last_seen_at = ? WHERE merchant_id = ? AND terminal_id = ?`,
+        [now, merchantId, terminalId]
+      ).catch(() => {
+        // Column may not exist yet — add it silently
+        db.query(`ALTER TABLE terminals ADD COLUMN last_seen_at TEXT`).catch(() => {});
+      });
+
       return {
         valid: true, merchantId: terminal.merchant_id, terminalId: terminal.terminal_id,
         name: terminal.name, offlineEnabled: Boolean(terminal.offline_enabled),
@@ -79,13 +90,18 @@ export class TerminalsService {
 
   async getTerminals() {
     const result = await db.query(
-      `SELECT id, merchant_id, terminal_id, name, offline_enabled, floor_limit, created_at
+      `SELECT id, merchant_id, terminal_id, name, offline_enabled, floor_limit, last_seen_at, created_at
        FROM terminals ORDER BY created_at DESC`
     );
     return (result.rows as any[]).map(row => ({
-      id: row.id, merchantId: row.merchant_id, terminalId: row.terminal_id,
-      name: row.name, offlineEnabled: Boolean(row.offline_enabled),
-      floorLimit: Number(row.floor_limit || 0), createdAt: row.created_at
+      id: row.id,
+      merchantId: row.merchant_id,
+      terminalId: row.terminal_id,
+      name: row.name,
+      offlineEnabled: Boolean(row.offline_enabled),
+      floorLimit: Number(row.floor_limit || 0),
+      lastBatchAt: row.last_seen_at || null,   // frontend uses lastBatchAt for ONLINE status
+      createdAt: row.created_at
     }));
   }
 }
