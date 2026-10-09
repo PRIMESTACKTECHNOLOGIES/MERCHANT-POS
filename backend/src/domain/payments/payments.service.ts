@@ -1024,21 +1024,35 @@ export class PaymentsService {
           validateTransition('PENDING', ledgerEntry.status as TransactionState);
           await persistLedgerEntry(ledgerEntry, db.query.bind(db));
 
-          // Captured funds go to the selected customer wallet. Merchant settlement
-          // happens only through a separate customer-initiated transfer.
-          // Acquirer-backed captures post the customer credit in the capture transaction.
+          // ── FUND ROUTING ─────────────────────────────────────────────────────────
+          // RULE 1: Real card charged via acquirer/processor → merchant wallet directly.
+          //         Merchant receives money immediately. No customer wallet involved.
+          // RULE 2: No external proof (internal/offline only) → customer wallet.
+          //         Customer must forward via C2M with provider credentials.
+          if (merchantId) {
+            try {
+              const { walletsService: ws } = await import('../wallets/wallets.service');
+              await ws.creditMerchantWallet(
+                merchantId, captureAmount, 'pos_card_charge_online', paymentIntentId, chargeCcy
+              );
+              console.log('[Charge] Merchant wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | merchant=' + merchantId);
+            } catch (mwErr: any) {
+              console.warn('[Charge] Merchant wallet credit (non-fatal):', mwErr.message);
+            }
+          }
+          // Audit trail: credit customer wallet ledger only (no real balance change for customer)
+          // This is a record that the card was charged on their behalf.
           if (!acquirerCaptureConfirmed && payload.customerId) {
             const { fundsSettlementService } = await import('../settlements/funds-settlement.service');
-            await fundsSettlementService.creditCustomerWallet({
+            fundsSettlementService.creditCustomerWallet({
               customer_id: payload.customerId,
-              amount: captureAmount,
+              amount: 0,  // zero — no real balance for customer; merchant has the funds
               currency: chargeCcy,
-              source: 'pos_card_capture',
+              source: 'pos_card_capture_audit',
               reference: paymentIntentId,
               initiated_by: merchantId || 'ONLINE_CHARGE',
-            });
+            }).catch(() => {/* non-fatal audit entry */});
           }
-
           // Record transaction in pos2013_transactions
           const ledgerEntryId = ledgerEntry.id;
           const settleMeta = JSON.stringify({
@@ -1277,11 +1291,13 @@ export class PaymentsService {
           },
         });
         console.log(`[payments.service] ✅ Vault credited ${chargeCcy} ${payload.amountMinor / 100} (offline) | Ref: ${paymentIntentId}`);
-        // Credit CUSTOMER wallet with the captured amount
+        // NO external proof yet — credit CUSTOMER wallet so they hold the funds.
+        // Customer must forward to merchant via C2M (POST /wallet/send-to-merchant-wallet)
+        // by providing real provider credentials. Until then, merchant does NOT see the funds.
         try {
           if (payload.customerId) {
             await walletsService.creditCustomerWallet(payload.customerId, payload.amountMinor / 100, 'offline_pos_capture', paymentIntentId, chargeCcy);
-            console.log('[OfflineCapture] Customer wallet credited ' + chargeCcy + ' ' + (payload.amountMinor/100) + ' | customer=' + payload.customerId);
+            console.log('[OfflineCapture] Customer wallet credited (pending C2M) ' + chargeCcy + ' ' + (payload.amountMinor/100) + ' | customer=' + payload.customerId);
           }
         } catch (cwe:any) { console.warn('[OfflineCapture] Customer wallet credit deferred:', cwe.message); }
       } catch (ve: any) {

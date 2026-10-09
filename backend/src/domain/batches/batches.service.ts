@@ -51,18 +51,21 @@ export class BatchesService {
 
   private async creditCapturedOfflineSale(
     customerId: string,
+    merchantId: string,
     transactionId: string,
     captureRef: string | undefined,
     amount: number,
     currency: string,
   ) {
-    return walletsService.creditCustomerWallet(
-        customerId,
-        amount,
-        'offline_batch_capture',
-        captureRef || transactionId,
-        currency,
-      );
+    // Processor confirmed the capture → real card funds confirmed.
+    // Credit MERCHANT wallet directly. Customer does not hold these funds.
+    return walletsService.creditMerchantWallet(
+      merchantId,
+      amount,
+      'offline_batch_capture',
+      captureRef || transactionId,
+      currency,
+    );
   }
 
   private inferSchemeFromBrandOrPan(brand: string | null, panMasked: string | null):
@@ -557,10 +560,10 @@ export class BatchesService {
       const capture = await this.processorLookupAndCapture(merchantId, txn);
       protocolEvents.push(...capture.events.map(e => ({ ...e, amountMinor: txn.amount_minor, currency: txn.currency })));
       if (capture.success) {
-        // Provider capture is confirmed. Credit the customer's wallet, not the merchant's.
+        // Provider capture confirmed → credit MERCHANT wallet directly (real card funds)
         protocolEvents.push({ code: P2013.WALLET_CREDIT_STARTED, at: stamp(), ref: txn.id, amountMinor: txn.amount_minor, currency: txn.currency });
         const walletCredit = await this.creditCapturedOfflineSale(
-          txn.customer_id, txn.id, capture.captureRef, txn.amount, txn.currency,
+          txn.customer_id, merchantId, txn.id, capture.captureRef, txn.amount, txn.currency,
         );
         protocolEvents.push({
           code: P2013.WALLET_CREDIT_SUCCESS,
@@ -785,7 +788,7 @@ export class BatchesService {
         const amount = Number(t.amount_minor) / 100;
         protocolEvents.push({ code: P2013.WALLET_CREDIT_STARTED, at: stamp(), ref: t.id, amountMinor: Number(t.amount_minor), currency: t.currency || "USD" });
         const wRes = await this.creditCapturedOfflineSale(
-          t.customer_id, t.id, capture.captureRef, amount, t.currency || "USD",
+          t.customer_id, merchantId, t.id, capture.captureRef, amount, t.currency || "USD",
         );
         const wOk = wRes.success;
         protocolEvents.push({ code: wOk ? P2013.WALLET_CREDIT_SUCCESS : P2013.WALLET_CREDIT_FAILED, at: stamp(), ref: wRes.transactionId || t.id, amountMinor: Number(t.amount_minor), currency: t.currency || "USD" });
