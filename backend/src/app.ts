@@ -126,8 +126,65 @@ app.post("/api/admin/reset-password", async (req: Request, res: Response) => {
     return res.status(500).json({ error: e.message });
   }
 });
-app.get("/", (_req, res, next) => {
-  if (process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') {
+const _frontendDist = (() => {
+  try {
+    const p = path.join(__dirname, '..', '..', 'client', 'dist');
+    return require('fs').existsSync(p) ? p : null;
+  } catch { return null; }
+})();
+
+const resolveAppConfigApiUrl = (): string => {
+  const v = (process.env.APP_CONFIG_API_URL || process.env.VITE_API_URL || process.env.API_URL || '').trim();
+  return v.replace(/\/+$/, '');
+};
+
+let _cachedIndexHtml: string | null = null;
+let _cachedIndexHtmlApiUrl: string | null = null;
+const serveInjectedIndexHtml = (res: Response) => {
+  if (!_frontendDist) {
+    return res.status(503).json({ ok: false, error: 'Frontend not built — client/dist missing' });
+  }
+  const fs = require('fs');
+  const apiUrl = resolveAppConfigApiUrl();
+  if (!_cachedIndexHtml || _cachedIndexHtmlApiUrl !== apiUrl) {
+    let raw = fs.readFileSync(path.join(_frontendDist, 'index.html'), 'utf8');
+    const payload = JSON.stringify({ api_url: apiUrl, built_at: new Date().toISOString() });
+    const tag = `<script id="__APP_CONFIG__">window.APP_CONFIG=${payload};</script>`;
+    if (raw.includes('id="__APP_CONFIG__"')) {
+      raw = raw.replace(/<script id="__APP_CONFIG__">[\s\S]*?<\/script>/, tag);
+    } else if (raw.includes('</head>')) {
+      raw = raw.replace('</head>', tag + '\n</head>');
+    } else if (raw.includes('<body')) {
+      raw = raw.replace(/<body[^>]*>/, (m: string) => tag + '\n' + m);
+    } else {
+      raw = tag + '\n' + raw;
+    }
+    _cachedIndexHtml = raw;
+    _cachedIndexHtmlApiUrl = apiUrl;
+  }
+  res.type('html');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.send(_cachedIndexHtml);
+};
+
+if ((process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') && _frontendDist) {
+  app.use(express.static(_frontendDist, {
+    index: false,
+    maxAge: '1d',
+    immutable: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      }
+    },
+  }));
+}
+
+app.get("/", (req, res, next) => {
+  if ((process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') && _frontendDist) {
+    return serveInjectedIndexHtml(res);
+  }
+  if (req.accepts('html') && (process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1')) {
     return next();
   }
   return res.json({
@@ -301,8 +358,10 @@ app.use('/api/batches', batchesRouter);
 app.use('/api/receipts', receiptsRouter);
 app.use('/api/cashouts', cashoutsRouter);
 app.use('/api/payouts/bank', payoutBankRouter);
+app.use('/api/payout', payoutBankRouter);          // alias: frontend uses /api/payout/*
 app.use('/api/payouts/crypto', payoutCryptoRouter);
 app.use('/api/payouts/mt103', mt103Router);
+app.use('/api/payout/mt103', mt103Router);         // alias: frontend uses /api/payout/mt103/*
 app.use('/api/payouts', unifiedPayoutsRouter);
 app.use('/api/ledger', ledgerRouter);
 app.use('/api/dashboard', dashboardRouter);
@@ -440,3 +499,20 @@ app.post('/webhooks/transak/kyc', express.json({ limit: '1mb' }), async (req: Re
     return res.status(200).json({ ok: true, acknowledged: true, eventID, kycStatus });
   } catch (e: any) { return res.status(200).json({ ok: true, error: 'acknowledged' }); }
 });
+
+if ((process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') && _frontendDist) {
+  app.get(/^\/(?!auth|api|merchant|wallet|webhooks|health).*$/, (_req: Request, res: Response) => {
+    return serveInjectedIndexHtml(res);
+  });
+  app.get("*", (req: Request, res: Response, next: NextFunction) => {
+    const p = req.path;
+    if (p.startsWith('/auth/') || p.startsWith('/api/') || p.startsWith('/merchant/') ||
+        p.startsWith('/wallet/') || p.startsWith('/webhooks/') || p === '/health') {
+      return next();
+    }
+    if (/\.[a-z0-9]{2,6}$/i.test(p)) {
+      return next();
+    }
+    return serveInjectedIndexHtml(res);
+  });
+}
