@@ -284,6 +284,9 @@ async function getDb(): Promise<any> {
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     role_id TEXT NOT NULL,
+    assigned_by TEXT,
+    assigned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT,
     expires_at TEXT,
     UNIQUE(user_id, role_id)
   )`);
@@ -327,6 +330,8 @@ async function getDb(): Promise<any> {
     `CREATE TABLE IF NOT EXISTS merchant_pos_settlements (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, ledger_entry_id TEXT, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL DEFAULT 'unsettled', settled_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, meta TEXT)`,
     `CREATE TABLE IF NOT EXISTS transaction_settlements (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, transaction_id TEXT NOT NULL, gross_amount REAL NOT NULL, fee_amount REAL NOT NULL DEFAULT 0, net_amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL DEFAULT 'SETTLED', settled_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS vault_ledger (id TEXT PRIMARY KEY, ts TEXT NOT NULL, type TEXT NOT NULL, merchant_id TEXT, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', reference TEXT, status TEXT NOT NULL DEFAULT 'PENDING', meta TEXT)`,
+    `CREATE TABLE IF NOT EXISTS vault_audit_trail (id TEXT PRIMARY KEY, ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, event_type TEXT NOT NULL, merchant_id TEXT, amount REAL, currency TEXT, reference TEXT, actor TEXT, description TEXT, meta TEXT)`,
+    `CREATE TABLE IF NOT EXISTS merchant_crypto_withdrawals (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, wallet_id TEXT, coin TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'mainnet', amount REAL NOT NULL, to_address TEXT NOT NULL, tx_hash TEXT, status TEXT NOT NULL DEFAULT 'PENDING', fee REAL DEFAULT 0, provider TEXT, provider_reference TEXT, error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS pos2013_batches (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL UNIQUE, merchant_id TEXT NOT NULL, terminal_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'OPEN', settlement_code TEXT, captured_amount_minor INTEGER DEFAULT 0, captured_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, processed_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
   ]) { try { _db.run(_tbl); } catch (_e) {} }
   _db.run(`CREATE TABLE IF NOT EXISTS vault_reserve (
@@ -935,11 +940,15 @@ async function getDb(): Promise<any> {
     ['terminals',                  'model TEXT'],
     ['terminals',                  'version TEXT'],
     ['terminals',                  'ip_address TEXT'],
-    // user_roles extended columns (added by init_tables but table pre-exists without them)
+    // user_roles extended columns
     ['user_roles', 'display_name TEXT'],
     ['user_roles', 'description TEXT'],
     ['user_roles', 'is_system_role INTEGER DEFAULT 0'],
     ['user_roles', 'priority INTEGER DEFAULT 0'],
+    // user_role_assignments extended columns
+    ['user_role_assignments', 'assigned_by TEXT'],
+    ['user_role_assignments', 'assigned_at TEXT DEFAULT CURRENT_TIMESTAMP'],
+    ['user_role_assignments', 'notes TEXT'],
     // merchant_crypto_withdrawals extra columns
     ['merchant_crypto_withdrawals', 'network TEXT'],
     ['merchant_crypto_withdrawals', 'fee REAL DEFAULT 0'],
