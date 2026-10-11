@@ -40,4 +40,13 @@ router.post("/inbound", authenticateToken, paymentsController.registerInboundTra
 router.post("/inbound/:id/link-card", authenticateToken, paymentsController.linkInboundCardDetails.bind(paymentsController));
 router.post("/inbound/:id/verify-funds", authenticateToken, paymentsController.verifyInboundFunds.bind(paymentsController));
 
+// ─── 101.1 Voice Auth — settlement log ───────────────────────────────────────
+router.get('/voice-auth/pending/:merchantId', authenticateToken, async (req, res) => {
+  try {
+    const { getVoiceAuthPendingSettlement } = await import('./voiceAuth.service');
+    const rows = await getVoiceAuthPendingSettlement(req.params.merchantId);
+    res.json({ ok: true, count: rows.length, transactions: rows });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export { router as paymentsRouter };

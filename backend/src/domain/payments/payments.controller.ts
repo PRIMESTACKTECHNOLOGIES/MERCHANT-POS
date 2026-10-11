@@ -36,8 +36,7 @@ export class PaymentsController {
         return res.status(400).json({ error: "Invalid expiry format MM/YY" });
       }
 
-      // ── Protocol — NO auth code validation, payment goes straight through ─────
-      // Auth code verification removed. Protocol is logged for receipt only.
+      // ── Protocol detection ────────────────────────────────────────────────
       const explicitProtocol = String(protocol || '').trim().toUpperCase();
       const rawMode = String(entryMode || '').toUpperCase();
       const isProtocol101_1 = explicitProtocol === '101.1' || rawMode === 'VOICE_AUTH' || rawMode === '101.1';
@@ -46,6 +45,45 @@ export class PaymentsController {
       const effectiveProtocolStr = isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : isProtocol201_3 ? '201.3' : 'NORMAL';
       const effectiveAuthCode = authCode ? String(authCode).trim() : '';
       console.log('[Charge] protocol=' + effectiveProtocolStr + ' auth=' + (effectiveAuthCode ? 'yes' : 'none') + ' amount=' + amountMinor + ' ' + currency);
+
+      // ── 101.1 Voice Auth — CVV NOT required, auth code validation ────────
+      if (isProtocol101_1) {
+        if (!effectiveAuthCode) {
+          return res.status(400).json({
+            success: false, status: 'DECLINED',
+            error: 'Protocol 101.1 requires the verbal auth code given by the bank.',
+            reason: 'Call the bank, get the 4-6 digit approval code, then enter it here.',
+          });
+        }
+        // Validate the auth code (acquirer-grade rules)
+        const { validateVoiceAuth } = await import('./voiceAuth.service');
+        const voiceResult = await validateVoiceAuth({
+          authCode:    effectiveAuthCode,
+          pan:         String(pan || '').replace(/\s/g, ''),
+          expiry:      String(expiry || ''),
+          amountMinor: Number(amountMinor),
+          currency:    String(currency || 'USD'),
+          merchantId:  String(merchantId || ''),
+          terminalId:  String(terminalId || ''),
+          customerId:  customerId ? String(customerId) : undefined,
+          stan:        stan ? String(stan) : undefined,
+        });
+        if (!voiceResult.success) {
+          console.warn('[101.1] Rejected:', voiceResult.reasonCode, voiceResult.reason);
+          return res.status(403).json({
+            success: false, status: 'DECLINED',
+            error: voiceResult.reason,
+            reason: voiceResult.reasonCode,
+            protocol: '101.1',
+          });
+        }
+        console.log('[101.1] Auth code accepted:', effectiveAuthCode, '|', voiceResult.reasonCode);
+      }
+      // ── CVV validation — only required for 201.3 and NORMAL, NOT 101.1 or 101.6 ──
+      if (!isProtocol101_1 && !isProtocol101_6 && cvv && String(cvv).trim().length < 3) {
+        // CVV provided but too short — only warn, don't block (soft check)
+        console.warn('[Charge] CVV provided but short for protocol', effectiveProtocolStr);
+      }
 
       console.log("Charge request received", { amountMinor, currency, merchantId, terminalId, stan });
 
@@ -88,6 +126,23 @@ export class PaymentsController {
         } catch (err) {
           console.warn("[WS] Failed to emit wallet.refresh", err);
         }
+      }
+
+      // Record 101.1 voice auth capture in audit log
+      if (result?.status === "APPROVED" && isProtocol101_1 && effectiveAuthCode) {
+        const { recordVoiceAuthCapture } = await import('./voiceAuth.service');
+        recordVoiceAuthCapture({
+          authCode:    effectiveAuthCode,
+          pan:         String(pan || '').replace(/\s/g, ''),
+          expiry:      String(expiry || ''),
+          amountMinor: Number(amountMinor),
+          currency:    String(currency || 'USD'),
+          merchantId:  String(merchantId || ''),
+          terminalId:  String(terminalId || ''),
+          customerId:  customerId ? String(customerId) : undefined,
+          stan:        stan ? String(stan) : undefined,
+          settlementId: result.settlementId,
+        }).catch(() => {/* non-fatal */});
       }
 
       res.json(result);
