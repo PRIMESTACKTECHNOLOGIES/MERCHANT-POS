@@ -23,6 +23,7 @@ import {
   generateLocalTxnId,
 } from '../lib/crypto';
 import type { Customer, Settings } from '../lib/api';
+import { getTerminalCurrency } from '../lib/currencies';
 import { TerminalRiskManagement } from "../lib/emv/terminal-risk-management";
 import { processEMVOffline } from '../lib/emv/emv-pos-bridge';
 import { useToast } from '../components/ui/toastContext';
@@ -316,7 +317,7 @@ export const POSPage = () => {
         saveOfflineWalletPayment({
           customerId: selectedCustomer.id,
           amount: amountVal,
-          currency: "USD",
+          currency: getTerminalCurrency(),
           stan,
           terminalId: settings?.terminal_id || "T2013-0001",
           merchantId: settings?.merchant_id || "MRC-1001",
@@ -389,7 +390,7 @@ export const POSPage = () => {
     const txn = {
       localTxnId,
       amountMinor: Math.round(amountVal * 100),
-      currency: "USD",
+      currency: getTerminalCurrency(),
       timestamp,
       stan: currentStan,
       pan: cardData.pan.replace(/\s/g, ''),

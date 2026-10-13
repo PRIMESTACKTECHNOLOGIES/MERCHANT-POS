@@ -8,6 +8,7 @@ import { syncOfflinePreflight, type PreflightPayload } from './offline-decline-p
 import type { OnlineAuthorizationResult } from './pos-decision.service';
 import { captureCardTransaction } from '../../services/payments/cardCapture';
 import { v4 as uuidv4 } from 'uuid';
+import { buildTransactionIdentity } from './transaction-identity';
 
 interface PosTransactionPayload extends PreflightPayload {
   customerId?:      string;
@@ -238,7 +239,9 @@ export class PaymentsService {
           status: 'APPROVED',
           processor: { approved: true, code: result.approvalCode, reason: 'Acquirer approved' },
           authCode: result.approvalCode,
+          authCodeSource: 'EXTERNAL_ACQUIRER',
           paymentIntentId: result.authRef,
+          rrn: result.authRef,
         };
       } catch (error: any) {
         const message = error?.response?.data?.message || error?.message || 'Acquirer authorization failed';
@@ -358,6 +361,7 @@ export class PaymentsService {
           status: 'PENDING_CAPTURE',
           processor: { approved: false, reason: 'Provider authorization was not an explicit capture confirmation' },
           authCode,
+          authCodeSource: 'EXTERNAL_PROCESSOR',
           paymentIntentId,
           error: 'Provider authorization is not proof of captured funds.',
         };
@@ -368,6 +372,7 @@ export class PaymentsService {
         status: 'CAPTURED',
         processor: { approved: true, code: authCode, reason: 'Processor approved' },
         authCode,
+        authCodeSource: 'EXTERNAL_PROCESSOR',
         paymentIntentId,
       };
     } catch (err: any) {
@@ -387,8 +392,10 @@ export class PaymentsService {
   }
 
   private async acceptForBankBatch(payload: PosTransactionPayload): Promise<PosTransactionResult> {
+    const nowDate = new Date();
+    const identBatch = buildTransactionIdentity(payload.pan, { now: nowDate });
     const processorReference = `POS-${uuidv4().replace(/-/g, '').slice(0, 20).toUpperCase()}`;
-    const now = new Date().toISOString();
+    const now = nowDate.toISOString();
     const merchantId = payload.merchantId || '';
     const terminalId = payload.terminalId || '';
     const panMasked = payload.pan
@@ -400,8 +407,8 @@ export class PaymentsService {
       `INSERT INTO pos2013_transactions
         (id, merchant_id, terminal_id, batch_id, local_txn_id, stan,
          amount_minor, currency, pan_masked, txn_type, auth_mode, entry_mode,
-         status, emv_data, txn_timestamp, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SALE', 'STANDALONE_PROCESSOR', ?, 'PENDING', ?, ?, ?)` ,
+         status, emv_data, txn_timestamp, created_at, rrn, card_brand, auth_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SALE', 'STANDALONE_PROCESSOR', ?, 'PENDING', ?, ?, ?, ?, ?, ?)` ,
       [
         processorReference,
         merchantId,
@@ -416,6 +423,9 @@ export class PaymentsService {
         payload.emv ? JSON.stringify(payload.emv) : null,
         now,
         now,
+        identBatch.rrn,
+        identBatch.cardBrand,
+        identBatch.authCode,
       ]
     );
 
@@ -503,12 +513,14 @@ export class PaymentsService {
         };
         await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
         // Audit decline (no wallet credit, no settlement row, but log declined tx for reconciliation)
-        const declineId = `decl_${Date.now().toString(36)}`;
+        const nowDecl = new Date();
+        const identDecl = buildTransactionIdentity(payload.pan, { now: nowDecl });
+        const declineId = `decl_${nowDecl.getTime().toString(36)}`;
         await db.query(
           `INSERT OR IGNORE INTO pos2013_transactions
             (id, merchant_id, terminal_id, local_txn_id, stan, amount_minor, currency,
-             pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, decline_reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, decline_reason, rrn, card_brand)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             declineId,
             merchantId,
@@ -525,6 +537,8 @@ export class PaymentsService {
             'DECLINED',
             new Date().toISOString(),
             `[${preflight.code}] ${preflight.reason}`,
+            identDecl.rrn,
+            identDecl.cardBrand,
           ]
         );
         return resp;
@@ -632,7 +646,13 @@ export class PaymentsService {
       if (needsOnline) {
         const online = await this.authorizeOnlineCharge(payload);
         if (!online.success && online.status === 'PENDING_CAPTURE') {
-          const paymentIntentId = online.paymentIntentId || online.authCode || `pending_${Date.now().toString(36)}`;
+          const nowPc = new Date();
+          const identPc = buildTransactionIdentity(payload.pan, {
+            rrn: online.rrn,
+            authCode: online.authCode,
+            now: nowPc,
+          });
+          const paymentIntentId = online.paymentIntentId || online.authCode || `pending_${nowPc.getTime().toString(36)}`;
           const pending: PosTransactionResult = {
             success: false,
             status: 'PENDING',
@@ -641,7 +661,7 @@ export class PaymentsService {
             amountMinor: payload.amountMinor,
             currency: payload.currency,
             processor: processorName,
-            authCode: online.authCode,
+            authCode: identPc.authCode,
             error: 'Provider authorization was received, but capture was not confirmed. No wallet was credited.',
             reason: online.error,
           };
@@ -649,13 +669,14 @@ export class PaymentsService {
             `INSERT OR IGNORE INTO pos2013_transactions
               (id, merchant_id, customer_id, terminal_id, batch_id, local_txn_id, stan,
                amount_minor, currency, pan_masked, txn_type, auth_mode,
-               entry_mode, auth_code, status, txn_timestamp, decline_reason)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PURCHASE', 'online', ?, ?, 'PENDING_CAPTURE', ?, ?)`,
+               entry_mode, auth_code, status, txn_timestamp, decline_reason, rrn, card_brand)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PURCHASE', 'online', ?, ?, 'PENDING_CAPTURE', ?, ?, ?, ?)`,
             [
               paymentIntentId, merchantId, payload.customerId, payload.terminalId || '', `batch-${paymentIntentId}`,
               paymentIntentId, payload.stan || '', payload.amountMinor, payload.currency || 'USD',
               payload.pan ? `${'*'.repeat(Math.max(payload.pan.length - 4, 0))}${payload.pan.slice(-4)}` : null,
-              payload.emv ? 'CHIP' : 'MANUAL', online.authCode || null, new Date().toISOString(), online.error,
+              payload.emv ? 'CHIP' : 'MANUAL', identPc.authCode, new Date().toISOString(), online.error,
+              identPc.rrn, identPc.cardBrand,
             ],
           );
           await this.saveIdempotencyResult(idempotencyKey, pending);
@@ -676,10 +697,13 @@ export class PaymentsService {
           return resp;
         }
         if (!online.success) {
-          // ── SELF-APPROVAL FALLBACK ──────────────────────────────────────────────
-          // If processor not configured (RC 96 / CONFIGURATION_ERROR) or unreachable,
-          // self-approve the charge. We ARE the processor on this POS system.
-          // Any other decline (e.g. RC 05 card declined) → still hard decline.
+          // ── ACQUIRER FAILURE HANDLING ──────────────────────────────────────────
+          // Previously, unreachable/unconfigured acquirer triggered SELF-APPROVAL,
+          // which credited the merchant wallet from thin air (no real card debit).
+          // For REAL transactions, the acquirer MUST validate + debit the card.
+          // If it fails, we DECLINE — no money from thin air.
+          // Set ALLOW_SELF_APPROVAL=true only for local testing (never production).
+          const allowSelfApproval = String(process.env.ALLOW_SELF_APPROVAL || '').toLowerCase() === 'true';
           const isCfgError = !online.status ||
             ['CONFIGURATION_ERROR', 'ERROR', 'SYSTEM_MALFUNCTION'].includes(String(online.status).toUpperCase()) ||
             String(online.error || '').includes('not configured') ||
@@ -688,18 +712,22 @@ export class PaymentsService {
             String(online.error || '').includes('ECONNREFUSED') ||
             String(online.error || '').includes('ETIMEDOUT') ||
             String(online.error || '').includes('ENOTFOUND');
-          if (isCfgError) {
-            // Self-approve — processor not reachable, POS acts as its own acquirer
-            console.log('[Charge] Processor unreachable/unconfigured — self-approving as internal acquirer');
+          if (isCfgError && allowSelfApproval) {
+            // Self-approve ONLY when explicitly enabled for testing
+            console.log('[Charge] Processor unreachable/unconfigured — self-approving (ALLOW_SELF_APPROVAL=true, TEST ONLY)');
           } else {
-            // Processor explicitly declined → HARD DECLINE
+            // Acquirer failed or declined → HARD DECLINE (no wallet credit)
+            const declineReason = isCfgError
+              ? 'Acquirer unreachable or misconfigured — transaction declined (no self-approval in production)'
+              : (online.error || 'Card declined by processor.');
             const denied: PosTransactionResult = {
               success: false, status: 'DECLINED', channel: 'ONLINE',
               amountMinor: payload.amountMinor, currency: payload.currency,
               processor: processorName,
-              error: online.error || 'Card declined by processor.',
+              error: declineReason,
               reason: online.status || 'DECLINED',
             };
+            console.warn(`[Charge] Declined — acquirer did not approve. status=${online.status} error=${online.error}`);
             await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), denied);
             return denied;
           }
@@ -710,8 +738,16 @@ export class PaymentsService {
 
         if (skipOfflineBranch) {
           // On approved online auth, record auth details and proceed to settlement/ledger
-          const paymentIntentId = online.paymentIntentId || `onl_${Date.now().toString(36)}`;
-          const authCode = online.authCode || `AUTH-${Date.now().toString(36).toUpperCase()}`;
+          const nowOnline = new Date();
+          const identity = buildTransactionIdentity(payload.pan, {
+            rrn: online.rrn,
+            authCode: online.authCode,
+            now: nowOnline,
+          });
+          const paymentIntentId = online.paymentIntentId || `onl_${nowOnline.getTime().toString(36)}`;
+          const authCode = identity.authCode; // real acquirer code or generated 6-char code
+          const txnRrn = identity.rrn;
+          const cardBrand = identity.cardBrand;
           const chargeCcy = (payload.currency || 'USD').toUpperCase();
           const captureAmount = payload.amountMinor / 100;
 
@@ -802,8 +838,8 @@ export class PaymentsService {
             await db.query(
               `INSERT OR IGNORE INTO pos2013_transactions
                 (id, merchant_id, customer_id, terminal_id, batch_id, local_txn_id, stan, amount_minor, currency,
-                 pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PURCHASE', 'online', ?, ?, 'APPROVED', ?)`,
+                 pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, rrn, card_brand)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PURCHASE', 'online', ?, ?, 'APPROVED', ?, ?, ?)`,
               [
                 paymentIntentId,
                 merchantId,
@@ -818,6 +854,8 @@ export class PaymentsService {
                 payload.emv ? 'CHIP' : 'MANUAL',
                 authCode,
                 new Date().toISOString(),
+                txnRrn,
+                cardBrand,
               ]
             );
 
@@ -840,6 +878,7 @@ export class PaymentsService {
               currency: payload.currency,
               processor: `INBOUND_${String(matchedInbound.protocol || resolvedProtocol).toUpperCase().replace(/\./g, '_')}`,
               authCode,
+              authCodeSource: 'EXTERNAL_ACQUIRER',
               settlementId: settleId,
               merchantWalletBalance: captureResult.merchantBalance,
               inboundRegistrationId: matchedInbound.id,
@@ -889,8 +928,8 @@ export class PaymentsService {
                 `INSERT OR IGNORE INTO pos2013_transactions
                   (id, merchant_id, customer_id, terminal_id, batch_id, local_txn_id, stan,
                    amount_minor, currency, pan_masked, txn_type, auth_mode,
-                   entry_mode, auth_code, status, txn_timestamp, decline_reason)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PURCHASE', 'online', ?, ?, 'PENDING_CAPTURE', ?, ?)`,
+                   entry_mode, auth_code, status, txn_timestamp, decline_reason, rrn, card_brand)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PURCHASE', 'online', ?, ?, 'PENDING_CAPTURE', ?, ?, ?, ?)`,
                 [
                   paymentIntentId,
                   merchantId,
@@ -906,6 +945,8 @@ export class PaymentsService {
                   authCode,
                   new Date().toISOString(),
                   message,
+                  txnRrn,
+                  cardBrand,
                 ],
               );
               await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), pending);
@@ -926,33 +967,30 @@ export class PaymentsService {
           await persistLedgerEntry(ledgerEntry, db.query.bind(db));
 
           // ── FUND ROUTING ─────────────────────────────────────────────────────────
-          // RULE 1: Real card charged via acquirer/processor → merchant wallet directly.
-          //         Merchant receives money immediately. No customer wallet involved.
-          // RULE 2: No external proof (internal/offline only) → customer wallet.
-          //         Customer must forward via C2M with provider credentials.
-          if (merchantId) {
+          // Card charged → credit CUSTOMER wallet directly.
+          // Merchant wallet is NOT credited here — card funds belong to the customer.
+          // Merchant receives funds later via C2M (customer sends to merchant).
+          if (payload.customerId) {
+            try {
+              const { walletsService: ws } = await import('../wallets/wallets.service');
+              await ws.creditCustomerWallet(
+                payload.customerId, captureAmount, 'pos_card_charge_online', paymentIntentId, chargeCcy
+              );
+              console.log('[Charge] Customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + payload.customerId);
+            } catch (cwErr: any) {
+              console.warn('[Charge] Customer wallet credit (non-fatal):', cwErr.message);
+            }
+          } else {
+            // No customer selected — credit merchant wallet as fallback
             try {
               const { walletsService: ws } = await import('../wallets/wallets.service');
               await ws.creditMerchantWallet(
-                merchantId, captureAmount, 'pos_card_charge_online', paymentIntentId, chargeCcy
+                merchantId, captureAmount, 'pos_card_charge_online_no_customer', paymentIntentId, chargeCcy
               );
-              console.log('[Charge] Merchant wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | merchant=' + merchantId);
+              console.log('[Charge] No customer — merchant wallet credited: ' + chargeCcy + ' ' + captureAmount);
             } catch (mwErr: any) {
-              console.warn('[Charge] Merchant wallet credit (non-fatal):', mwErr.message);
+              console.warn('[Charge] Merchant wallet credit fallback (non-fatal):', mwErr.message);
             }
-          }
-          // Audit trail: credit customer wallet ledger only (no real balance change for customer)
-          // This is a record that the card was charged on their behalf.
-          if (!acquirerCaptureConfirmed && payload.customerId) {
-            const { fundsSettlementService } = await import('../settlements/funds-settlement.service');
-            fundsSettlementService.creditCustomerWallet({
-              customer_id: payload.customerId,
-              amount: 0,  // zero — no real balance for customer; merchant has the funds
-              currency: chargeCcy,
-              source: 'pos_card_capture_audit',
-              reference: paymentIntentId,
-              initiated_by: merchantId || 'ONLINE_CHARGE',
-            }).catch(() => {/* non-fatal audit entry */});
           }
           // Record transaction in pos2013_transactions
           const ledgerEntryId = ledgerEntry.id;
@@ -971,8 +1009,8 @@ export class PaymentsService {
           await db.query(
             `INSERT OR IGNORE INTO pos2013_transactions
               (id, merchant_id, customer_id, terminal_id, batch_id, local_txn_id, stan, amount_minor, currency,
-               pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, emv_data)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, emv_data, rrn, card_brand)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               paymentIntentId,
               merchantId,
@@ -994,7 +1032,10 @@ export class PaymentsService {
               JSON.stringify({
                 cardholder_name: payload.cardholderName || payload.cardholder_name || null,
                 customer_name:   payload.cardholderName || payload.cardholder_name || null,
+                auth_code_source: online.authCodeSource || 'EXTERNAL_ACQUIRER',
               }),
+              txnRrn,
+              cardBrand,
             ]
           );
 
@@ -1019,6 +1060,7 @@ export class PaymentsService {
             currency: payload.currency,
             processor: 'ONLINE',
             authCode,
+            authCodeSource: online.authCodeSource || 'EXTERNAL_ACQUIRER',
             settlementId: settleId,
             reason: 'POS transaction approved online',
           };
@@ -1097,12 +1139,14 @@ export class PaymentsService {
           reason: '[OFFLINE_NOT_AUTH] Card not EMV-offline-approved (no TC) and terminal offline=OFF. Require online authorization or correct EMV data.',
         };
         await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
-        const declineId = `decl_off_${Date.now().toString(36)}`;
+        const nowOffDecl = new Date();
+        const identOffDecl = buildTransactionIdentity(payload.pan, { now: nowOffDecl });
+        const declineId = `decl_off_${nowOffDecl.getTime().toString(36)}`;
         await db.query(
           `INSERT OR IGNORE INTO pos2013_transactions
             (id, merchant_id, terminal_id, local_txn_id, stan, amount_minor, currency,
-             pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, decline_reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, decline_reason, rrn, card_brand)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             declineId,
             merchantId,
@@ -1119,6 +1163,8 @@ export class PaymentsService {
             'DECLINED',
             new Date().toISOString(),
             resp.reason || 'Offline not authorized',
+            identOffDecl.rrn,
+            identOffDecl.cardBrand,
           ]
         );
         return resp;
@@ -1127,8 +1173,12 @@ export class PaymentsService {
       // âœ… Genuine offline EMV approval (TC) or terminal config allowed it.
       //    This is NOT a demo/mock stand-in â€” it's the real EMV-compliant offline path
       //    per your OFFLINE POS TRANSACTION LIFECYCLE flowchart.
-      const paymentIntentId = `offline_${Date.now().toString(36)}`;
-      const authCode = `EMV-${Date.now().toString(36).toUpperCase()}`;
+      const nowOff = new Date();
+      const identOff = buildTransactionIdentity(payload.pan, { now: nowOff });
+      const paymentIntentId = `offline_${nowOff.getTime().toString(36)}`;
+      const authCode = identOff.authCode; // real 6-char issuer-style approval code
+      const txnRrnOff = identOff.rrn;
+      const cardBrandOff = identOff.cardBrand;
 
       const ledgerEntry = createLedgerEntry(
         paymentIntentId,
@@ -1220,12 +1270,13 @@ export class PaymentsService {
       const batchIdOff = `batch-${paymentIntentId.slice(0, 12)}`;
       await db.query(
         `INSERT OR IGNORE INTO pos2013_transactions
-          (id, merchant_id, terminal_id, batch_id, local_txn_id, stan, amount_minor, currency,
-           pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, merchant_id, customer_id, terminal_id, batch_id, local_txn_id, stan, amount_minor, currency,
+           pan_masked, txn_type, auth_mode, entry_mode, auth_code, status, txn_timestamp, rrn, card_brand, emv_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           paymentIntentId,
           merchantId,
+          payload.customerId || null,
           payload.terminalId || '',
           batchIdOff,
           paymentIntentId,
@@ -1239,6 +1290,13 @@ export class PaymentsService {
           authCode,
           'APPROVED',
           new Date().toISOString(),
+          txnRrnOff,
+          cardBrandOff,
+          JSON.stringify({
+            cardholder_name: payload.cardholderName || payload.cardholder_name || null,
+            customer_name:   payload.cardholderName || payload.cardholder_name || null,
+            auth_code_source: 'INTERNAL_GENERATED',
+          }),
         ]
       );
 
@@ -1263,6 +1321,7 @@ export class PaymentsService {
         currency: payload.currency,
         processor: processorName,
         authCode,
+        authCodeSource: 'INTERNAL_GENERATED',
         settlementId: settleIdOff,
         reason: 'POS transaction approved offline',
       };
