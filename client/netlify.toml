@@ -13,4 +13,4 @@
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "no-referrer"
-    Access-Control-Allow-Origin = "https://merchant-pos-0nno.onrender.com"
+    Access-Control-Allow-Origin = "https://vault-bank-6jcj.onrender.com"

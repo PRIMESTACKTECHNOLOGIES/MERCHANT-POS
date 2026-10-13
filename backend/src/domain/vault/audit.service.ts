@@ -31,8 +31,13 @@ function canonical(value: unknown): string {
 
 export async function appendVaultAudit(input: VaultAuditInput) {
   const ts = new Date().toISOString();
-  const previous = await db.query(`SELECT hash FROM vault_audit_trail ORDER BY rowid DESC LIMIT 1`);
-  const prevHash = previous.rows?.[0]?.hash || null;
+  let prevHash: string | null = null;
+  try {
+    const previous = await db.query(`SELECT hash FROM vault_audit_trail ORDER BY rowid DESC LIMIT 1`);
+    prevHash = previous.rows?.[0]?.hash || null;
+  } catch (_) {
+    // hash column may not exist on old schema — safe to continue with null
+  }
   const payload = {
     actor: input.actor,
     event: input.event,

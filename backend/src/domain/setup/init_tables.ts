@@ -648,13 +648,18 @@ export const initTables = async () => {
       }
 
       // Seed default withdrawal limits for merchants
-      const limitRes = await db.query("SELECT * FROM withdrawal_limits WHERE entity_type = ? AND limit_type = ?", ['merchant', 'daily_limit']);
-      if (limitRes.rowCount === 0) {
-        await db.query(`
-          INSERT INTO withdrawal_limits (id, merchant_id, entity_type, limit_type, limit_amount, currency, period_type, period_start, period_end)
-          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+1 day'))
-        `, [uuidv4(), 'MRC-1001', 'merchant', 'daily_limit', 100000.00, 'USD', 'daily']);
-        console.log(`âœ… Created default withdrawal limit: $100,000/day for MRC-1001`);
+      try {
+        const limitRes = await db.query("SELECT * FROM withdrawal_limits WHERE entity_type = ? AND limit_type = ?", ['merchant', 'daily_limit']);
+        if (limitRes.rowCount === 0) {
+          await db.query(`
+            INSERT INTO withdrawal_limits (id, merchant_id, entity_type, limit_type, limit_amount, currency, period_type, period_start, period_end)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+1 day'))
+          `, [uuidv4(), 'MRC-1001', 'merchant', 'daily_limit', 100000.00, 'USD', 'daily']);
+          console.log(`✅ Created default withdrawal limit: $100,000/day for MRC-1001`);
+        }
+      } catch (_wlErr) {
+        // withdrawal_limits table may not exist yet — will be created later in init_tables
+        // and seeded on next startup. Non-fatal.
       }
     }
 
@@ -1903,6 +1908,20 @@ export const initTables = async () => {
         prev_hash TEXT
       )
     `);
+    // ── Migration: add missing columns to vault_audit_trail for older DBs ──
+    for (const [col, def] of [
+      ['hash',        'TEXT'],
+      ['prev_hash',   'TEXT'],
+      ['before_json', "TEXT NOT NULL DEFAULT '{}'"],
+      ['after_json',  "TEXT NOT NULL DEFAULT '{}'"],
+      ['meta_json',   "TEXT NOT NULL DEFAULT '{}'"],
+      ['actor',       'TEXT'],
+      ['event',       'TEXT'],
+    ] as [string, string][]) {
+      try {
+        await db.query(`ALTER TABLE vault_audit_trail ADD COLUMN ${col} ${def}`);
+      } catch (_) { /* column already exists — ignore */ }
+    }
     // Keep the canonical dashboard models populated from the existing POS
     // tables without duplicating rows on subsequent startups.
     try {
