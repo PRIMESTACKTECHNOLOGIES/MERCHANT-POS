@@ -1,4 +1,4 @@
-﻿/**
+/**
  * HTTP JSON Acquirer Client
  * ─────────────────────────────────────────────────────────────────────────────
  * Production implementation of IAcquirerClient over HTTPS/JSON.
@@ -51,7 +51,7 @@ export class HttpAcquirerClient implements IAcquirerClient {
 
   // ── Authorize ───────────────────────────────────────────────────────────────
   async authorize(req: AcquirerAuthRequest): Promise<AcquirerAuthResponse> {
-    const url = `${this.baseUrl}/card/authorize`;
+    const url = `${this.baseUrl}/api/vault/card/authorize`;
 
     try {
       const res = await axios.post(url, {
@@ -96,7 +96,7 @@ export class HttpAcquirerClient implements IAcquirerClient {
 
   // ── Capture ─────────────────────────────────────────────────────────────────
   async capture(req: AcquirerCaptureRequest): Promise<AcquirerCaptureResponse> {
-    const url = `${this.baseUrl}/card/capture`;
+    const url = `${this.baseUrl}/api/vault/card/capture`;
 
     try {
       const res = await axios.post(url, {
@@ -135,7 +135,7 @@ export class HttpAcquirerClient implements IAcquirerClient {
 
   // ── Reverse ─────────────────────────────────────────────────────────────────
   async reverse(req: AcquirerReversalRequest): Promise<AcquirerReversalResponse> {
-    const url = `${this.baseUrl}/card/reverse`;
+    const url = `${this.baseUrl}/api/vault/card/reverse`;
 
     try {
       const res = await axios.post(url, {
@@ -169,10 +169,13 @@ export class HttpAcquirerClient implements IAcquirerClient {
 // ── Singleton ─────────────────────────────────────────────────────────────────
 let _client: HttpAcquirerClient | null = null;
 
-export function getAcquirerClient(): any {
+export function getAcquirerClient(): IAcquirerClient {
   if ((process.env.ACQUIRER_PROTOCOL || '').toLowerCase() === 'iso8583-tcp') {
     const { VaultBankAcquirerClient } = require('../../domain/payments/acquirer/vault-bank-acquirer.client');
     return new VaultBankAcquirerClient();
+  }
+  if (!_client) {
+    _client = new HttpAcquirerClient();
   }
   return _client;
 }

@@ -35,7 +35,10 @@ export type OnlineAuthorizationResult = {
   status: string;
   processor: PosDecisionResult['processor'];
   authCode?: string;
+  /** Source of the auth code: 'EXTERNAL_ACQUIRER' (Vault Bank TCP), 'EXTERNAL_PROCESSOR' (HTTP processor), or 'INTERNAL_GENERATED' (self-approval fallback) */
+  authCodeSource?: 'EXTERNAL_ACQUIRER' | 'EXTERNAL_PROCESSOR' | 'INTERNAL_GENERATED';
   paymentIntentId?: string;
+  rrn?: string;
   error?: string;
 };
 
@@ -560,6 +563,7 @@ export class PosDecisionService {
             status: 'APPROVED',
             processor: { approved: true, code: result.approvalCode, reason: 'Acquirer approved via Vault Bank TCP socket' },
             authCode: result.approvalCode,
+            authCodeSource: 'EXTERNAL_ACQUIRER',
             paymentIntentId: result.authRef,
           };
         } catch (acqErr: any) {
@@ -603,6 +607,7 @@ export class PosDecisionService {
             processorId: data?.processorId || data?.paymentIntentId || data?.id || undefined
           },
           authCode: data?.authCode || data?.authorizationCode || undefined,
+          authCodeSource: 'EXTERNAL_PROCESSOR',
           paymentIntentId: data?.paymentIntentId || data?.processorId || data?.id || undefined
         };
       }

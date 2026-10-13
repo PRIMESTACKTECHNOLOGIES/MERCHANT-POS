@@ -11,6 +11,7 @@ import { startDeferredBroadcastWorker, stopDeferredBroadcastWorker } from "./wor
 import { flushDb } from "./config/db";
 import { startVaultReconciliationWorker, stopVaultReconciliationWorker } from "./workers/vaultReconciliation.worker";
 import { startVaultLiquidityWorker, stopVaultLiquidityWorker } from "./workers/vaultLiquidity.worker";
+import { ensureOperatorCards } from "./domain/vault/cardBalance.service";
 
 const PORT = parseInt(
   (process.env.PORT_OVERRIDE || process.env.PORT || '7000').toString(),
@@ -29,6 +30,13 @@ console.log('[server] DB path:', dbPath);
 
 const start = async () => {
   await initTables();
+  // Ensure operator card balance rows exist (zero-balance by default;
+  // SEED_OPERATOR_CARD_BALANCE=true enables controlled test funding).
+  try {
+    await ensureOperatorCards();
+  } catch (e: any) {
+    console.error('[server] ensureOperatorCards failed:', e?.message || e);
+  }
   const server = http.createServer(app);
   initWsServer(server);
   server.listen(PORT, '0.0.0.0', () => {

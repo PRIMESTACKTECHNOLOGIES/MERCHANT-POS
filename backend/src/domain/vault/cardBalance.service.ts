@@ -305,3 +305,58 @@ export async function exportCardAccountsForSettlement(): Promise<Record<string, 
   }
   return result;
 }
+
+/**
+ * Ensure operator card balance rows exist (usd / eur / aed).
+ * Does NOT credit any money — only creates zero-balance rows so that
+ * debitCard() throws NO_CARD_BALANCE instead of working on phantom data.
+ *
+ * Controlled test seeding: if SEED_OPERATOR_CARD_BALANCE=true is set,
+ * credits each operator card with SEED_OPERATOR_CARD_AMOUNT (default 10,000)
+ * in its native currency. This is for local/test/demo environments only and
+ * is disabled by default in production.
+ */
+export async function ensureOperatorCards(): Promise<void> {
+  await ensureTables();
+  const now = new Date().toISOString();
+
+  const operatorCards = [
+    { cardId: 'usd', currency: 'USD' },
+    { cardId: 'eur', currency: 'EUR' },
+    { cardId: 'aed', currency: 'AED' },
+  ];
+
+  for (const { cardId, currency } of operatorCards) {
+    const existing = (await db.query(
+      'SELECT id FROM vault_card_balances WHERE card_id = ? AND currency = ? LIMIT 1',
+      [cardId, currency]
+    )).rows[0] as any;
+
+    if (!existing) {
+      await db.query(
+        'INSERT INTO vault_card_balances (id, card_id, currency, balance, reserved, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, ?)',
+        [uuidv4(), cardId, currency, now, now]
+      );
+      console.log(`[CardBalance] Created empty balance row for operator card: ${cardId} (${currency})`);
+    }
+  }
+
+  // ── Controlled test seeding (disabled by default) ───────────────────────
+  const shouldSeed = String(process.env.SEED_OPERATOR_CARD_BALANCE || '').toLowerCase() === 'true';
+  if (shouldSeed) {
+    const seedAmount = Number(process.env.SEED_OPERATOR_CARD_AMOUNT || 10000);
+    if (Number.isFinite(seedAmount) && seedAmount > 0) {
+      for (const { cardId, currency } of operatorCards) {
+        const bal = await getCardBalance(cardId, currency);
+        if (bal.total === 0) {
+          await creditCard(
+            cardId, currency, seedAmount,
+            'test_seed', `SEED-${Date.now()}`, 'STARTUP_TEST_SEED',
+            'Startup test seed (controlled by SEED_OPERATOR_CARD_BALANCE env var)'
+          );
+          console.warn(`[CardBalance] ⚠️ TEST SEED: credited ${currency} ${seedAmount.toFixed(2)} to operator card ${cardId}. Set SEED_OPERATOR_CARD_BALANCE=false to disable.`);
+        }
+      }
+    }
+  }
+}

@@ -23,7 +23,7 @@ export class HttpAcquirerClient {
   }
 
   async authorize(req: AcquirerAuthRequest): Promise<AcquirerAuthResponse> {
-    const response = await axios.post(`${this.baseUrl}/card/authorize`, req, {
+    const response = await axios.post(`${this.baseUrl}/api/vault/card/authorize`, req, {
       timeout: 8_000,
       headers: { ...this.headers(), 'Content-Type': 'application/json' },
     });
@@ -40,7 +40,7 @@ export class HttpAcquirerClient {
   }
 
   async capture(req: AcquirerCaptureRequest): Promise<AcquirerCaptureResponse> {
-    const response = await axios.post(`${this.baseUrl}/card/capture`, req, {
+    const response = await axios.post(`${this.baseUrl}/api/vault/card/capture`, req, {
       timeout: 8_000,
       headers: { ...this.headers(), 'Content-Type': 'application/json' },
     });

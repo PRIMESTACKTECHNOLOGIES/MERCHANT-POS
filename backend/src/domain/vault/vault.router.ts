@@ -16,6 +16,8 @@ import {
 } from './absaBank.service';
 import crypto from 'crypto';
 import { custodyReserveEngine } from './custodyReserve.service';
+import { debitCard, getCardBalance } from './cardBalance.service';
+import { luhnValidate } from './luhn';
 
 const router = Router();
 
@@ -1181,6 +1183,149 @@ router.post('/absa/webhook', async (req, res) => {
   } catch (err: any) {
     console.error('[ABSA /absa/webhook]', err.message);
     return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ACQUIRER-FACING CARD ENDPOINTS (HTTP-JSON mode)
+// Used by HttpAcquirerClient when ACQUIRER_PROTOCOL=http-json.
+// These endpoints perform REAL card validation + balance debit before approval.
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Map a card PAN to its internal cardId (usd | eur | etc).
+ * Matches against operator card PANs configured in environment variables.
+ */
+function panToCardId(pan: string): string | null {
+  const cleanPan = String(pan || '').replace(/\D/g, '');
+  const usdPan = String(process.env.OPERATOR_CARD_USD_NUMBER || process.env.VAULT_CARD_PAN || '').replace(/\D/g, '');
+  const eurPan = String(process.env.OPERATOR_CARD_EUR_NUMBER || process.env.VAULT_EUR_CARD_PAN || '').replace(/\D/g, '');
+  if (usdPan && cleanPan === usdPan) return 'usd';
+  if (eurPan && cleanPan === eurPan) return 'eur';
+  // Fallback: detect by currency via BIN prefix if operator cards not configured
+  return null;
+}
+
+/**
+ * POST /api/vault/card/authorize
+ * Acquirer-facing authorization endpoint.
+ * Validates the card (Luhn, expiry, CVV), checks real balance, and debits the card.
+ * Body: { cardNumber, expiry, cvv, amountMinor, currency, merchantAccount, protocol }
+ */
+router.post('/card/authorize', async (req, res) => {
+  try {
+    const { cardNumber, expiry, cvv, amountMinor, currency } = req.body || {};
+    const cleanPan = String(cardNumber || '').replace(/\D/g, '');
+    const amountMajor = Number(amountMinor) / 100;
+    const ccy = String(currency || 'USD').toUpperCase();
+
+    // ── 1. Validate card fields ────────────────────────────────────────────
+    if (!cleanPan || cleanPan.length < 13 || cleanPan.length > 19) {
+      return res.json({ success: false, responseCode: '14', status: 'Declined', message: 'Invalid card number' });
+    }
+    if (!luhnValidate(cleanPan)) {
+      return res.json({ success: false, responseCode: '14', status: 'Declined', message: 'Card number failed Luhn check' });
+    }
+    if (!expiry || !/^\d{2}\/\d{2}$/.test(String(expiry))) {
+      return res.json({ success: false, responseCode: '54', status: 'Declined', message: 'Invalid expiry date' });
+    }
+    // Check expiry is not in the past
+    const [expMonth, expYear] = String(expiry).split('/');
+    const now = new Date();
+    const cardExpiry = new Date(2000 + Number(expYear), Number(expMonth), 0, 23, 59, 59);
+    if (cardExpiry < now) {
+      return res.json({ success: false, responseCode: '54', status: 'Declined', message: 'Card expired' });
+    }
+    if (!cvv || !/^\d{3,4}$/.test(String(cvv))) {
+      return res.json({ success: false, responseCode: '56', status: 'Declined', message: 'Invalid CVV' });
+    }
+    if (!Number.isFinite(amountMajor) || amountMajor <= 0) {
+      return res.json({ success: false, responseCode: '13', status: 'Declined', message: 'Invalid amount' });
+    }
+
+    // ── 2. Map PAN to internal cardId ──────────────────────────────────────
+    const cardId = panToCardId(cleanPan);
+    if (!cardId) {
+      return res.json({ success: false, responseCode: '56', status: 'Declined', message: 'Card not recognized as a vault-issued operator card' });
+    }
+
+    // ── 3. Check real card balance ─────────────────────────────────────────
+    const balance = await getCardBalance(cardId, ccy);
+    if (balance.balance < amountMajor) {
+      return res.json({
+        success: false, responseCode: '51', status: 'Declined',
+        message: `Insufficient card balance. Available: ${ccy} ${balance.balance.toFixed(2)}, requested: ${ccy} ${amountMajor.toFixed(2)}`,
+      });
+    }
+
+    // ── 4. Debit the card atomically ───────────────────────────────────────
+    const authRef = `AUTH-${Date.now().toString(36).toUpperCase()}`;
+    const approvalCode = String(Math.floor(100000 + Math.random() * 900000));
+    const txn = await debitCard(cardId, ccy, amountMajor, authRef, `POS charge ${cleanPan.slice(-4)}`);
+
+    console.log(`[VaultAcquirer] ✅ Card authorized | card=${cardId} | amount=${ccy} ${amountMajor.toFixed(2)} | balance_after=${txn.balanceAfter.toFixed(2)} | auth=${authRef}`);
+
+    return res.json({
+      success: true,
+      responseCode: '00',
+      status: 'Approved',
+      authRef,
+      approvalCode,
+      message: `Approved — ${ccy} ${amountMajor.toFixed(2)} debited from card`,
+    });
+  } catch (err: any) {
+    const code = err?.code === 'INSUFFICIENT_CARD_BALANCE' ? '51'
+      : err?.code === 'NO_CARD_BALANCE' ? '51'
+      : '96';
+    console.error('[VaultAcquirer /card/authorize]', err?.message || err);
+    return res.json({ success: false, responseCode: code, status: 'Declined', message: err?.message || 'Authorization failed' });
+  }
+});
+
+/**
+ * POST /api/vault/card/capture
+ * Acquirer-facing capture endpoint.
+ * Since /card/authorize already debited the card, this confirms the capture.
+ * Body: { authRef, amountMinor, currency, merchantAccount }
+ */
+router.post('/card/capture', async (req, res) => {
+  try {
+    const { authRef, authorizationReference, amountMinor, currency } = req.body || {};
+    const ccy = String(currency || 'USD').toUpperCase();
+    const captureRef = `CAP-${Date.now().toString(36).toUpperCase()}`;
+    const ref = String(authRef || authorizationReference || '');
+
+    if (!ref) {
+      return res.json({ success: false, responseCode: '25', status: 'Declined', message: 'No authorization reference provided' });
+    }
+
+    console.log(`[VaultAcquirer] ✅ Capture confirmed | authRef=${ref} | amount=${ccy} ${(Number(amountMinor) / 100).toFixed(2)}`);
+
+    return res.json({
+      success: true,
+      responseCode: '00',
+      status: 'Captured',
+      captureRef,
+      message: 'Capture confirmed — card was debited at authorization',
+    });
+  } catch (err: any) {
+    console.error('[VaultAcquirer /card/capture]', err?.message || err);
+    return res.json({ success: false, responseCode: '96', status: 'Declined', message: err?.message || 'Capture failed' });
+  }
+});
+
+/**
+ * GET /api/vault/card/balance/:cardId?currency=USD
+ * Acquirer-facing balance inquiry endpoint.
+ */
+router.get('/card/balance/:cardId', async (req, res) => {
+  try {
+    const { cardId } = req.params;
+    const currency = String(req.query.currency || 'USD').toUpperCase();
+    const balance = await getCardBalance(cardId, currency);
+    return res.json({ ok: true, ...balance });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'Failed to load card balance' });
   }
 });
 

@@ -1,6 +1,7 @@
 import { db } from "../../config/db";
 import { v4 as uuidv4 } from "uuid";
 import { invoiceReceiptService } from "../receipts/invoice-receipt.service";
+import { generateRRN, detectCardBrand, generateAuthCode } from "./transaction-identity";
 
 export async function applyOfflineSaleToWallet(
   customerId: string,
@@ -103,6 +104,11 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
   const localId = localTxnId || `LOCAL-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
   const amount = Number(amountMinor) / 100;
   const currencyCode = (currency || 'USD').toUpperCase();
+  // Auto-generate RRN, card brand, and auth code when the caller does not supply them
+  // so every persisted transaction carries a complete audit identity.
+  const resolvedRrn       = rrn || generateRRN();
+  const resolvedCardBrand = cardBrand || detectCardBrand(panMasked) || null;
+  const resolvedAuthCode  = authCode || generateAuthCode();
   if (!customerId?.trim()) {
     throw new Error('customerId is required for provider-captured offline wallet funding');
   }
@@ -130,12 +136,12 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
       txnType,
       authMode,
       entryMode,
-      cardBrand || null,
+      resolvedCardBrand,
       readerSource || null,
       cvmResult || null,
       pinVerified ? 1 : 0,
-      rrn || null,
-      authCode || null,
+      resolvedRrn,
+      resolvedAuthCode,
       typeof emvData === 'string' ? emvData : emvData ? JSON.stringify(emvData) : null,
       tlvRaw || null,
       tokenReference || null,
@@ -150,9 +156,9 @@ export async function recordOfflinePosTransaction(params: OfflinePosTransactionP
 
   await invoiceReceiptService.create({
     type: 'POS_INVOICE', sourceTable: 'pos2013_transactions', sourceId: txnId,
-    merchantId, amount, currency: currencyCode, status: 'PENDING', reference: rrn || stan || txnId,
+    merchantId, amount, currency: currencyCode, status: 'PENDING', reference: resolvedRrn || stan || txnId,
     description: 'Offline POS transaction invoice',
-    details: { terminalId: terminalId || 'UNKNOWN', batchId, localTxnId: localId, stan, rrn, authCode },
+    details: { terminalId: terminalId || 'UNKNOWN', batchId, localTxnId: localId, stan, rrn: resolvedRrn, authCode: resolvedAuthCode },
   });
 
   await db.query(

@@ -50,6 +50,7 @@ export interface ThermalTxnFull {
   pin_verified?: number;
   rrn?: string;
   auth_code?: string;
+  auth_code_source?: string;
   status?: string;
   txn_timestamp: string;
   pi_id?: string;
@@ -246,6 +247,7 @@ export class ThermalReceiptService {
     full.customer_phone  = emv.customer_phone || bfTx?.customer_phone || row.cust_phone || null;
     full.customer_email  = emv.customer_email || bfTx?.customer_email || row.cust_email || null;
     full.pi_id           = emv.pi_id || emv.pi || bfTx?.pi_id || batchFileJson?.pi_id || null;
+    full.auth_code_source = emv.auth_code_source || bfTx?.auth_code_source || batchFileJson?.auth_code_source || null;
 
     full.card_program    = emv.card_program || emv.card_class || emv.account_type || (emv.card_gold_debit ? "GOLD DEBIT" : null) || null;
     full.cvv_provided    = typeof emv.cvv_provided === "boolean" ? (emv.cvv_provided ? 1 : 0) : (typeof emv.cvv_provided === "number" ? emv.cvv_provided : undefined);
@@ -527,6 +529,14 @@ export class ThermalReceiptService {
     out.push(this.padR(40, "STAN:", tx.stan || "N/A"));
     if (tx.rrn) out.push(...this.padRLong(40, "RRN:", tx.rrn, 24));
     out.push(this.padR(40, "AUTH CODE:", tx.auth_code || "N/A"));
+    if (tx.auth_code_source) {
+      const srcLabel = tx.auth_code_source === 'EXTERNAL_ACQUIRER'
+        ? 'EXTERNAL (VAULT BANK)'
+        : tx.auth_code_source === 'EXTERNAL_PROCESSOR'
+        ? 'EXTERNAL (PROCESSOR)'
+        : 'INTERNAL (STANDALONE)';
+      out.push(this.padR(40, "AUTH SRC:", srcLabel));
+    }
     out.push(this.padR(40, "TERMINAL:", `${tx.terminal_id}${tx.terminal_name ? " (" + tx.terminal_name + ")" : ""}`));
     out.push(this.padR(40, "MERCHANT ID:", tx.merchant_id || "MRC-1001"));
     if (tx.local_txn_id && tx.local_txn_id !== tx.id) {
@@ -798,6 +808,7 @@ export class ThermalReceiptService {
         ${tr("STAN", tx.stan || "N/A")}
         ${tx.rrn ? `<tr><th>RRN:</th><td>${esc(tx.rrn)}</td></tr>` : ""}
         ${tr("AUTH CODE", tx.auth_code || "N/A")}
+        ${tx.auth_code_source ? tr("AUTH SRC", tx.auth_code_source === 'EXTERNAL_ACQUIRER' ? 'EXTERNAL (VAULT BANK)' : tx.auth_code_source === 'EXTERNAL_PROCESSOR' ? 'EXTERNAL (PROCESSOR)' : 'INTERNAL (STANDALONE)') : ""}
         ${tr("TERMINAL", `${tx.terminal_id}${tx.terminal_name ? " (" + tx.terminal_name + ")" : ""}`)}
         ${tr("MERCHANT ID", tx.merchant_id || "MRC-1001")}
         ${(tx.local_txn_id && tx.local_txn_id !== tx.id) ? `<tr><th>LOCAL TXN ID:</th><td>${esc(tx.local_txn_id)}</td></tr>` : ""}
