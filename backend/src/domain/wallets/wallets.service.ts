@@ -69,9 +69,34 @@ export class WalletsService {
   async creditMerchantWallet(merchantId: string, amount: number, source: string, reference?: string, currency: string = 'USD') {
     const ccy = this.normalizeCurrency(currency);
     const wallet = await this.getOrCreateMerchantWallet(merchantId, ccy);
-    const transactionId = uuidv4();
     const now = new Date().toISOString();
     const prevBalance = Number(wallet.balance || 0);
+
+    // ── Idempotency gate ─────────────────────────────────────────────────────
+    // If a credit with the same reference already exists for this wallet, do
+    // NOT increment the balance again. This prevents double-crediting (e.g.
+    // when a capture is retried or both capture + settlement paths run).
+    if (reference?.trim()) {
+      const prior = await db.query(
+        `SELECT id FROM merchant_wallet_transactions
+         WHERE wallet_id = ? AND type = 'credit' AND reference = ?
+         LIMIT 1`,
+        [wallet.id, reference],
+      );
+      if (prior.rows?.length) {
+        return {
+          success: true,
+          transactionId: String(prior.rows[0].id),
+          status: 'COMPLETED',
+          ledgerEntryId: null,
+          currency: ccy,
+          balanceAfter: prevBalance,
+          idempotent: true,
+        };
+      }
+    }
+
+    const transactionId = uuidv4();
 
     await db.query(
       `UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`,
@@ -91,7 +116,7 @@ export class WalletsService {
     } catch (err) {
       console.error('Failed to persist ledger entry for merchant credit', err);
     }
-    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: prevBalance + amount };
+    return { success: true, transactionId, status: 'COMPLETED', ledgerEntryId, currency: ccy, balanceAfter: prevBalance + amount, idempotent: false };
   }
 
   // ── Fiat wallet ops ──────────────────────────────────────────────────────────
@@ -333,6 +358,40 @@ export class WalletsService {
     const balanceRes = await db.query('SELECT balance FROM customer_wallets WHERE id = ?', [wallet.id]);
     const balance = Number(balanceRes.rows[0]?.balance ?? 0);
     if (balance < amount) throw new Error(`Insufficient ${ccy} balance`);
+
+    // ── SETTLEMENT GATE ─────────────────────────────────────────────────────
+    // Block withdrawals that would consume funds from POS transactions that
+    // have not yet been settled (omnibus not funded). This prevents customers
+    // from withdrawing unbacked ledger money before the acquirer settlement
+    // is confirmed and the VAULT_BANK_OMNIBUS is credited.
+    //
+    // settled_balance = total_balance - sum(unsettled POS transaction amounts)
+    // Withdrawal is allowed only if amount <= settled_balance.
+    try {
+      const unsettledRes = await db.query(
+        `SELECT COALESCE(SUM(s.amount), 0) AS unsettled
+           FROM merchant_pos_settlements s
+           JOIN pos2013_transactions p ON p.id = json_extract(s.meta, '$.paymentIntentId')
+          WHERE p.customer_id = ?
+            AND UPPER(s.currency) = ?
+            AND s.status = 'unsettled'`,
+        [customerId, ccy]
+      );
+      const unsettled = Number(unsettledRes.rows?.[0]?.unsettled ?? 0);
+      const settledBalance = balance - unsettled;
+      if (amount > settledBalance + 0.001) {
+        const shortfall = amount - settledBalance;
+        throw new Error(
+          `Withdrawal blocked: ${ccy} ${shortfall.toFixed(2)} of the requested amount is from POS ` +
+          `transactions that have not been settled yet. Wait for the acquirer settlement to be ` +
+          `confirmed, or withdraw a smaller amount (available settled: ${ccy} ${settledBalance.toFixed(2)}).`
+        );
+      }
+    } catch (gateErr: any) {
+      // Re-throw the gate error as-is; surface other errors as a warning but don't block
+      if (gateErr?.message?.includes('Withdrawal blocked')) throw gateErr;
+      console.warn('[debitWallet] Settlement gate check failed (non-blocking):', gateErr?.message);
+    }
 
     const transactionId = uuidv4();
     const ledgerEntry = createLedgerEntry(transactionId, 'debit', amount, ccy, 'AUTHORIZED', `Wallet debit via ${source || 'pos_offline'}`);
@@ -1283,8 +1342,17 @@ export class WalletsService {
         || providerResponse?.transactionId
         || providerResponse?.reference
         || providerResponse?.id
-        || requestReference,
+        || '',
     );
+
+    // A real provider MUST return its own transaction/reference ID.
+    // If only our own requestReference comes back, that means the
+    // endpoint just echoed us — it has no real transaction on its side.
+    if (!providerReference || providerReference === requestReference) {
+      const message = `Provider did not return a real transaction ID. A legitimate payment provider always issues its own unique transaction reference. This looks like a fake or echo endpoint.`;
+      try { await updateStatus('FAILED', message, undefined, providerResponse); } catch { /* non-critical */ }
+      throw new Error(message);
+    }
 
     await db.query('BEGIN IMMEDIATE');
     let merchantWalletId = '';
