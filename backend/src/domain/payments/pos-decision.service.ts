@@ -2,7 +2,7 @@ import { db } from "../../config/db";
 import axios from 'axios';
 import { settingsService } from "../settings/settings.service";
 import { acquirerConfig } from "../../config/acquirer";
-import { createAcquirerClient } from "./acquirer";
+import { createAcquirerClient, detectNetworkFromPan } from "./acquirer";
 import {
   PosDecision,
   PosMode,
@@ -534,7 +534,7 @@ export class PosDecisionService {
 
       if (gate.acquirerActive) {
         try {
-          const acquirer = createAcquirerClient();
+          const acquirer = createAcquirerClient(detectNetworkFromPan(_pan));
           const merchantAccount = acquirerConfig.merchantId || String(_payload?.merchantId || '').trim();
           if (!merchantAccount) {
             return { success: false, status: 'ERROR', processor: { approved: false, reason: 'Acquirer merchant account missing' }, error: 'ACQUIRER_MERCHANT_ACCOUNT or merchantId is required' };

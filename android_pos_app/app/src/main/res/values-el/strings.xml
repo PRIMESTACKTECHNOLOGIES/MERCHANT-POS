@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">ΖΩΝΤΑΝΗ ΠΛΗΡΩΜΗ</string>
+    <string name="pay_now">⚡  ΠΛΗΡΩΜΗ ΤΩΡΑ</string>
+    <string name="send_to_merchant">🏦  ΑΠΟΣΤΟΛΗ ΣΤΟ ΕΜΠΟΡΟ</string>
+    <string name="no_customer">👤  Δεν επιλέχθηκε πελάτης</string>
+    <string name="select">ΕΠΙΛΟΓΗ</string>
+    <string name="new_customer">+ ΝΕΟ</string>
+    <string name="change">ΑΛΛΑΓΗ</string>
+    <string name="normal_card">Κανονική χρέωση κάρτας</string>
+    <string name="voice_auth">101.1 — Φωνητική εξουσιοδότηση</string>
+    <string name="emv_chip">101.6 — EMV Chip/Ανέπαφη</string>
+    <string name="offline_batch">201.3 — Offline δέσμη</string>
+    <string name="card_number">ΑΡΙΘΜΟΣ ΚΑΡΤΑΣ</string>
+    <string name="expiry">ΛΗΞΗ</string>
+    <string name="cvv">ΚΩΔΙΚΟΣ CVV</string>
+    <string name="auth_code">ΚΩΔΙΚΟΣ ΕΓΚΡΙΣΗΣ</string>
+    <string name="charge_now">ΧΡΕΩΣΗ ΤΩΡΑ</string>
+    <string name="cancel">Ακύρωση</string>
+    <string name="approved">ΕΓΚΡΙΘΗΚΕ</string>
+    <string name="saved_offline">ΑΠΟΘΗΚΕΥΤΗΚΕ OFFLINE</string>
+    <string name="new_payment">ΝΕΑ ΠΛΗΡΩΜΗ</string>
+    <string name="select_customer">Επιλογή πελάτη</string>
+    <string name="payment_protocol">Πρωτόκολλο πληρωμής</string>
+    <string name="customer_name">Πλήρες όνομα *</string>
+    <string name="email_optional">Email (προαιρετικό)</string>
+    <string name="phone_optional">Τηλέφωνο (προαιρετικό)</string>
+    <string name="create">ΔΗΜΙΟΥΡΓΙΑ</string>
+    <string name="enter_amount">Εισάγετε πρώτα ποσό</string>
+    <string name="select_customer_first">Επιλέξτε ή δημιουργήστε πελάτη πρώτα</string>
+    <string name="nfc_ready">📡  NFC έτοιμο — αγγίξτε κάρτα</string>
+    <string name="nfc_unavailable">⚠  NFC μη διαθέσιμο</string>
+    <string name="online">● ΣΥΝΔΕΔΕΜΕΝΟ</string>
+    <string name="offline_status">● ΑΠΟΣΥΝΔΕΔΕΜΕΝΟ</string>
+    <string name="amount_label">ΠΟΣΟ</string>
+    <string name="merchant_id_label">ID ΕΜΠΟΡΟΥ</string>
+    <string name="api_key_label">API KEY (ΠΡΟ.)</string>
+    <string name="secret_label">SECRET (ΠΡΟ.)</string>
+    <string name="send_to_merchant_btn">ΑΠΟΣΤΟΛΗ ΣΤΟ ΕΜΠΟΡΟ</string>
+    <string name="customer">Πελάτης</string>
+    <string name="synced_dashboard">Συγχρονίστηκε ✓</string>
+    <string name="will_sync">Θα συγχρονιστεί όταν συνδεθεί</string>
+    <string name="language_select">🌐  Γλώσσα</string>
+</resources>

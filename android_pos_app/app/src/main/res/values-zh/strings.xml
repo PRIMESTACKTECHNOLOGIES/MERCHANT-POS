@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">实时支付</string>
+    <string name="pay_now">⚡  立即支付</string>
+    <string name="send_to_merchant">🏦  发送到商户钱包</string>
+    <string name="no_customer">👤  未选择客户</string>
+    <string name="select">选择</string>
+    <string name="new_customer">+ 新建</string>
+    <string name="change">更改</string>
+    <string name="normal_card">普通刷卡支付</string>
+    <string name="voice_auth">101.1 — 语音授权</string>
+    <string name="emv_chip">101.6 — EMV芯片/非接触</string>
+    <string name="offline_batch">201.3 — 离线批次</string>
+    <string name="card_number">卡号</string>
+    <string name="expiry">有效期</string>
+    <string name="cvv">CVV安全码</string>
+    <string name="auth_code">授权码</string>
+    <string name="charge_now">立即扣款</string>
+    <string name="cancel">取消</string>
+    <string name="approved">已批准</string>
+    <string name="saved_offline">已离线保存</string>
+    <string name="new_payment">新支付</string>
+    <string name="select_customer">选择客户</string>
+    <string name="payment_protocol">支付协议</string>
+    <string name="customer_name">全名 *</string>
+    <string name="email_optional">电子邮件（可选）</string>
+    <string name="phone_optional">电话（可选）</string>
+    <string name="create">创建</string>
+    <string name="enter_amount">请先输入金额</string>
+    <string name="select_customer_first">请先选择或创建客户</string>
+    <string name="nfc_ready">📡  NFC就绪 — 请轻触卡片</string>
+    <string name="nfc_unavailable">⚠  此设备不支持NFC</string>
+    <string name="online">● 在线</string>
+    <string name="offline_status">● 离线</string>
+    <string name="amount_label">金额</string>
+    <string name="merchant_id_label">商户ID</string>
+    <string name="api_key_label">API密钥（可选）</string>
+    <string name="secret_label">密钥（可选）</string>
+    <string name="send_to_merchant_btn">发送到商户</string>
+    <string name="customer">客户</string>
+    <string name="synced_dashboard">已同步到仪表板 ✓</string>
+    <string name="will_sync">联网后将自动同步</string>
+    <string name="language_select">🌐  语言</string>
+</resources>

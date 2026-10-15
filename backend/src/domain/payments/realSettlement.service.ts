@@ -2,13 +2,14 @@ import axios from "axios";
 import { db } from "../../config/db";
 import { v4 as uuidv4 } from "uuid";
 import { acquirerConfig } from '../../config/acquirer';
-import { createAcquirerClient } from './acquirer';
+import { createAcquirerClient, type CardNetwork } from './acquirer';
 
 export async function settleCardTransaction(
   merchantId: string,
   amount: number,
   authRef: string,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  network?: CardNetwork
 ) {
   if (!merchantId) throw new Error("merchantId required");
   if (amount <= 0) throw new Error("amount must be positive");
@@ -16,7 +17,7 @@ export async function settleCardTransaction(
   const ccy = String(currency || 'USD').toUpperCase().trim();
   let captureId: string;
   if (acquirerConfig.host) {
-    const acquirer = createAcquirerClient();
+    const acquirer = createAcquirerClient(network);
     const capture = await acquirer.capture({
       merchantAccount: acquirerConfig.merchantAccount || merchantId,
       amountMinor: Math.round(amount * 100),

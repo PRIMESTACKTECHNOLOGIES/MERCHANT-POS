@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">ОПЛАТА В РЕАЛЬНОМ ВРЕМЕНИ</string>
+    <string name="pay_now">⚡  ОПЛАТИТЬ СЕЙЧАС</string>
+    <string name="send_to_merchant">🏦  ОТПРАВИТЬ ПРОДАВЦУ</string>
+    <string name="no_customer">👤  Клиент не выбран</string>
+    <string name="select">ВЫБРАТЬ</string>
+    <string name="new_customer">+ НОВЫЙ</string>
+    <string name="change">ИЗМЕНИТЬ</string>
+    <string name="normal_card">Обычная оплата картой</string>
+    <string name="voice_auth">101.1 — Голосовая авторизация</string>
+    <string name="emv_chip">101.6 — EMV Чип/Бесконтактная</string>
+    <string name="offline_batch">201.3 — Офлайн пакет</string>
+    <string name="card_number">НОМЕР КАРТЫ</string>
+    <string name="expiry">СРОК ДЕЙСТВИЯ</string>
+    <string name="cvv">КОД CVV</string>
+    <string name="auth_code">КОД АВТОРИЗАЦИИ</string>
+    <string name="charge_now">СПИСАТЬ СЕЙЧАС</string>
+    <string name="cancel">Отмена</string>
+    <string name="approved">ОДОБРЕНО</string>
+    <string name="saved_offline">СОХРАНЕНО ОФЛАЙН</string>
+    <string name="new_payment">НОВЫЙ ПЛАТЁЖ</string>
+    <string name="select_customer">Выбрать клиента</string>
+    <string name="payment_protocol">Протокол оплаты</string>
+    <string name="customer_name">Полное имя *</string>
+    <string name="email_optional">Email (необязательно)</string>
+    <string name="phone_optional">Телефон (необязательно)</string>
+    <string name="create">СОЗДАТЬ</string>
+    <string name="enter_amount">Сначала введите сумму</string>
+    <string name="select_customer_first">Сначала выберите или создайте клиента</string>
+    <string name="nfc_ready">📡  NFC готов — приложите карту</string>
+    <string name="nfc_unavailable">⚠  NFC недоступен</string>
+    <string name="online">● ОНЛАЙН</string>
+    <string name="offline_status">● ОФЛАЙН</string>
+    <string name="amount_label">СУММА</string>
+    <string name="merchant_id_label">ID ПРОДАВЦА</string>
+    <string name="api_key_label">API КЛЮЧ (НЕО.)</string>
+    <string name="secret_label">СЕКРЕТ (НЕО.)</string>
+    <string name="send_to_merchant_btn">ОТПРАВИТЬ ПРОДАВЦУ</string>
+    <string name="customer">Клиент</string>
+    <string name="synced_dashboard">Синхронизировано с панелью ✓</string>
+    <string name="will_sync">Синхронизируется при подключении</string>
+    <string name="language_select">🌐  Язык</string>
+</resources>

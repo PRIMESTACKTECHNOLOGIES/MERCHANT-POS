@@ -1,4 +1,4 @@
-import { VaultBankAcquirerClient } from '../payments/acquirer/vault-bank-acquirer.client';
+import { createAcquirerClient, detectNetworkFromPan } from '../payments/acquirer';
 import { getVaultCardById, type VaultCard } from './vaultCardService';
 import { VAULT_BINS } from './vaultBin';
 import { luhnValidate } from './luhn';
@@ -38,8 +38,6 @@ const NUM_CCY_TO_ALPHA: Record<string, string> = {
   '702': 'SGD', '356': 'INR', '392': 'JPY', '756': 'CHF',
   '036': 'AUD', '124': 'CAD', '344': 'HKD', '458': 'MYR',
 };
-
-const vaultAcquirer = new VaultBankAcquirerClient();
 
 function detectSchemeFromBin(bin6: string): 'VISA' | 'MASTERCARD' | string {
   for (const key in VAULT_BINS) {
@@ -106,7 +104,9 @@ export async function generateVaultCardNetworkAuth(
   const stan = String(Math.floor(Math.random() * 900000 + 100000));
 
   try {
-    const authResponse = await vaultAcquirer.authorize({
+    // Route this card's authorization to its network's sponsor endpoint.
+    const acquirer = createAcquirerClient(detectNetworkFromPan(cardNumber));
+    const authResponse = await acquirer.authorize({
       merchantAccount,
       amountMinor,
       currency: currency.toUpperCase(),

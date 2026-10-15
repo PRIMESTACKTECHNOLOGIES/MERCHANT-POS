@@ -162,6 +162,7 @@ class CustomerActivity : AppCompatActivity() {
     private fun loadCustomers() {
         val serverUrl = PosApplication.getServerUrl(this)
         val merchant = merchantId()
+        val token = PosApplication.getJwtToken(this)
         listContainer.removeAllViews()
         listContainer.addView(loadingRow("Loading my customers..."))
         tvStatus.setTextColor(Color.parseColor("#F59E0B"))
@@ -169,7 +170,7 @@ class CustomerActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val api = ApiClient.createWalletsApi(serverUrl)
+                val api = ApiClient.createWalletsApi(serverUrl, token)
                 val resp = if (merchant.isNotBlank()) {
                     withContext(Dispatchers.IO) { api.getCustomersByMerchant(merchant) }
                 } else {
@@ -887,9 +888,10 @@ class CustomerActivity : AppCompatActivity() {
 
     private fun createCustomer(name: String, email: String?, phone: String?) {
         val serverUrl = PosApplication.getServerUrl(this)
+        val token = PosApplication.getJwtToken(this)
         lifecycleScope.launch {
             try {
-                val api = ApiClient.createWalletsApi(serverUrl)
+                val api = ApiClient.createWalletsApi(serverUrl, token)
                 val resp = withContext(Dispatchers.IO) {
                     api.createCustomer(
                         CreateCustomerRequest(

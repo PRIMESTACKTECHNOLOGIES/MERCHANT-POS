@@ -24,6 +24,10 @@ class SettingsActivity : AppCompatActivity() {
 
     private val prefsName = "pos_settings"
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(com.pos2013.offline.utils.LanguageManager.applyTo(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         supportActionBar?.title = "Terminal Settings"

@@ -1,4 +1,5 @@
 import { parseTlv } from './emv-tlv-parser';
+import { fallbackAids, resolveScheme } from '../../services/emv/emvAidRegistry';
 
 interface ReaderLike {
   reader: { name: string };
@@ -6,14 +7,24 @@ interface ReaderLike {
   once(event: string, handler: (...args: any[]) => void): void;
 }
 
+export type ACR122UCardFamily = 'MIFARE_CLASSIC' | 'EMV_ISO14443_4' | 'UNKNOWN';
+
 export interface ACR122UCardData {
   uid: string;
   atr: string;
   type: string;
+  /** Card family resolved via Get Data (FF CA) before any APDU branching. */
+  cardFamily?: ACR122UCardFamily;
+  /** Answer To Select (ATS), present for ISO 14443-4 / EMV contactless cards. */
+  ats?: string;
   emvReady?: boolean;
   error?: string;
   aid?: string;
+  /** Card scheme resolved from the selected AID (e.g. "Visa", "UnionPay"). */
+  scheme?: string;
   gpo?: string;
+  /** EMV GET DATA (80 CA) result — e.g. PIN Try Counter (9F 17). */
+  pinTryCounter?: string;
   raw?: Buffer;
 }
 
@@ -30,13 +41,23 @@ export class ACR122UReaderService {
   private enabled = true;
   private latestCard: any = null;
 
-  private static readonly FALLBACK_AIDS = [
-    'A0000000031010', // Visa
-    'A0000000041010', // MasterCard
-    'A0000000050000', // Maestro
-    'A00000002501',   // American Express
-    'A0000000032010', // Visa Electron
+  // Blind application selection list, sourced from the EMV AID registry
+  // (services/emv/emvAidRegistry.ts). Ordered contactless-first.
+  private static readonly FALLBACK_AIDS = fallbackAids();
+
+  // ── Pseudo-APDUs (ACR122U / PC/SC contactless) ─────────────────────────────
+  // GET DATA — retrieves the ATS (FF CA 01 00 00) or UID (FF CA 00 00 00).
+  // Used to detect the card family BEFORE selecting an APDU standard.
+  private static readonly GET_ATS = Buffer.from([0xff, 0xca, 0x01, 0x00, 0x00]);
+  private static readonly GET_UID = Buffer.from([0xff, 0xca, 0x00, 0x00, 0x00]);
+
+  // MIFARE Classic default / well-known keys tried during authentication.
+  private static readonly MIFARE_DEFAULT_KEYS: Buffer[] = [
+    Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), // factory default
+    Buffer.from([0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5]), // MAD key
+    Buffer.alloc(6, 0x00),                             // all-zero transport key
   ];
+  private static readonly MIFARE_KEY_LENGTH = 6; // Lc for FF 82 MIFARE keys
 
   async connect(): Promise<void> {
     if (!this.enabled) {
@@ -178,6 +199,140 @@ export class ACR122UReaderService {
     throw new Error(`APDU failed during ${operation}: SW=${sw} — ${detail}`);
   }
 
+  /**
+   * Raw transmit that never throws on a non-9000 status word.
+   * Needed for probing (FF CA Get Data) where an unsupported command is
+   * expected and must not abort the flow.
+   */
+  private async transmitRaw(reader: any, apdu: Buffer, responseMaxLength = 512): Promise<{ sw: string; data: Buffer }> {
+    const response = await reader.transmit(apdu, responseMaxLength);
+    if (!response || response.length < 2) {
+      return { sw: '0000', data: Buffer.alloc(0) };
+    }
+    const sw = response.slice(-2).toString('hex').toUpperCase();
+    return { sw, data: response.slice(0, -2) };
+  }
+
+  /**
+   * Detect the card family using the PC/SC Get Data pseudo-APDU (FF CA 01 00 00).
+   * MUST run before choosing an APDU standard:
+   *   - ATS returned  → ISO 14443-4 / EMV contactless  → use ISO 7816-4 APDUs.
+   *   - No ATS        → MIFARE Classic                  → use FF 82 / FF 86 / FF B0.
+   */
+  private async detectCardFamily(reader: any, card: any): Promise<{ family: ACR122UCardFamily; ats: string }> {
+    let ats = '';
+
+    // 1) Get ATS via Get Data (FF CA 01 00 00). ISO 14443-4 cards answer 9000 + ATS.
+    try {
+      const atsRes = await this.transmitRaw(reader, ACR122UReaderService.GET_ATS);
+      if (atsRes.sw === '9000' && atsRes.data.length > 0) {
+        ats = atsRes.data.toString('hex').toUpperCase();
+      }
+    } catch {
+      /* Get Data unsupported — fall through to heuristics */
+    }
+
+    if (ats) {
+      return { family: 'EMV_ISO14443_4', ats };
+    }
+
+    // 2) Fall back to the card tech hint reported by nfc-pcsc and the ATR.
+    const typeHint = String(card?.type || '').toLowerCase();
+    const atr = String(card?.atr || '').toUpperCase();
+    if (/iso ?14443-?4|iso ?7816/.test(typeHint) || this.atrIndicatesIso14434(atr)) {
+      return { family: 'EMV_ISO14443_4', ats };
+    }
+
+    // 3) A UID with no ATS and no ISO 14443-4 hint is a MIFARE Classic card.
+    if (/mifare/.test(typeHint) || card?.uid) {
+      return { family: 'MIFARE_CLASSIC', ats };
+    }
+
+    return { family: 'UNKNOWN', ats };
+  }
+
+  /** ATR heuristic: ISO 14443-4 cards carry tag indicators 0x78/0x80 in the ATR. */
+  private atrIndicatesIso14434(atr: string): boolean {
+    const clean = String(atr || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    if (!clean) return false;
+    return /78|80/.test(clean.slice(-8));
+  }
+
+  /**
+   * Direct Transmit (FF 00 00 00 [Lc] [Payload]).
+   * Fallback used when the reader rejects a pseudo-APDU such as FF 82 and the
+   * raw payload must still be sent to the card.
+   */
+  private async directTransmit(reader: any, payload: Buffer, responseMaxLength = 512): Promise<Buffer> {
+    const apdu = Buffer.concat([Buffer.from([0xff, 0x00, 0x00, 0x00, payload.length]), payload]);
+    return this.transmitApdu(reader, apdu, responseMaxLength, 'DIRECT TRANSMIT');
+  }
+
+  /**
+   * Load Authentication Keys — FF 82 00 [KeySlot] [Lc] [Key].
+   * For MIFARE keys Lc = 06. If the reader rejects FF 82, retry via Direct Transmit.
+   */
+  private async loadMifareKey(reader: any, key: Buffer, keySlot = 0): Promise<boolean> {
+    const apdu = Buffer.concat([
+      Buffer.from([0xff, 0x82, 0x00, keySlot, ACR122UReaderService.MIFARE_KEY_LENGTH]),
+      key,
+    ]);
+    try {
+      await this.transmitApdu(reader, apdu, 512, 'LOAD AUTHENTICATION KEYS');
+      return true;
+    } catch {
+      // Reader does not support the FF 82 pseudo-APDU → Direct Transmit fallback.
+      try {
+        await this.directTransmit(reader, apdu);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  /**
+   * General Authenticate — FF 86 00 00 05 01 00 [Block] [KeyType] [KeySlot].
+   * KeyType: 0x60 = Key A, 0x61 = Key B.
+   */
+  private async authenticateMifareBlock(reader: any, block: number, keyType: 'A' | 'B' = 'A', keySlot = 0): Promise<void> {
+    const keyTypeCode = keyType === 'B' ? 0x61 : 0x60;
+    const apdu = Buffer.from([0xff, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, block, keyTypeCode, keySlot]);
+    await this.transmitApdu(reader, apdu, 512, 'MIFARE AUTHENTICATE');
+  }
+
+  /** Read Binary — FF B0 00 [Block] [Le] — reads one MIFARE block (16 bytes). */
+  private async readMifareBlock(reader: any, block: number, length = 16): Promise<Buffer> {
+    const apdu = Buffer.from([0xff, 0xb0, 0x00, block, length]);
+    return this.transmitApdu(reader, apdu, 512, 'MIFARE READ');
+  }
+
+  /**
+   * MIFARE Classic read path: load each well-known key, authenticate block 1,
+   * then read it. EMV APDUs do not apply to these cards.
+   */
+  private async readMifareCard(reader: any, card: any, result: ACR122UCardData): Promise<void> {
+    result.cardFamily = 'MIFARE_CLASSIC';
+    result.type = card?.type || 'MIFARE Classic';
+    result.emvReady = false;
+
+    for (let slot = 0; slot < ACR122UReaderService.MIFARE_DEFAULT_KEYS.length; slot += 1) {
+      const key = ACR122UReaderService.MIFARE_DEFAULT_KEYS[slot];
+      const loaded = await this.loadMifareKey(reader, key, slot);
+      if (!loaded) continue;
+      try {
+        await this.authenticateMifareBlock(reader, 1, 'A', slot);
+        result.raw = await this.readMifareBlock(reader, 1, 16);
+        result.error = undefined;
+        return;
+      } catch {
+        /* try the next key */
+      }
+    }
+
+    result.error = 'MIFARE Classic card detected, but no default key authenticated. EMV APDUs are not applicable to this card type.';
+  }
+
   private buildPdolData(pdol: Buffer, amountMinor = 0, currency = 'USD'): Buffer {
     const values: Buffer[] = [];
     let offset = 0;
@@ -249,6 +404,27 @@ export class ACR122UReaderService {
     ]);
 
     return this.transmitApdu(reader, apdu);
+  }
+
+  /**
+   * GET DATA — 80 CA [P1 P2] 00 (ISO 7816-4 / EMV).
+   * Retrieves a primitive data object, e.g. 80 CA 9F 17 00 → PIN Try Counter.
+   * Returns the unwrapped value, or null when the card does not support it.
+   */
+  private async getEmvData(reader: any, tag: string): Promise<Buffer | null> {
+    const tagUpper = tag.toUpperCase();
+    const tagBytes = Buffer.from(tagUpper, 'hex');
+    const apdu = Buffer.concat([Buffer.from([0x80, 0xca]), tagBytes, Buffer.from([0x00])]);
+    try {
+      const res = await this.transmitRaw(reader, apdu);
+      if (res.sw === '9000' && res.data.length > 0) {
+        const tlv = parseTlv(res.data);
+        return tlv[tagUpper] || res.data;
+      }
+    } catch {
+      /* optional EMV command — not all cards support GET DATA */
+    }
+    return null;
   }
 
   private async getProcessingOptions(reader: any, pdol: Buffer | null, amountMinor = 0, currency = 'USD'): Promise<Buffer> {
@@ -361,6 +537,19 @@ export class ACR122UReaderService {
       emvReady: false,
     };
 
+    // ── Card-type detection (FF CA) — MUST run before choosing a standard ───
+    const detected = await this.detectCardFamily(reader, card);
+    result.cardFamily = detected.family;
+    if (detected.ats) {
+      result.ats = detected.ats;
+    }
+
+    // MIFARE Classic cards are not EMV; use FF 82 / FF 86 / FF B0 and return.
+    if (detected.family === 'MIFARE_CLASSIC') {
+      await this.readMifareCard(reader, card, result);
+      return result;
+    }
+
     try {
       const ppseResponse = await this.selectPpse(reader);
       const aidCandidates = this.collectNestedTagValues(ppseResponse, '4F');
@@ -396,14 +585,24 @@ export class ACR122UReaderService {
       }
 
       result.aid = selectedAid.toString('hex').toUpperCase();
+      result.scheme = resolveScheme(result.aid);
 
-      const selectedTlv = parseTlv(selectAIDResponse);
-      const pdol = selectedTlv['9F38'] || Buffer.alloc(0);
+      // EMV GET DATA (80 CA 9F 17 00) — PIN Try Counter (ISO 7816-4).
+      const pinTryCounter = await this.getEmvData(reader, '9F17');
+      if (pinTryCounter) {
+        result.pinTryCounter = pinTryCounter.toString('hex').toUpperCase();
+      }
+
+      // PDOL (9F38) is nested inside the FCI proprietary template A5, and the
+      // AFL (94) is nested inside the GPO response template 77 — parseTlv() is
+      // flat, so the constructed templates must be traversed explicitly.
+      const pdolCandidates = this.collectNestedTagValues(selectAIDResponse, '9F38');
+      const pdol = pdolCandidates.length ? pdolCandidates[0] : Buffer.alloc(0);
       const gpoResponse = await this.getProcessingOptions(reader, pdol.length ? pdol : null, amountMinor, currency);
       result.gpo = gpoResponse.toString('hex').toUpperCase();
 
-      const gpoTlv = parseTlv(gpoResponse);
-      const afl = gpoTlv['94'];
+      const aflCandidates = this.collectNestedTagValues(gpoResponse, '94');
+      const afl = aflCandidates.length ? aflCandidates[0] : null;
 
       if (!afl || afl.length === 0) {
         throw new Error('AFL data missing from GPO response');

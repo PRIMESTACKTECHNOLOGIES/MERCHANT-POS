@@ -125,16 +125,25 @@ function buildDE43(merchantName?: string, city?: string, country?: string): stri
   return `${name}${loc}${cc}`.substring(0, 40).padEnd(40, ' ');
 }
 
+export interface AcquirerRouteOverride {
+  /** Endpoint host, overriding ACQUIRER_HOST (used for per-scheme sponsor routes). */
+  host?: string;
+  /** Endpoint port, overriding ACQUIRER_PORT. */
+  port?: number;
+  /** Request timeout in ms, overriding ACQUIRER_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
 // ── Main client ───────────────────────────────────────────────────────────────
 export class VaultBankAcquirerClient {
   private readonly host: string;
   private readonly port: number;
   private readonly timeoutMs: number;
 
-  constructor() {
-    this.host      = acquirerConfig.host      || '127.0.0.1';
-    this.port      = acquirerConfig.port      || 9000;
-    this.timeoutMs = acquirerConfig.timeoutMs || 8000;
+  constructor(route: AcquirerRouteOverride = {}) {
+    this.host      = route.host      || acquirerConfig.host      || '127.0.0.1';
+    this.port      = route.port      || acquirerConfig.port      || 9000;
+    this.timeoutMs = route.timeoutMs || acquirerConfig.timeoutMs || 8000;
   }
 
   /**

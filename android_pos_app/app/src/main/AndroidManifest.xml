@@ -9,8 +9,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.NFC" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
-    <!-- USB Host Feature for ACS Smart Card Reader -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
@@ -22,11 +24,14 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
-        android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
-        <!-- ── Main POS Activity ─────────────────────────────────────────── -->
+        <!-- ══════════════════════════════════════════════════════════════════
+             PAGE 1 — DEVICE REGISTRATION (LAUNCHER)
+             First screen on fresh install or unregistered state.
+             ══════════════════════════════════════════════════════════════════ -->
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".ui.DeviceRegistrationActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar">
@@ -34,6 +39,34 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             PAGE 2 — CUSTOMER CREATION
+             ══════════════════════════════════════════════════════════════════ -->
+        <activity
+            android:name=".ui.CustomerCreationActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.DeviceRegistrationActivity"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             LIVE PAYMENT TERMINAL (main payment screen)
+             ══════════════════════════════════════════════════════════════════ -->
+        <activity
+            android:name=".ui.LivePaymentActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             PAGE 3 — PAYMENT PROCESSOR DASHBOARD
+             ══════════════════════════════════════════════════════════════════ -->
+        <activity
+            android:name=".ui.POSDashboardActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar">
             <intent-filter>
                 <action android:name="android.nfc.action.TAG_DISCOVERED" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -48,34 +81,58 @@
                 android:resource="@xml/nfc_tech_filter" />
         </activity>
 
-        <!-- ── Settings Activity ─────────────────────────────────────────── -->
+        <!-- ══════════════════════════════════════════════════════════════════
+             PAGE 4 — APPROVAL CODE SELECTION
+             ══════════════════════════════════════════════════════════════════ -->
+        <activity
+            android:name=".ui.ApprovalCodeActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.POSDashboardActivity"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             PAGE 5 — CUSTOMER WALLET
+             ══════════════════════════════════════════════════════════════════ -->
+        <activity
+            android:name=".ui.CustomerWalletActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.POSDashboardActivity"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
+        <!-- ── Legacy Activities (kept for compatibility) ─────────────────── -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
         <activity
             android:name=".ui.SettingsActivity"
             android:exported="false"
-            android:parentActivityName=".ui.MainActivity" />
+            android:parentActivityName=".ui.POSDashboardActivity"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-        <!-- ── Transaction History Activity ─────────────────────────────── -->
         <activity
             android:name=".ui.TransactionHistoryActivity"
             android:exported="false"
-            android:parentActivityName=".ui.MainActivity"
-            android:label="Transaction History" />
+            android:parentActivityName=".ui.POSDashboardActivity"
+            android:label="Transaction History"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-        <!-- ── Customer Activity ─────────────────────────────────────────── -->
         <activity
             android:name=".ui.CustomerActivity"
             android:exported="false"
-            android:parentActivityName=".ui.MainActivity"
-            android:label="Customers" />
+            android:parentActivityName=".ui.POSDashboardActivity"
+            android:label="Customers"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-        <!-- ── Dashboard Sync Activity ───────────────────────────────────── -->
         <activity
             android:name=".ui.DashboardSyncActivity"
             android:exported="false"
-            android:parentActivityName=".ui.MainActivity"
-            android:label="Dashboard" />
+            android:parentActivityName=".ui.POSDashboardActivity"
+            android:label="Dashboard"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-        <!-- ── HCE Virtual Card Service ───────────────────────────────────── -->
+        <!-- ── HCE Virtual Card Service ────────────────────────────────────── -->
         <service
             android:name=".card.VirtualCardHceService"
             android:exported="true"

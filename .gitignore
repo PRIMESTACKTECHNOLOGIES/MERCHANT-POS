@@ -105,3 +105,13 @@ Untitled-*
 coverage/
 __pycache__/
 *.pyc
+
+/net-commander
+
+# ----- Secret dumps / credential files (NEVER commit) -----
+RENDER_ENV.txt
+_working_admin_jwt.txt
+backend/_working_admin_jwt.txt
+deploy_raw.txt
+render_health.ps1
+

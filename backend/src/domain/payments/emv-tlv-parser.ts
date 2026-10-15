@@ -81,6 +81,68 @@ export function parseTlv(buffer: Buffer): EmvTlvMap {
   return tlv;
 }
 
+/**
+ * Recursive TLV parse.
+ *
+ * `parseTlv` only reads the top level, so data nested inside constructed
+ * templates (FCI `6F`/`A5`, GPO `77`, records `70`, `BF0C`…) is invisible —
+ * e.g. AIP (`82`), AFL (`94`), PAN (`5A`), Track 2 (`57`), AC (`9F26`).
+ * Contactless reads return almost everything nested, so those templates must
+ * be traversed. Values are flattened into a single map (later wins).
+ */
+export function parseTlvDeep(buffer: Buffer): EmvTlvMap {
+  const tlv: EmvTlvMap = {};
+  flattenTlv(buffer, tlv);
+  return tlv;
+}
+
+function flattenTlv(buffer: Buffer, out: EmvTlvMap): void {
+  let offset = 0;
+
+  while (offset < buffer.length) {
+    const tagStart = offset;
+    let tag = buffer[offset].toString(16).padStart(2, '0').toUpperCase();
+    offset += 1;
+
+    if ((parseInt(tag, 16) & 0x1f) === 0x1f) {
+      if (offset >= buffer.length) break;
+      let next = buffer[offset];
+      tag += next.toString(16).padStart(2, '0').toUpperCase();
+      offset += 1;
+      while ((next & 0x80) === 0x80 && offset < buffer.length) {
+        next = buffer[offset];
+        tag += next.toString(16).padStart(2, '0').toUpperCase();
+        offset += 1;
+      }
+    }
+
+    if (offset >= buffer.length) break;
+
+    let length = buffer[offset];
+    offset += 1;
+
+    if (length & 0x80) {
+      const lengthBytes = length & 0x7f;
+      length = 0;
+      for (let i = 0; i < lengthBytes && offset < buffer.length; i++) {
+        length = (length << 8) | buffer[offset];
+        offset += 1;
+      }
+    }
+
+    if (offset + length > buffer.length) break;
+
+    const value = buffer.slice(offset, offset + length);
+    offset += length;
+
+    out[tag] = value;
+
+    if ((buffer[tagStart] & 0x20) === 0x20 && value.length > 0) {
+      flattenTlv(value, out);
+    }
+  }
+}
+
 const EMV_TAG_PROPERTY: Record<string, string> = {
   '9F02': 'amountAuthorized',
   '9F03': 'amountOther',

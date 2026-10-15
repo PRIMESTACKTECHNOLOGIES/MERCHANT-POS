@@ -1,13 +1,14 @@
-﻿import { Request, Response } from "express";
+import { Request, Response } from "express";
 import { paymentsService } from "./payments.service";
 import { walletsService } from "../wallets/wallets.service";
 import { getWsServer } from "../../realtime/wsServer";
 import { acr122uReaderService } from "./acr122u-reader";
-import { parseTlv, extractEmvData } from "./emv-tlv-parser";
+import { parseTlvDeep, extractEmvData } from "./emv-tlv-parser";
 import { recordOfflinePosTransaction } from './offline-sync.service';
 import { performOda } from "../../utils/emvOda";
 import { posDecisionService } from "./pos-decision.service";
 import { settleCardTransaction } from "./realSettlement.service";
+import { resolveCardNetwork } from "./acquirer";
 import { db } from "../../config/db";
 import { inboundTransactionService } from "./inboundTransaction.service";
 
@@ -91,7 +92,7 @@ export class PaymentsController {
       if (!normalizedEmv && tlvRaw && typeof tlvRaw === "string") {
         try {
           const rawBuffer = Buffer.from(tlvRaw, "hex");
-          const parsedTlv = parseTlv(rawBuffer);
+          const parsedTlv = parseTlvDeep(rawBuffer);
           normalizedEmv = extractEmvData(parsedTlv, tlvRaw);
         } catch {
           normalizedEmv = { field55: tlvRaw };
@@ -167,7 +168,7 @@ export class PaymentsController {
       if (!decisionEmv && tlvRaw && typeof tlvRaw === 'string') {
         try {
           const rawBuffer = Buffer.from(tlvRaw, 'hex');
-          const parsedTlv = parseTlv(rawBuffer);
+          const parsedTlv = parseTlvDeep(rawBuffer);
           decisionEmv = extractEmvData(parsedTlv);
         } catch {
           decisionEmv = undefined;
@@ -210,11 +211,17 @@ export class PaymentsController {
       }
 
       if (!(card as any).emvReady) {
+        const family = (card as any).cardFamily;
+        const fallback = family === 'MIFARE_CLASSIC'
+          ? 'MIFARE Classic card detected. This is a memory card, not an EMV payment card — EMV APDUs do not apply.'
+          : 'NFC device detected, but no EMV payment application was available. Use a certified contactless terminal for phone wallets.';
         return res.status(422).json({
           success: false,
           nfcDetected: true,
           paymentCardReady: false,
-          error: (card as any).error || 'NFC device detected, but no EMV payment application was available. Use a certified contactless terminal for phone wallets.'
+          cardFamily: family || 'UNKNOWN',
+          cardType: (card as any).type || null,
+          error: (card as any).error || fallback
         });
       }
 
@@ -225,7 +232,9 @@ export class PaymentsController {
       if ((card as any).raw && Buffer.isBuffer((card as any).raw)) {
         const rawBuffer = (card as any).raw as Buffer;
         tlvRaw = rawBuffer.toString('hex').toUpperCase();
-        const tlv = parseTlv(rawBuffer);
+        // Nested EMV templates (6F/A5/77/70) must be traversed or AIP (82),
+        // AFL (94), PAN (5A), Track 2 (57) and AC (9F26) are lost.
+        const tlv = parseTlvDeep(rawBuffer);
         emv = extractEmvData(tlv);
         const oda = await performOda(tlv);
         return res.json({ success: true, card, emv, oda, tlvRaw });
@@ -262,13 +271,22 @@ export class PaymentsController {
 
   async captureSettlement(req: Request, res: Response) {
     try {
-      const { merchantId, amount, authRef } = req.body || {};
+      const { merchantId, amount, authRef, currency, network, pan } = req.body || {};
 
       if (!merchantId || !amount || !authRef) {
         return res.status(400).json({ error: "merchantId, amount and authRef are required" });
       }
 
-      const settled = await settleCardTransaction(merchantId, Number(amount), authRef);
+      // Route the capture to the same scheme sponsor the authorization used.
+      const { network: resolvedNetwork } = resolveCardNetwork({ scheme: network, pan });
+
+      const settled = await settleCardTransaction(
+        merchantId,
+        Number(amount),
+        authRef,
+        currency,
+        resolvedNetwork
+      );
       return res.json(settled);
     } catch (error: any) {
       return res.status(500).json({ error: error.message || "Unable to settle transaction" });

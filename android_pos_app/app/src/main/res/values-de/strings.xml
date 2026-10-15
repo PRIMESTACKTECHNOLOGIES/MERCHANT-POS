@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">LIVE-ZAHLUNG</string>
+    <string name="pay_now">⚡  JETZT BEZAHLEN</string>
+    <string name="send_to_merchant">🏦  AN HÄNDLER SENDEN</string>
+    <string name="no_customer">👤  Kein Kunde ausgewählt</string>
+    <string name="select">AUSWÄHLEN</string>
+    <string name="new_customer">+ NEU</string>
+    <string name="change">ÄNDERN</string>
+    <string name="normal_card">Normale Kartenzahlung</string>
+    <string name="voice_auth">101.1 — Sprachautorisierung</string>
+    <string name="emv_chip">101.6 — EMV-Chip/Kontaktlos</string>
+    <string name="offline_batch">201.3 — Offline-Stapel</string>
+    <string name="card_number">KARTENNUMMER</string>
+    <string name="expiry">ABLAUFDATUM</string>
+    <string name="cvv">CVV-CODE</string>
+    <string name="auth_code">AUTORISIERUNGSCODE</string>
+    <string name="charge_now">JETZT BELASTEN</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="approved">GENEHMIGT</string>
+    <string name="saved_offline">OFFLINE GESPEICHERT</string>
+    <string name="new_payment">NEUE ZAHLUNG</string>
+    <string name="select_customer">Kunde auswählen</string>
+    <string name="payment_protocol">Zahlungsprotokoll</string>
+    <string name="customer_name">Vollständiger Name *</string>
+    <string name="email_optional">E-Mail (optional)</string>
+    <string name="phone_optional">Telefon (optional)</string>
+    <string name="create">ERSTELLEN</string>
+    <string name="enter_amount">Zuerst Betrag eingeben</string>
+    <string name="select_customer_first">Zuerst Kunde auswählen oder erstellen</string>
+    <string name="nfc_ready">📡  NFC bereit — Karte antippen</string>
+    <string name="nfc_unavailable">⚠  NFC nicht verfügbar</string>
+    <string name="online">● ONLINE</string>
+    <string name="offline_status">● OFFLINE</string>
+    <string name="amount_label">BETRAG</string>
+    <string name="merchant_id_label">HÄNDLER-ID</string>
+    <string name="api_key_label">API-SCHLÜSSEL (OPT)</string>
+    <string name="secret_label">GEHEIMSCHLÜSSEL (OPT)</string>
+    <string name="send_to_merchant_btn">AN HÄNDLER SENDEN</string>
+    <string name="customer">Kunde</string>
+    <string name="synced_dashboard">Mit Dashboard synchronisiert ✓</string>
+    <string name="will_sync">Wird synchronisiert wenn online</string>
+    <string name="language_select">🌐  Sprache</string>
+</resources>

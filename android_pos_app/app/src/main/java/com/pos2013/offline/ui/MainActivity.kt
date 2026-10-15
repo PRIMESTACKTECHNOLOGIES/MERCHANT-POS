@@ -61,22 +61,225 @@ class MainActivity : AppCompatActivity() {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Hide Action Bar and style Status Bar
+
         supportActionBar?.hide()
         window.apply {
             addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
             statusBarColor = Color.parseColor("#1E3A5F")
         }
 
-        // Initialize readers
         acsReaderManager = AcsReaderManager(this)
         androidNfcReaderManager = AndroidBuiltInNfcReaderManager(this)
+
+        if (!PosApplication.isTerminalVerified(this)) {
+            showActivationScreen()
+            return
+        }
 
         buildUI()
         refreshPendingCount()
         setStatus("OFFLINE", "#D97706")
         observeReaders()
+    }
+
+    // ── Terminal Activation Gate ───────────────────────────────────────────────
+    private fun showActivationScreen() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            setPadding(dp(24), dp(32), dp(24), dp(24))
+        }
+
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(root)
+        }
+
+        // Brand
+        val brandWrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(8), 0, dp(24))
+        }
+        TextView(this).apply {
+            text = "PRIMESTACK POS"
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            letterSpacing = 0.08f
+        }.also { brandWrap.addView(it) }
+        TextView(this).apply {
+            text = "201.3 Protocol · Terminal Setup"
+            textSize = 11f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(0, dp(4), 0, 0)
+        }.also { brandWrap.addView(it) }
+        root.addView(brandWrap)
+
+        // Card
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#1E293B"))
+            setPadding(dp(20), dp(22), dp(20), dp(22))
+            elevation = 8f
+        }
+        val lpCard = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        card.layoutParams = lpCard
+
+        fun heading(t: String) = TextView(this).apply {
+            text = t
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#94A3B8"))
+            letterSpacing = 0.12f
+            setPadding(0, 0, 0, dp(5))
+        }
+        fun styledInput(hint: String, isPwd: Boolean = false, cap: Boolean = false) = EditText(this).apply {
+            this.hint = hint
+            setHintTextColor(Color.parseColor("#64748B"))
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            inputType = when {
+                isPwd && cap -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                isPwd -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                cap -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                else -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            }
+        }
+
+        val etBackend = styledInput("https://your-pos-server.example.com").apply {
+            setText(PosApplication.getServerUrl(this@MainActivity))
+        }
+        val etMerchantId = styledInput("MRC-1001", cap = true).apply {
+            setText(PosApplication.getMerchantId(this@MainActivity))
+        }
+        val etTerminalId = styledInput("T2013-001", cap = true).apply {
+            setText(PosApplication.getTerminalId(this@MainActivity))
+        }
+        val etSecretKey = styledInput("Terminal Secret Key", isPwd = true, cap = true).apply {
+            setText(PosApplication.getSecretKey(this@MainActivity))
+        }
+
+        card.addView(heading("BACKEND URL"))
+        card.addView(etBackend)
+        card.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(10)) })
+        card.addView(heading("MERCHANT ID"))
+        card.addView(etMerchantId)
+        card.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(10)) })
+        card.addView(heading("TERMINAL ID"))
+        card.addView(etTerminalId)
+        card.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(10)) })
+        card.addView(heading("SECRET KEY"))
+        card.addView(etSecretKey)
+
+        val statusText = TextView(this).apply {
+            text = ""
+            textSize = 12f
+            setPadding(dp(8), dp(12), dp(8), 0)
+        }
+        card.addView(statusText)
+
+        card.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(18)) })
+
+        val btnSave = Button(this).apply {
+            text = "ACTIVATE TERMINAL"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#2563EB"))
+            setPadding(0, dp(14), 0, dp(14))
+        }
+        card.addView(btnSave)
+
+        card.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(14)) })
+
+        val btnRegister = Button(this).apply {
+            text = "＋ REGISTER CUSTOMER"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#1E3A5F"))
+            setBackgroundColor(Color.parseColor("#BFDBFE"))
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        card.addView(btnRegister)
+
+        root.addView(card)
+
+        val tip = TextView(this).apply {
+            text = "Get these details from your Merchant Dashboard → Terminals page"
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(18), 0, 0)
+        }
+        root.addView(tip)
+
+        setContentView(scroll)
+
+        btnSave.setOnClickListener {
+            val backend = etBackend.text.toString().trim().ifBlank { ApiClient.DEFAULT_URL }
+            val mid = etMerchantId.text.toString().trim().uppercase()
+            val tid = etTerminalId.text.toString().trim().uppercase()
+            val sk = etSecretKey.text.toString().trim()
+            if (mid.isBlank() || tid.isBlank() || sk.isBlank()) {
+                statusText.text = "❌ All 4 fields are required"
+                statusText.setTextColor(Color.parseColor("#FCA5A5"))
+                return@setOnClickListener
+            }
+            lifecycleScope.launch {
+                statusText.text = "⏳ Verifying with server…"
+                statusText.setTextColor(Color.parseColor("#FCD34D"))
+                var ok = false
+                var msg = ""
+                try {
+                    val normalized = backend.trim().let { if (!it.endsWith("/")) "$it/" else it }
+                    val api = ApiClient.createTerminalsApi(normalized)
+                    val resp = withContext(Dispatchers.IO) {
+                        api.verifyTerminal(
+                            com.pos2013.offline.data.api.TerminalVerifyRequest(
+                                merchantId = mid, terminalId = tid, secretKey = sk
+                            )
+                        )
+                    }
+                    val body = resp.body()
+                    if (resp.isSuccessful && body?.valid == true) {
+                        PosApplication.saveTerminalCredentials(
+                            this@MainActivity, normalized, mid, tid, sk, true
+                        )
+                        ok = true
+                        msg = body.message ?: "Terminal verified"
+                    } else {
+                        msg = body?.error ?: body?.message ?: "HTTP ${resp.code()} — verify failed"
+                    }
+                } catch (e: Exception) {
+                    msg = "Network error: ${e.localizedMessage ?: e.message}"
+                }
+                if (ok) {
+                    statusText.text = "✅ $msg"
+                    statusText.setTextColor(Color.parseColor("#86EFAC"))
+                    android.os.Handler(mainLooper).postDelayed({
+                        recreate()
+                    }, 700)
+                } else {
+                    statusText.text = "❌ $msg"
+                    statusText.setTextColor(Color.parseColor("#FCA5A5"))
+                }
+            }
+        }
+
+        btnRegister.setOnClickListener {
+            val mid = etMerchantId.text.toString().trim().uppercase()
+                .ifBlank { PosApplication.getMerchantId(this@MainActivity) }
+            val openIntent = Intent(this@MainActivity, CustomerActivity::class.java)
+            if (mid.isNotBlank()) openIntent.putExtra("merchant_id", mid)
+            startActivity(openIntent)
+        }
     }
 
     override fun onResume() {
@@ -140,17 +343,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getRepo(): TransactionRepository {
-        val prefs = getSharedPreferences("pos_settings", Context.MODE_PRIVATE)
         val jwtToken = PosApplication.getJwtToken(this)
         val serverUrl = PosApplication.getServerUrl(this)
         val appDatabase = (application as PosApplication).database
+        val merchantId = PosApplication.getMerchantId(this).ifBlank { "MERCHANT123" }
+        val terminalId = PosApplication.getTerminalId(this).ifBlank { "TERM001" }
         return TransactionRepository(
             dao = appDatabase.transactionDao(),
             walletTopupDao = appDatabase.walletTopupDao(),
             api = ApiClient.createPayment2013Api(serverUrl, jwtToken),
             walletsApi = ApiClient.createWalletsApi(serverUrl, jwtToken),
-            merchantId = prefs.getString("merchant_id", "MERCHANT123") ?: "MERCHANT123",
-            terminalId = prefs.getString("terminal_id", "TERM001") ?: "TERM001"
+            merchantId = merchantId,
+            terminalId = terminalId
         )
     }
 

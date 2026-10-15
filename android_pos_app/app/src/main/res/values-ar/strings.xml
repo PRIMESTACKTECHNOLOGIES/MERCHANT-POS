@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">الدفع المباشر</string>
+    <string name="pay_now">⚡  ادفع الآن</string>
+    <string name="send_to_merchant">🏦  أرسل إلى محفظة التاجر</string>
+    <string name="no_customer">👤  لم يتم اختيار عميل</string>
+    <string name="select">اختيار</string>
+    <string name="new_customer">+ جديد</string>
+    <string name="change">تغيير</string>
+    <string name="normal_card">دفع ببطاقة عادية</string>
+    <string name="voice_auth">101.1 — تفويض صوتي</string>
+    <string name="emv_chip">101.6 — شريحة EMV/بدون تلامس</string>
+    <string name="offline_batch">201.3 — دفعة غير متصلة</string>
+    <string name="card_number">رقم البطاقة</string>
+    <string name="expiry">تاريخ الانتهاء</string>
+    <string name="cvv">رمز CVV</string>
+    <string name="auth_code">رمز الموافقة</string>
+    <string name="charge_now">خصم الآن</string>
+    <string name="cancel">إلغاء</string>
+    <string name="approved">تمت الموافقة</string>
+    <string name="saved_offline">تم الحفظ دون اتصال</string>
+    <string name="new_payment">دفعة جديدة</string>
+    <string name="select_customer">اختر عميلاً</string>
+    <string name="payment_protocol">بروتوكول الدفع</string>
+    <string name="customer_name">الاسم الكامل *</string>
+    <string name="email_optional">البريد الإلكتروني (اختياري)</string>
+    <string name="phone_optional">الهاتف (اختياري)</string>
+    <string name="create">إنشاء</string>
+    <string name="enter_amount">أدخل المبلغ أولاً</string>
+    <string name="select_customer_first">اختر أو أنشئ عميلاً أولاً</string>
+    <string name="nfc_ready">📡  NFC جاهز — المس البطاقة</string>
+    <string name="nfc_unavailable">⚠  NFC غير متاح</string>
+    <string name="online">● متصل</string>
+    <string name="offline_status">● غير متصل</string>
+    <string name="amount_label">المبلغ</string>
+    <string name="merchant_id_label">معرف التاجر</string>
+    <string name="api_key_label">مفتاح API (اختياري)</string>
+    <string name="secret_label">المفتاح السري (اختياري)</string>
+    <string name="send_to_merchant_btn">أرسل للتاجر</string>
+    <string name="customer">العميل</string>
+    <string name="synced_dashboard">تمت المزامنة مع لوحة التحكم ✓</string>
+    <string name="will_sync">ستتم المزامنة عند الاتصال</string>
+    <string name="language_select">🌐  اللغة</string>
+</resources>

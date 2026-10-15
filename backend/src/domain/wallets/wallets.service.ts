@@ -2,7 +2,7 @@ import axios from "axios";
 import crypto from "crypto";
 import { db } from "../../config/db";
 import { acquirerConfig } from "../../config/acquirer";
-import { createAcquirerClient } from '../payments/acquirer';
+import { createAcquirerClient, detectNetworkFromPan } from '../payments/acquirer';
 import { v4 as uuidv4 } from 'uuid';
 import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
 
@@ -244,7 +244,7 @@ export class WalletsService {
 
     if (acquirerActive) {
       try {
-        const acquirer = createAcquirerClient();
+        const acquirer = createAcquirerClient(detectNetworkFromPan(sanitizedPan));
         const merchantAccount = acquirerConfig.merchantId || process.env.PROCESSOR_MERCHANT_ID || 'MRC-1001';
         const result = await acquirer.authorize({
           merchantAccount,

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">PAIEMENT EN DIRECT</string>
+    <string name="pay_now">⚡  PAYER MAINTENANT</string>
+    <string name="send_to_merchant">🏦  ENVOYER AU PORTEFEUILLE</string>
+    <string name="no_customer">👤  Aucun client sélectionné</string>
+    <string name="select">CHOISIR</string>
+    <string name="new_customer">+ NOUVEAU</string>
+    <string name="change">MODIFIER</string>
+    <string name="normal_card">Paiement par carte normale</string>
+    <string name="voice_auth">101.1 — Auth vocale</string>
+    <string name="emv_chip">101.6 — Puce EMV/Sans contact</string>
+    <string name="offline_batch">201.3 — Lot hors ligne</string>
+    <string name="card_number">NUMÉRO DE CARTE</string>
+    <string name="expiry">EXPIRATION</string>
+    <string name="cvv">CODE CVV</string>
+    <string name="auth_code">CODE D\'AUTORISATION</string>
+    <string name="charge_now">DÉBITER MAINTENANT</string>
+    <string name="cancel">Annuler</string>
+    <string name="approved">APPROUVÉ</string>
+    <string name="saved_offline">ENREGISTRÉ HORS LIGNE</string>
+    <string name="new_payment">NOUVEAU PAIEMENT</string>
+    <string name="select_customer">Sélectionner un client</string>
+    <string name="payment_protocol">Protocole de paiement</string>
+    <string name="customer_name">Nom complet *</string>
+    <string name="email_optional">Email (optionnel)</string>
+    <string name="phone_optional">Téléphone (optionnel)</string>
+    <string name="create">CRÉER</string>
+    <string name="enter_amount">Entrez un montant d\'abord</string>
+    <string name="select_customer_first">Sélectionnez ou créez un client d\'abord</string>
+    <string name="nfc_ready">📡  NFC prêt — appuyez la carte</string>
+    <string name="nfc_unavailable">⚠  NFC non disponible</string>
+    <string name="online">● EN LIGNE</string>
+    <string name="offline_status">● HORS LIGNE</string>
+    <string name="amount_label">MONTANT</string>
+    <string name="merchant_id_label">ID MARCHAND</string>
+    <string name="api_key_label">CLÉ API (OPT)</string>
+    <string name="secret_label">SECRET (OPT)</string>
+    <string name="send_to_merchant_btn">ENVOYER AU MARCHAND</string>
+    <string name="customer">Client</string>
+    <string name="synced_dashboard">Synchronisé avec le tableau de bord ✓</string>
+    <string name="will_sync">Synchronisera quand en ligne</string>
+    <string name="language_select">🌐  Langue</string>
+</resources>

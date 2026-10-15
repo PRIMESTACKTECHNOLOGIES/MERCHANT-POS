@@ -1,5 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">POS Offline</string>
     <string name="hce_service_description" translatable="false">Virtual Wallet Card Emulation</string>
     <string name="virtual_wallet_card" translatable="false">Virtual Wallet Card</string>
+
+    <!-- App UI strings (English default) -->
+    <string name="live_payment">LIVE PAYMENT</string>
+    <string name="pay_now">⚡  PAY NOW</string>
+    <string name="send_to_merchant">🏦  SEND TO MERCHANT WALLET</string>
+    <string name="no_customer">👤  No customer selected</string>
+    <string name="select">SELECT</string>
+    <string name="new_customer">+ NEW</string>
+    <string name="change">CHANGE</string>
+    <string name="normal_card">Normal Card Charge</string>
+    <string name="voice_auth">101.1 — Voice Auth</string>
+    <string name="emv_chip">101.6 — EMV Chip/Tap</string>
+    <string name="offline_batch">201.3 — Offline Batch</string>
+    <string name="card_number">CARD NUMBER</string>
+    <string name="expiry">EXPIRY</string>
+    <string name="cvv">CVV</string>
+    <string name="auth_code">AUTH CODE</string>
+    <string name="charge_now">CHARGE NOW</string>
+    <string name="cancel">Cancel</string>
+    <string name="approved">APPROVED</string>
+    <string name="saved_offline">SAVED OFFLINE</string>
+    <string name="new_payment">NEW PAYMENT</string>
+    <string name="select_customer">Select Customer</string>
+    <string name="payment_protocol">Payment Protocol</string>
+    <string name="customer_name">Full Name *</string>
+    <string name="email_optional">Email (optional)</string>
+    <string name="phone_optional">Phone (optional)</string>
+    <string name="create">CREATE</string>
+    <string name="enter_amount">Enter an amount first</string>
+    <string name="select_customer_first">Select or create a customer first</string>
+    <string name="nfc_ready">📡  NFC ready — tap card to auto-fill</string>
+    <string name="nfc_unavailable">⚠  NFC not available on this device</string>
+    <string name="online">● LIVE</string>
+    <string name="offline_status">● OFFLINE</string>
+    <string name="amount_label">AMOUNT</string>
+    <string name="merchant_id_label">MERCHANT ID</string>
+    <string name="api_key_label">API KEY (OPT)</string>
+    <string name="secret_label">SECRET (OPT)</string>
+    <string name="send_to_merchant_btn">SEND TO MERCHANT</string>
+    <string name="customer">Customer</string>
+    <string name="synced_dashboard">Synced to dashboard ✓</string>
+    <string name="will_sync">Will sync to dashboard when online</string>
+    <string name="language_select">🌐  Language / اللغة</string>
 </resources>

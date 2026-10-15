@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Swahili — covers East/Central Africa (Kenya, Tanzania, Uganda, DRC, etc.) -->
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">MALIPO YA MOJA KWA MOJA</string>
+    <string name="pay_now">⚡  LIPA SASA</string>
+    <string name="send_to_merchant">🏦  TUMA KWA MFANYABIASHARA</string>
+    <string name="no_customer">👤  Hakuna mteja aliyechaguliwa</string>
+    <string name="select">CHAGUA</string>
+    <string name="new_customer">+ MPYA</string>
+    <string name="change">BADILISHA</string>
+    <string name="normal_card">Malipo ya kawaida ya kadi</string>
+    <string name="voice_auth">101.1 — Idhini ya sauti</string>
+    <string name="emv_chip">101.6 — EMV Chip/Bila mawasiliano</string>
+    <string name="offline_batch">201.3 — Kundi la nje ya mtandao</string>
+    <string name="card_number">NAMBARI YA KADI</string>
+    <string name="expiry">TAREHE YA KUMALIZIKA</string>
+    <string name="cvv">NAMBARI YA CVV</string>
+    <string name="auth_code">NAMBARI YA IDHINI</string>
+    <string name="charge_now">KATA SASA</string>
+    <string name="cancel">Ghairi</string>
+    <string name="approved">IMEIDHINISHWA</string>
+    <string name="saved_offline">IMEHIFADHIWA NJE YA MTANDAO</string>
+    <string name="new_payment">MALIPO MAPYA</string>
+    <string name="select_customer">Chagua mteja</string>
+    <string name="payment_protocol">Itifaki ya malipo</string>
+    <string name="customer_name">Jina kamili *</string>
+    <string name="email_optional">Barua pepe (si lazima)</string>
+    <string name="phone_optional">Simu (si lazima)</string>
+    <string name="create">UNDA</string>
+    <string name="enter_amount">Ingiza kiasi kwanza</string>
+    <string name="select_customer_first">Chagua au unda mteja kwanza</string>
+    <string name="nfc_ready">📡  NFC iko tayari — gusa kadi</string>
+    <string name="nfc_unavailable">⚠  NFC haipatikani</string>
+    <string name="online">● MTANDAONI</string>
+    <string name="offline_status">● NJE YA MTANDAO</string>
+    <string name="amount_label">KIASI</string>
+    <string name="merchant_id_label">KITAMBULISHO CHA MFANYABIASHARA</string>
+    <string name="api_key_label">UFUNGUO WA API (HAI LAZIMA)</string>
+    <string name="secret_label">SIRI (HAI LAZIMA)</string>
+    <string name="send_to_merchant_btn">TUMA KWA MFANYABIASHARA</string>
+    <string name="customer">Mteja</string>
+    <string name="synced_dashboard">Imesawazishwa na dashibodi ✓</string>
+    <string name="will_sync">Itasawazishwa ukiunganika</string>
+    <string name="language_select">🌐  Lugha</string>
+</resources>

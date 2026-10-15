@@ -7,19 +7,29 @@ import {
   AcquirerCaptureResponse,
 } from './acquirer.types';
 
+export interface HttpRouteOverride {
+  /** Base URL for the sponsor endpoint, overriding ACQUIRER_HOST. */
+  baseUrl?: string;
+  /** API key, overriding ACQUIRER_API_KEY. */
+  apiKey?: string;
+}
+
 export class HttpAcquirerClient {
   private readonly baseUrl: string;
+  private readonly apiKey?: string;
 
-  constructor() {
-    if (!acquirerConfig.host) throw new Error('ACQUIRER_HOST missing');
-    if (acquirerConfig.protocol !== 'http-json') {
+  constructor(route: HttpRouteOverride = {}) {
+    const host = route.baseUrl || acquirerConfig.host;
+    if (!host) throw new Error('ACQUIRER_HOST missing');
+    if (!route.baseUrl && acquirerConfig.protocol !== 'http-json') {
       throw new Error('ACQUIRER_PROTOCOL=iso8583-tcp is not implemented by this client');
     }
-    this.baseUrl = acquirerConfig.host.replace(/\/+$/, '');
+    this.baseUrl = host.replace(/\/+$/, '');
+    this.apiKey = route.apiKey || acquirerConfig.apiKey;
   }
 
   private headers(): Record<string, string> {
-    return acquirerConfig.apiKey ? { 'X-API-Key': acquirerConfig.apiKey } : {};
+    return this.apiKey ? { 'X-API-Key': this.apiKey } : {};
   }
 
   async authorize(req: AcquirerAuthRequest): Promise<AcquirerAuthResponse> {

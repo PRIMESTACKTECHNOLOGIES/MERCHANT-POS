@@ -1,6 +1,6 @@
 ﻿import axios from 'axios';
 import { acquirerConfig } from '../../config/acquirer';
-import { createAcquirerClient } from './acquirer';
+import { createAcquirerClient, detectNetworkFromPan } from './acquirer';
 import { db } from "../../config/db";
 import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
 import { buildEmvChargePayload, parseTlv } from './emv-tlv-parser';
@@ -194,7 +194,7 @@ export class PaymentsService {
   private async authorizeOnlineCharge(payload: PosTransactionPayload): Promise<OnlineAuthorizationResult> {
     if (acquirerConfig.host) {
       try {
-        const acquirer = createAcquirerClient();
+        const acquirer = createAcquirerClient(detectNetworkFromPan(payload.pan || ''));
         const merchantAccount = acquirerConfig.merchantId || String(payload.merchantId || '').trim();
         if (!merchantAccount) {
           return { success: false, status: 'ERROR', processor: { approved: false, reason: 'Acquirer merchant account missing' }, error: 'ACQUIRER_MERCHANT_ACCOUNT or merchantId is required' };
@@ -894,7 +894,11 @@ export class PaymentsService {
           const batchId = `batch-${paymentIntentId.slice(0, 12)}`;
           let acquirerCaptureConfirmed = false;
 
-          if (acquirerConfig.host && (process.env.ACQUIRER_PROTOCOL || '').toLowerCase() !== 'iso8583-tcp') {
+          // Capture runs for ALL protocols when an acquirer host is configured.
+          // iso8583-tcp uses the VaultBankAcquirerClient.capture() (0220 message).
+          // http-json uses the HttpAcquirerClient.capture() (REST call).
+          // Both must confirm capture before merchant wallet is credited.
+          if (acquirerConfig.host) {
             try {
               const capture = await captureCardTransaction({
                 merchantId,

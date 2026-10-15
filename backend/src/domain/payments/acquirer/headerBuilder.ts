@@ -12,8 +12,10 @@ export function getIso8583HeaderMode(): Iso8583HeaderMode {
   throw new Error(`Unsupported ISO8583_HEADER mode: ${configured}`);
 }
 
-export function buildIso8583Frame(isoMessage: Buffer | string): Buffer {
-  const mode = getIso8583HeaderMode();
+export function buildIso8583Frame(
+  isoMessage: Buffer | string,
+  mode: Iso8583HeaderMode = getIso8583HeaderMode(),
+): Buffer {
   const message = Buffer.isBuffer(isoMessage) ? isoMessage : Buffer.from(isoMessage, 'utf8');
 
   switch (mode) {
@@ -30,8 +32,10 @@ export function buildIso8583Frame(isoMessage: Buffer | string): Buffer {
   }
 }
 
-export function removeIso8583Frame(frame: Buffer): Buffer {
-  const mode = getIso8583HeaderMode();
+export function removeIso8583Frame(
+  frame: Buffer,
+  mode: Iso8583HeaderMode = getIso8583HeaderMode(),
+): Buffer {
   if (mode === 'NONE') return frame;
   if (mode === 'TPDU') {
     if (frame.length < TPDU.length || !frame.subarray(0, TPDU.length).equals(TPDU)) {
@@ -49,8 +53,10 @@ export function removeIso8583Frame(frame: Buffer): Buffer {
   return frame.subarray(prefixLength, prefixLength + length);
 }
 
-export function isCompleteIso8583Frame(frame: Buffer): boolean {
-  const mode = getIso8583HeaderMode();
+export function isCompleteIso8583Frame(
+  frame: Buffer,
+  mode: Iso8583HeaderMode = getIso8583HeaderMode(),
+): boolean {
   if (mode === 'NONE' || mode === 'TPDU') return frame.length > 0;
   const prefixLength = mode === 'LEN2' ? 2 : 4;
   if (frame.length < prefixLength) return false;

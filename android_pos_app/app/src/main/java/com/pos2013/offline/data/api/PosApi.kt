@@ -218,7 +218,10 @@ data class PosChargeRequest(
     val authCode: String? = null,
     val emv: Map<String, Any?>? = null,
     val tlvRaw: String? = null,
-    val stan: String? = null
+    val stan: String? = null,
+    val customerId: String? = null,       // ← REQUIRED for real wallet credit
+    val protocol: String? = null,         // ← "101.1" | "101.6" | "201.3"
+    val cardholderName: String? = null    // ← customer name for receipt
 )
 
 data class PosChargeResponse(
@@ -259,7 +262,7 @@ interface Payment2013Api {
     @POST("api/payment2013/redeem")
     suspend fun redeemCode(@Body request: RedeemRequest): Response<RedeemResponse>
 
-    @POST("merchant/v1/payments/payments/charge")
+    @POST("merchant/v1/payments/charge")
     suspend fun chargeOnline(@Body request: PosChargeRequest): Response<PosChargeResponse>
 }
 

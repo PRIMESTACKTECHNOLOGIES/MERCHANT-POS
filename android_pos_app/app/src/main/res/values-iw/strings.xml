@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">POS Offline</string>
+    <string name="live_payment">תשלום חי</string>
+    <string name="pay_now">⚡  שלם עכשיו</string>
+    <string name="send_to_merchant">🏦  שלח לארנק הסוחר</string>
+    <string name="no_customer">👤  לא נבחר לקוח</string>
+    <string name="select">בחר</string>
+    <string name="new_customer">+ חדש</string>
+    <string name="change">שנה</string>
+    <string name="normal_card">חיוב כרטיס רגיל</string>
+    <string name="voice_auth">101.1 — אישור קולי</string>
+    <string name="emv_chip">101.6 — EMV שבב/חסר מגע</string>
+    <string name="offline_batch">201.3 — אצווה לא מקוונת</string>
+    <string name="card_number">מספר כרטיס</string>
+    <string name="expiry">תאריך תפוגה</string>
+    <string name="cvv">קוד CVV</string>
+    <string name="auth_code">קוד אישור</string>
+    <string name="charge_now">חייב עכשיו</string>
+    <string name="cancel">ביטול</string>
+    <string name="approved">אושר</string>
+    <string name="saved_offline">נשמר במצב לא מקוון</string>
+    <string name="new_payment">תשלום חדש</string>
+    <string name="select_customer">בחר לקוח</string>
+    <string name="payment_protocol">פרוטוקול תשלום</string>
+    <string name="customer_name">שם מלא *</string>
+    <string name="email_optional">דוא\"ל (אופציונלי)</string>
+    <string name="phone_optional">טלפון (אופציונלי)</string>
+    <string name="create">צור</string>
+    <string name="enter_amount">הזן סכום תחילה</string>
+    <string name="select_customer_first">בחר או צור לקוח תחילה</string>
+    <string name="nfc_ready">📡  NFC מוכן — הקש כרטיס</string>
+    <string name="nfc_unavailable">⚠  NFC אינו זמין</string>
+    <string name="online">● מקוון</string>
+    <string name="offline_status">● לא מקוון</string>
+    <string name="amount_label">סכום</string>
+    <string name="merchant_id_label">מזהה סוחר</string>
+    <string name="api_key_label">מפתח API (אופ.)</string>
+    <string name="secret_label">סוד (אופ.)</string>
+    <string name="send_to_merchant_btn">שלח לסוחר</string>
+    <string name="customer">לקוח</string>
+    <string name="synced_dashboard">סונכרן עם לוח המחוונים ✓</string>
+    <string name="will_sync">יסונכרן כשיהיה מקוון</string>
+    <string name="language_select">🌐  שפה</string>
+</resources>
