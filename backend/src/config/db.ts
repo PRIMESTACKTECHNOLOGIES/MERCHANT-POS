@@ -1020,62 +1020,10 @@ async function getDb(): Promise<any> {
     _db.run(`UPDATE vault_accounts SET updated_at = COALESCE(updated_at, ?), created_at = COALESCE(created_at, ?)`, [NOW_ISO2, NOW_ISO2]);
   } catch (_) {}
 
-  // ── Bootstrap: Register Inbound 101.1 Transaction Auth Code 0707 ──
-  try {
-    const REG_NOW = new Date().toISOString();
-    const REG_ID = 'INBOUND-REG-0707-DTC1011';
-    const AUTH_CODE = '0707';
-    const PROTOCOL = '101.1';
-    const AMOUNT = 1000000000.11;
-    const CURRENCY = 'USD';
-    _db.run(
-      `INSERT OR IGNORE INTO inbound_transaction_registrations
-        (id, protocol, authorization_code, amount, currency, beneficiary_name, beneficiary_account,
-         sender_bic, receiver_bic, uetr, deposit_code, cusip, fed_wire_code, swift_mt_type, iso20022_type,
-         settlement_status, fund_verification_status, merchant_id, customer_id, pan_masked, card_registered,
-         raw_document, meta_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               'PENDING_VERIFICATION', 'UNVERIFIED', NULL, NULL, NULL, 0, ?, ?, ?, ?)`,
-      [
-        REG_ID,
-        PROTOCOL,
-        AUTH_CODE,
-        AMOUNT,
-        CURRENCY,
-        'Musa Abubakar Abdulkadir',
-        null,
-        'TUBDDEDDXXX',
-        'SBICZAJJXXX',
-        'c9b7e2a4-fb5f-41f9-a02b-4ba90998c19b',
-        'G818-3124929DB-HSBC-26718459',
-        'SCG-664338RT667',
-        'E-8142HSBC.3156.6868.1003.4259.7142.157',
-        'MT103+',
-        'pacs.008.001.10',
-        `DTC/101.1 SWIFT Alliance Confirmation — Sender TUBDDEDDXXX / Receiver SBICZAJJXXX — Beneficiary Musa Abubakar Abdulkadir — Status POSITIVE ACK (STP) — Network Matched 100%`,
-        JSON.stringify({
-          document_type: 'DTC/101.1',
-          swift_header: '{1:F01TUBDDEDDXXXX090512886479}{2:I103SBICZAJJXXXXN}',
-          field_32A: ':32A:260911USD1000000000.11',
-          audit_dictum: 'Funds are verified good… fully cleared for interbank credit.',
-          settlement_claim: 'POSITIVE ACK STP',
-          network_match: '100% SUCCESS',
-          routing_mode: 'SWIFT FIN + ISO 20022',
-          destination_wallet_note: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb (referenced document; NOT executed by processor)',
-          visa_url_note: 'https://www.usa.visa.com/vmml/access (document reference only)',
-          alchemy_url_note: 'https://eth-mainnet.g.alchemy.com/v2/itO3MDno7oXgclJIZoW16 (document reference only)',
-          expected_card_capture: true,
-          card_details_to_be_provided: true,
-          note: 'Document format deviations detected (non-standard CUSIP/Fedwire structure). Funds MUST be verified via external provider API before any wallet credit — NO stand-in approval.',
-        }),
-        REG_NOW,
-        REG_NOW,
-      ]
-    );
-    console.log(`[BOOTSTRAP] Inbound 101.1 registration ${AUTH_CODE} ${CURRENCY} ${AMOUNT.toLocaleString()} ensured (INSERT OR IGNORE).`);
-  } catch (regErr: any) {
-    console.warn('[BOOTSTRAP] Inbound 101.1 registration bootstrap skipped:', regErr?.message);
-  }
+  // ── Bootstrap: Inbound SWIFT registration removed ──
+  // No fabricated inbound transaction records are seeded at startup.
+  // All inbound registrations must be created via POST /payments/inbound/register
+  // with real external provider verification before any wallet credit is issued.
 
   // Persist initial state
   schedulePersist();

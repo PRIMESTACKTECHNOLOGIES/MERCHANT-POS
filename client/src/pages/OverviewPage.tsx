@@ -1186,7 +1186,7 @@ export const OverviewPage = () => {
                         {txn.status}
                       </span>
                     </td>
-                    <td className="py-3.5 text-xs font-mono text-gray-500">{txn.stan || Math.floor(100000 + Math.random() * 900000)}</td>
+                    <td className="py-3.5 text-xs font-mono text-gray-500">{txn.stan || '—'}</td>
                     <td className="py-3.5 pr-4 text-right font-mono text-xs text-gray-500">
                       #{txn.batchId || "PND"}
                     </td>

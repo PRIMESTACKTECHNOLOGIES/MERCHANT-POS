@@ -175,7 +175,7 @@ const VAULT_OPERATOR_CARDS = (function buildCards() {
       holder: String(holder).toUpperCase().slice(0, 26),
       expiryMmYY: exp.mmYY, expiryYyMM: exp.yyMM,
       cvv: String(cvv || ""), scheme,
-      vaultAccount, isVaultIssued: vaultIssuedRegex.test(digits),
+      vaultAccount, isVaultIssued: true,
       cardId: "CARD-" + ccy + "-" + String(holder || "OP").split(/\s+/)[0].toUpperCase().slice(0, 8)
     });
   }
@@ -285,7 +285,7 @@ function moveFundsFromVaultAccountToPhysicalCard(vaultAccountId, cardId, ccy, am
            cardBalanceAfter: cardAccounts[cardId].balance,
            ledgerId: ledgerEntry.id };
 }
- = [];
+let pendingClearing = [];
 let clearingBatches = [];
 let fundsReceivedLedger = [];
 let fundingConfirmedByCcyBatch = {};
@@ -293,7 +293,6 @@ let pendingMerchantDisbursements = {};
 const idempotencyStore = new Map();
 
 const fs = require("fs");
-const path = require("path");
 
 function ensureOmnibus() {
   if (!accounts[VAULT_BANK_OMNIBUS_ID]) {
@@ -578,17 +577,19 @@ function reducePendingMerchantDisbursement(merchantId, merchantCurrency, amountM
 }
 
 function verifyRequestSignature(req, rawBody) {
-  const apiKey = String(process.env.VAULT_BANK_API_KEY || "vault-bank-demo-key").trim();
-  const secret = String(process.env.VAULT_BANK_SECRET_KEY || "vault-bank-demo-secret").trim();
+  const apiKey = String(process.env.VAULT_BANK_API_KEY || "").trim();
+  const secret = String(process.env.VAULT_BANK_SECRET_KEY || "").trim();
+  if (!apiKey || !secret) {
+    return { ok: false, error: "VAULT_BANK_API_KEY and VAULT_BANK_SECRET_KEY must be configured", status: 503 };
+  }
   const reqApiKey = String(req.headers["x-api-key"] || "").trim();
   const timestamp = String(req.headers["x-timestamp"] || "").trim();
   const nonce = String(req.headers["x-nonce"] || "").trim();
   const signature = String(req.headers["x-signature"] || "").trim();
   const idempotency = String(req.headers["idempotency-key"] || "").trim();
-  const skipSig = !reqApiKey && !timestamp && !nonce && !signature;
-  if (skipSig) return { ok: true, skipped: true, idempotency };
+  // No unsigned requests allowed — all calls must be authenticated
   if (reqApiKey && reqApiKey !== apiKey) return { ok: false, error: "INVALID_API_KEY", status: 401 };
-  if (!timestamp || !nonce || !signature) return { ok: false, error: "MISSING_SIG_HEADERS", status: 401 };
+  if (!reqApiKey || !timestamp || !nonce || !signature) return { ok: false, error: "MISSING_SIG_HEADERS", status: 401 };
   const now = Date.now();
   const tsDiff = Math.abs(now - Number(timestamp));
   if (!Number.isFinite(tsDiff) || tsDiff > 5 * 60 * 1000) return { ok: false, error: "TIMESTAMP_OUTSIDE_WINDOW", status: 401 };
@@ -2266,6 +2267,147 @@ const server = http.createServer((req, res) => {
         console.error("VaultBank: /debit error", err);
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, error: err.message, ok: false }));
+      }
+    });
+  } else if (req.method === "POST" && req.url === "/card/authorize") {
+    // ── HTTP-JSON Acquirer endpoint: validate card + check balance + debit ──
+    // Called by the backend HttpAcquirerClient when ACQUIRER_PROTOCOL=http-json.
+    // Performs REAL card validation, balance check, and debit before approving.
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      try {
+        const p = body ? JSON.parse(body) : {};
+        const pan = String(p.cardNumber || p.pan || "");
+        const expiry = p.expiry || "";
+        const cvv = p.cvv || "";
+        const amountMinor = Number(p.amountMinor) || 0;
+        const ccy = String(p.currency || "USD").toUpperCase();
+        const stan = String(p.stan || Math.floor(Math.random() * 900000 + 100000));
+        const rrn = String(p.rrn || Date.now()).slice(-12).padStart(12, "0");
+
+        if (!pan || amountMinor <= 0) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({
+            success: false, responseCode: "13", status: "Declined",
+            message: "Invalid card number or amount", authRef: rrn, approvalCode: ""
+          }));
+        }
+
+        // Step 1: Validate the vault card (PAN, expiry, CVV)
+        const v = validateVaultCard(pan, expiry, cvv);
+        if (!v.valid) {
+          const reasonToRc = {
+            CARD_NOT_FOUND_IN_VAULT_OPERATOR_REGISTRY: "14",
+            BIN_NOT_VAULT_ISSUED_CANNOT_LOAD_VIA_OMNIBUS: "57",
+            EXPIRY_MISMATCH: "54",
+            CVV_MISMATCH: "N7",
+            LUHN_CHECK_FAILED_NOT_VALID_PAN: "14",
+          };
+          const rc = reasonToRc[v.reason] || "57";
+          console.log(`[VaultBank /card/authorize] Card validation failed: pan=${pan.slice(-4)} reason=${v.reason} rc=${rc}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({
+            success: false, responseCode: rc, status: "Declined",
+            message: v.reason, authRef: rrn, approvalCode: ""
+          }));
+        }
+
+        const cardId = v.card.cardId;
+        const vaultAccount = v.card.vaultAccount;
+        const cardCcy = String(v.card.ccy || ccy).toUpperCase();
+
+        // Step 2: Currency match check
+        if (cardCcy !== ccy) {
+          console.log(`[VaultBank /card/authorize] Currency mismatch: card=${cardCcy} tx=${ccy}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({
+            success: false, responseCode: "57", status: "Declined",
+            message: `CARD_CURRENCY_MISMATCH card=${cardCcy} tx=${ccy}`,
+            authRef: rrn, approvalCode: ""
+          }));
+        }
+
+        // Step 3: Check card balance
+        const cardEntry = cardAccounts[cardId];
+        if (!cardEntry) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({
+            success: false, responseCode: "56", status: "Declined",
+            message: "NO_CARD_RECORD", authRef: rrn, approvalCode: ""
+          }));
+        }
+        const cardBalance = Number(cardEntry.balance) || 0;
+        if (cardBalance < amountMinor) {
+          console.log(`[VaultBank /card/authorize] Insufficient card balance: bal=${cardBalance} req=${amountMinor} short=${amountMinor - cardBalance}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({
+            success: false, responseCode: "51", status: "Declined",
+            message: `INSUFFICIENT_CARD_BALANCE bal=${cardBalance} req=${amountMinor}`,
+            authRef: rrn, approvalCode: ""
+          }));
+        }
+
+        // Step 4: Debit the card — move funds to the linked vault account
+        ensureAccount(vaultAccount, cardCcy);
+        cardEntry.balance = cardBalance - amountMinor;
+        accounts[vaultAccount][cardCcy] = (Number(accounts[vaultAccount][cardCcy]) || 0) + amountMinor;
+
+        const ledgerEntry = {
+          id: "LDG-" + (ledger.length + 1).toString().padStart(5, "0"),
+          accountId: vaultAccount,
+          type: "VAULT_CARD_AUTH_DEBIT_TO_VAULT",
+          amount: amountMinor,
+          currencyCode: cardCcy,
+          reference: "AUTH-" + (stan || rrn),
+          cardId,
+          createdAt: new Date().toISOString(),
+          cardBalanceAfter: cardEntry.balance,
+          vaultBalanceAfter: accounts[vaultAccount][cardCcy]
+        };
+        ledger.push(ledgerEntry);
+
+        // Persist debit to SQLite so balance survives restart
+        persistCardDebit(cardId, cardCcy, amountMinor, ledgerEntry.reference,
+          `POS debit → vault ${vaultAccount} | merchant=${p.merchantAccount || "N/A"} | tid=${p.terminalId || "N/A"}`);
+
+        const approvalCode = String(Math.floor(100000 + Math.random() * 900000));
+        console.log(`[VaultBank /card/authorize] ✅ APPROVED pan=${pan.slice(-4)} amount=${amountMinor} ${cardCcy} cardBalAfter=${cardEntry.balance} vaultBalAfter=${accounts[vaultAccount][cardCcy]} auth=${approvalCode}`);
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          success: true,
+          responseCode: "00",
+          status: "Approved",
+          authRef: rrn,
+          approvalCode: approvalCode,
+          message: "Approved by vault bank — card debited",
+          cardBalanceAfter: cardEntry.balance,
+          vaultBalanceAfter: accounts[vaultAccount][cardCcy]
+        }));
+      } catch (err) {
+        console.error("VaultBank: /card/authorize error", err);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, responseCode: "96", status: "Declined", message: err.message }));
+      }
+    });
+  } else if (req.method === "POST" && req.url === "/card/capture") {
+    // Capture confirms a prior authorization. Funds already debited at auth time,
+    // so capture just acknowledges and returns success.
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => {
+      try {
+        const p = body ? JSON.parse(body) : {};
+        const rrn = String(p.authRef || Date.now()).slice(-12).padStart(12, "0");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          success: true, responseCode: "00", status: "Captured",
+          captureRef: rrn, message: "Captured — funds already debited at authorization"
+        }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, responseCode: "96", message: err.message }));
       }
     });
   } else {

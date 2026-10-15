@@ -180,24 +180,9 @@ export async function createVirtualAccount(
         process.env.TRANSAK_DEMO_MODE === '1' ||
         !process.env.TRANSAK_API_KEY ||
         /your_|REPLACE|example/i.test(String(process.env.TRANSAK_API_KEY || ''));
-      if (demoMode && (status === 401 || status === 403 || status === 400 || !status)) {
-        console.warn('[BankTransfer] Using local demo virtual account fallback because demo mode is enabled:', msg);
-        const demoAccountNumber = `VA-${merchantId.slice(0, 6).toUpperCase()}-${String(Date.now()).slice(-6)}`;
-        transakResponse = {
-          data: {
-            id: `demo-vba-${Date.now()}`,
-            status: 'INITIATED',
-            message: 'Local demo virtual account created successfully.',
-            success: true,
-            accountDetails: {
-              accountNumber: demoAccountNumber,
-              bankName: 'PrimeStack Demo Virtual Bank',
-              routingNumber: '000000000',
-              accountHolderName: 'PrimeStack Merchant Vault',
-              referenceNumber: `REF-${Date.now()}`,
-            },
-          },
-        };
+      if (demoMode) {
+        // Demo mode — do not create fake virtual accounts
+        throw new Error('Transak is not configured with real credentials. Set TRANSAK_API_KEY and TRANSAK_API_SECRET in environment variables to use virtual bank accounts.');
       } else {
         throw providerError;
       }

@@ -467,7 +467,13 @@ export const POSPage = () => {
         );
 
         if (emvResult.approved && !emvResult.requiresOnline) {
-          const authCode = emvResult.authCode || (`OFF-${Math.floor(Math.random() * 900000 + 100000)}`);
+          const authCode = emvResult.authCode;
+          if (!authCode) {
+            showToast('Offline declined: no authorization code returned by EMV', 'error');
+            setLoading(false);
+            setAmount('0.00');
+            return;
+          }
           const cryptogram = emvResult.cryptogram;
           showToast(`Approved Offline (Auth: ${authCode})`, 'success');
 
