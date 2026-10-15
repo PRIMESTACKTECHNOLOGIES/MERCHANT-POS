@@ -967,30 +967,47 @@ export class PaymentsService {
           await persistLedgerEntry(ledgerEntry, db.query.bind(db));
 
           // ── FUND ROUTING ─────────────────────────────────────────────────────────
-          // Card charged → credit CUSTOMER wallet directly.
-          // Merchant wallet is NOT credited here — card funds belong to the customer.
-          // Merchant receives funds later via C2M (customer sends to merchant).
-          if (payload.customerId) {
+          // RULE: Merchant wallet receives ONLY real, withdrawable funds.
+          //
+          //  - REAL FUNDS CAPTURED (acquirer confirmed capture, OR HTTP processor
+          //    returned status=CAPTURED) → credit MERCHANT wallet directly.
+          //    These are withdrawable funds the merchant can settle to Vault Bank.
+          //
+          //  - INTERNAL LEDGER ONLY (no real capture confirmed) → credit CUSTOMER
+          //    wallet. The customer holds the ledger balance; to convert it to
+          //    real merchant funds, the customer supplies provider API credentials
+          //    via pullProviderFundsToMerchant, which pulls real funds and credits
+          //    the merchant wallet.
+          //
+          //  - No customerId AND no real capture → DO NOT credit (would create
+          //    money from thin air). Log and skip.
+          const realFundsCaptured = acquirerCaptureConfirmed || online.status === 'CAPTURED';
+
+          if (realFundsCaptured) {
+            try {
+              const { walletsService: ws } = await import('../wallets/wallets.service');
+              await ws.creditMerchantWallet(
+                merchantId, captureAmount, 'pos_card_charge_real_funds', paymentIntentId, chargeCcy
+              );
+              console.log('[Charge] Real funds captured → merchant wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | merchant=' + merchantId);
+            } catch (mwErr: any) {
+              console.warn('[Charge] Merchant wallet credit (non-fatal):', mwErr.message);
+            }
+          } else if (payload.customerId) {
             try {
               const { walletsService: ws } = await import('../wallets/wallets.service');
               await ws.creditCustomerWallet(
-                payload.customerId, captureAmount, 'pos_card_charge_online', paymentIntentId, chargeCcy
+                payload.customerId, captureAmount, 'pos_card_charge_ledger', paymentIntentId, chargeCcy
               );
-              console.log('[Charge] Customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + payload.customerId);
+              console.log('[Charge] Ledger-only → customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + payload.customerId);
             } catch (cwErr: any) {
               console.warn('[Charge] Customer wallet credit (non-fatal):', cwErr.message);
             }
           } else {
-            // No customer selected — credit merchant wallet as fallback
-            try {
-              const { walletsService: ws } = await import('../wallets/wallets.service');
-              await ws.creditMerchantWallet(
-                merchantId, captureAmount, 'pos_card_charge_online_no_customer', paymentIntentId, chargeCcy
-              );
-              console.log('[Charge] No customer — merchant wallet credited: ' + chargeCcy + ' ' + captureAmount);
-            } catch (mwErr: any) {
-              console.warn('[Charge] Merchant wallet credit fallback (non-fatal):', mwErr.message);
-            }
+            console.warn(
+              '[Charge] No real funds captured and no customerId — skipping wallet credit to avoid money-from-thin-air. ' +
+              'paymentIntentId=' + paymentIntentId
+            );
           }
           // Record transaction in pos2013_transactions
           const ledgerEntryId = ledgerEntry.id;
@@ -1002,7 +1019,9 @@ export class PaymentsService {
             stan: payload.stan || '',
             panLast4: payload.pan ? payload.pan.slice(-4) : '',
             entry_mode: payload.emv ? 'CHIP' : 'MANUAL',
-            cardholder_name: payload.cardholderName || payload.cardholder_name || ''
+            cardholder_name: payload.cardholderName || payload.cardholder_name || '',
+            funds_type: realFundsCaptured ? 'REAL_FUNDS' : 'INTERNAL_LEDGER',
+            funds_target: realFundsCaptured ? 'MERCHANT_WALLET' : (payload.customerId ? 'CUSTOMER_WALLET' : 'NONE')
           });
           // NOTE: batch_id is TEXT NOT NULL, no default â†’ pass paymentIntentId as batch id
           // (batches can be merged later on EOD; single-txn batch "batch-<intent>" for now)

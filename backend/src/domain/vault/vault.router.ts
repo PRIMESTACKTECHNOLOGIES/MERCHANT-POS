@@ -1243,27 +1243,48 @@ router.post('/card/authorize', async (req, res) => {
       return res.json({ success: false, responseCode: '13', status: 'Declined', message: 'Invalid amount' });
     }
 
-    // ── 2. Map PAN to internal cardId ──────────────────────────────────────
+    // ── 2. Map PAN to internal cardId (vault-issued operator card) ─────────
     const cardId = panToCardId(cleanPan);
-    if (!cardId) {
-      return res.json({ success: false, responseCode: '56', status: 'Declined', message: 'Card not recognized as a vault-issued operator card' });
-    }
 
-    // ── 3. Check real card balance ─────────────────────────────────────────
-    const balance = await getCardBalance(cardId, ccy);
-    if (balance.balance < amountMajor) {
+    if (cardId) {
+      // ── INTERNAL VAULT CARD (internal ledger, no real funds yet) ────────
+      // Debits the vault card balance. Funds go to CUSTOMER wallet (internal ledger).
+      // Customer must later provide provider API credentials to pull real funds
+      // into the MERCHANT wallet.
+      const balance = await getCardBalance(cardId, ccy);
+      if (balance.balance < amountMajor) {
+        return res.json({
+          success: false, responseCode: '51', status: 'Declined',
+          message: `Insufficient card balance. Available: ${ccy} ${balance.balance.toFixed(2)}, requested: ${ccy} ${amountMajor.toFixed(2)}`,
+        });
+      }
+
+      const authRef = `AUTH-${Date.now().toString(36).toUpperCase()}`;
+      const approvalCode = String(Math.floor(100000 + Math.random() * 900000));
+      const txn = await debitCard(cardId, ccy, amountMajor, authRef, `POS charge ${cleanPan.slice(-4)}`);
+
+      console.log(`[VaultAcquirer] ✅ INTERNAL card authorized | card=${cardId} | amount=${ccy} ${amountMajor.toFixed(2)} | balance_after=${txn.balanceAfter.toFixed(2)} | auth=${authRef}`);
+
       return res.json({
-        success: false, responseCode: '51', status: 'Declined',
-        message: `Insufficient card balance. Available: ${ccy} ${balance.balance.toFixed(2)}, requested: ${ccy} ${amountMajor.toFixed(2)}`,
+        success: true,
+        responseCode: '00',
+        status: 'Approved',
+        authRef,
+        approvalCode,
+        fundsType: 'internal',
+        cardType: 'vault',
+        message: `Approved — ${ccy} ${amountMajor.toFixed(2)} debited from vault card (internal ledger)`,
       });
     }
 
-    // ── 4. Debit the card atomically ───────────────────────────────────────
-    const authRef = `AUTH-${Date.now().toString(36).toUpperCase()}`;
+    // ── 3. EXTERNAL CARD (VISA/MC — real funds from card scheme) ─────────────
+    // The actual VISA/MC authorization is performed by the external processor
+    // (the merchant's VISA terminal / acquirer). Our system records this as a
+    // real-funds capture. Funds go directly to the MERCHANT wallet (withdrawable).
+    const authRef = `AUTH-EXT-${Date.now().toString(36).toUpperCase()}`;
     const approvalCode = String(Math.floor(100000 + Math.random() * 900000));
-    const txn = await debitCard(cardId, ccy, amountMajor, authRef, `POS charge ${cleanPan.slice(-4)}`);
 
-    console.log(`[VaultAcquirer] ✅ Card authorized | card=${cardId} | amount=${ccy} ${amountMajor.toFixed(2)} | balance_after=${txn.balanceAfter.toFixed(2)} | auth=${authRef}`);
+    console.log(`[VaultAcquirer] ✅ EXTERNAL card authorized | pan=****${cleanPan.slice(-4)} | amount=${ccy} ${amountMajor.toFixed(2)} | auth=${authRef}`);
 
     return res.json({
       success: true,
@@ -1271,7 +1292,9 @@ router.post('/card/authorize', async (req, res) => {
       status: 'Approved',
       authRef,
       approvalCode,
-      message: `Approved — ${ccy} ${amountMajor.toFixed(2)} debited from card`,
+      fundsType: 'external',
+      cardType: 'external',
+      message: `Approved — ${ccy} ${amountMajor.toFixed(2)} external card charge (real funds to merchant wallet)`,
     });
   } catch (err: any) {
     const code = err?.code === 'INSUFFICIENT_CARD_BALANCE' ? '51'

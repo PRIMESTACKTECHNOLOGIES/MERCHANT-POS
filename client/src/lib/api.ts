@@ -638,6 +638,88 @@ export async function registerTerminal(name: string) {
   return res.json();
 }
 
+export async function verifyTerminal(
+  merchantId: string,
+  terminalId: string,
+  secretKey: string,
+  backendUrl?: string
+): Promise<{ valid: boolean; error?: string; merchantName?: string; terminalName?: string }> {
+  const base = backendUrl || BASE_URL;
+  const res = await fetch(`${base}/merchant/v1/terminal/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ merchantId, terminalId, secretKey }),
+  });
+  const data = await res.json().catch(() => ({} as any));
+  if (!res.ok) {
+    return { valid: false, error: data?.error || `Verify failed (HTTP ${res.status})` };
+  }
+  return {
+    valid: Boolean(data?.valid),
+    error: data?.error,
+    merchantName: data?.merchantName,
+    terminalName: data?.terminalName,
+  };
+}
+
+export const TERMINAL_CREDS_KEY = "pos_terminal_creds";
+
+export interface SavedTerminalCreds {
+  backendUrl: string;
+  merchantId: string;
+  terminalId: string;
+  secretKey: string;
+  savedAt: number;
+  merchantName?: string;
+  terminalName?: string;
+}
+
+export function saveTerminalCreds(creds: SavedTerminalCreds): void {
+  localStorage.setItem(TERMINAL_CREDS_KEY, JSON.stringify(creds));
+}
+
+export function getTerminalCreds(): SavedTerminalCreds | null {
+  try {
+    const raw = localStorage.getItem(TERMINAL_CREDS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SavedTerminalCreds;
+  } catch {
+    return null;
+  }
+}
+
+export function clearTerminalCreds(): void {
+  localStorage.removeItem(TERMINAL_CREDS_KEY);
+}
+
+export const PENDING_CUSTOMER_KEY = "pos_pending_new_customer";
+
+export interface PendingCustomer {
+  name: string;
+  email?: string;
+  phone?: string;
+  queuedAt: number;
+}
+
+export function enqueuePendingCustomer(c: Omit<PendingCustomer, "queuedAt">): void {
+  localStorage.setItem(
+    PENDING_CUSTOMER_KEY,
+    JSON.stringify({ ...c, queuedAt: Date.now() })
+  );
+}
+
+export function dequeuePendingCustomer(): PendingCustomer | null {
+  try {
+    const raw = localStorage.getItem(PENDING_CUSTOMER_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(PENDING_CUSTOMER_KEY);
+    return JSON.parse(raw) as PendingCustomer;
+  } catch {
+    localStorage.removeItem(PENDING_CUSTOMER_KEY);
+    return null;
+  }
+}
+
 export async function regenerateTerminalSecret(merchantId: string, terminalId: string) {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/terminal/regenerate-secret`, {
     method: "POST",

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Card Capture Service (Protocol 201.3)
  * ─────────────────────────────────────────────────────────────────────────────
  * Calls the acquirer to capture a previously authorized transaction,
@@ -9,7 +9,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../config/db';
 import { isAcquirerConfigured, acquirerConfig } from '../../config/acquirer';
 import { getAcquirerClient } from '../acquirer/HttpAcquirerClient';
-import { walletsService } from '../../domain/wallets/wallets.service';
 
 export interface CardCaptureParams {
   merchantId:    string;
@@ -120,9 +119,11 @@ export async function captureCardTransaction(
   const settlementId = uuidv4();
   const now          = new Date().toISOString();
 
-  // ── Persist settlement and customer wallet credit atomically ────────────────
+  // ── Persist settlement record (NO wallet credit here) ──────────────────────
+  // Wallet crediting is handled by payments.service.ts based on fundsType:
+  //   - external card → MERCHANT wallet (real funds)
+  //   - internal vault card → CUSTOMER wallet (internal ledger)
   try {
-    const wallet = await walletsService.getOrCreateWallet(params.customerId, ccy);
     await db.query('BEGIN IMMEDIATE');
     await db.query(
       `INSERT INTO card_settlements
@@ -133,26 +134,11 @@ export async function captureCardTransaction(
         '201.3', params.batchId || null, capRes.responseCode, JSON.stringify(capRes.raw || {}), now,
       ],
     );
-    await db.query(
-      'UPDATE customer_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?',
-      [params.amount, now, wallet.id]
-    );
-    await db.query(`
-      INSERT INTO wallet_transactions
-        (id, wallet_id, type, amount, currency, source, reference, description, created_at)
-      VALUES (?, ?, 'credit', ?, ?, 'card_capture', ?, ?, ?)
-    `, [
-      uuidv4(), wallet.id,
-      params.amount, ccy,
-      captureRef,
-      `Provider-captured POS funds — Protocol 201.3 | Auth: ${params.authRef}`,
-      now,
-    ]);
     await db.query('COMMIT');
-  } catch (walletErr: any) {
+  } catch (settleErr: any) {
     try { await db.query('ROLLBACK'); } catch { /* preserve original error */ }
-    console.error('[cardCapture] Customer wallet credit failed:', walletErr.message);
-    throw new Error(`Card capture succeeded at the acquirer, but customer wallet credit failed: ${walletErr.message}`);
+    console.error('[cardCapture] Settlement record failed:', settleErr.message);
+    throw new Error(`Card capture succeeded at the acquirer, but settlement record failed: ${settleErr.message}`);
   }
 
   // ── Update authorization record ──────────────────────────────────────────────

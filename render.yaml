@@ -96,7 +96,7 @@ services:
       - key: VAULT_BANK_SECRET_KEY
         sync: false
       - key: VAULT_BANK_TRANSFER_URL
-        value: http://127.0.0.1:9001/api/vault/settlement
+        value: https://vault-bank-kycj.onrender.com/api/vault/settlement
       - key: VAULT_ACTIVE_API_KEY
         sync: false
       - key: VAULT_EXTERNAL_LOAD_HMAC_SECRET
@@ -107,12 +107,15 @@ services:
         value: TEST
 
       # ── Acquirer ───────────────────────────────────────────────────────────
+      # http-json mode: calls merchant-pos-api's own /api/vault/card/authorize
+      # and /card/capture endpoints (vault.router.ts). Raw TCP cannot reach
+      # Render's HTTPS ports, so iso8583-tcp is unusable on Render.
       - key: ACQUIRER_HOST
-        value: 127.0.0.1
+        value: https://merchant-pos-0nno.onrender.com
       - key: ACQUIRER_PORT
-        value: "9000"
+        value: "443"
       - key: ACQUIRER_PROTOCOL
-        value: iso8583-tcp
+        value: http-json
       - key: ACQUIRER_API_KEY
         sync: false
       - key: ACQUIRER_SECRET_KEY

@@ -79,6 +79,8 @@ export class HttpAcquirerClient implements IAcquirerClient {
         authRef:      data.authRef       || data.auth_ref       || data.reference,
         approvalCode: data.approvalCode  || data.approval_code  || data.authCode,
         message:      data.message       || data.description,
+        fundsType:    data.fundsType     || data.funds_type,
+        cardType:     data.cardType      || data.card_type,
         raw:          data,
       };
     } catch (err: any) {

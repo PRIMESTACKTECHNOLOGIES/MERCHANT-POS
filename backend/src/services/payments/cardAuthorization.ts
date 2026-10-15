@@ -37,6 +37,8 @@ export interface CardAuthorizationResult {
   currency:      string;
   protocol:      string;
   message?:      string;
+  fundsType?:    'internal' | 'external';
+  cardType?:     'vault' | 'external';
 }
 
 export async function authorizeCardTransaction(
@@ -210,5 +212,7 @@ export async function authorizeCardTransaction(
     currency:      ccy,
     protocol:      params.protocol,
     message:       authRes.message,
+    fundsType:     authRes.fundsType,
+    cardType:      authRes.cardType,
   };
 }

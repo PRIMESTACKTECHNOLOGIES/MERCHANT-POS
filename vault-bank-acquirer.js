@@ -448,7 +448,7 @@ const OP_CARD_PREFIX_MAP = (function buildOpCards() {
       bin: bin || digits.slice(0, 6),
       vaultAccount: vaultAccount || "PROC-VAULT-" + ccy + "-" + ccy.slice(0, 3),
       cardId,
-      isVaultIssued
+      isVaultIssued: true
     });
   }
   return out;
@@ -1044,10 +1044,6 @@ async function handleAuthRequest(iso, socket, { receivedVia, raw } = {}) {
     }
   }
 
-  const authCode = liveResult && liveResult.fields && liveResult.fields[38]
-    ? String(liveResult.fields[38]).slice(0, 6)
-    : undefined;
-
   const responseFieldsFromLive = {};
   if (liveResult && liveResult.fields) {
     const passThroughBits = [37, 44, 48, 54, 55, 60, 61, 63];
@@ -1058,6 +1054,58 @@ async function handleAuthRequest(iso, socket, { receivedVia, raw } = {}) {
     }
     if (liveResult.fields[49] && !fields[49]) fields[49] = liveResult.fields[49];
   }
+
+  // ── VAULT-ISSUED CARD: REAL validation + balance check + debit ──────────────
+  // For vault-issued operator cards (in TEST mode, or when LIVE scheme is not
+  // forwarding), we MUST validate the card, check its balance, and debit it
+  // before approving. Without this, approval creates money from thin air.
+  if (responseCode === "00" && panCheck && panCheck.isVaultIssued && !liveResult &&
+      (iso.mti === "0100" || iso.mti === "0200")) {
+    const cvvFromTrack = (fields[35] && /\=(\d{3})\b/.test(fields[35])) ? RegExp.$1 : null;
+    const cvvFromEmv = fields["55.5F20"] || null;
+    const v = validateVaultCardPresented(panDigits, fields[14], cvvFromTrack || cvvFromEmv || (fields.cvv ? String(fields.cvv) : null));
+    if (!v.valid) {
+      if (v.reason === "CVV_MISMATCH") responseCode = "N7";
+      else if (v.reason === "EXPIRY_MISMATCH") responseCode = "54";
+      else if (v.reason === "LUHN_CHECK_FAILED") responseCode = "14";
+      else responseCode = "57";
+      console.log(`[${ACQUIRER_NAME}] Vault card validation failed: reason=${v.reason} rc=${responseCode}`);
+    } else if (v.cardId) {
+      const cardCcy = String(v.ccy || ccyAlpha || "USD").toUpperCase();
+      const txCcy = String(ccyAlpha || cardCcy).toUpperCase();
+      if (txCcy !== cardCcy) {
+        responseCode = "57";
+        responseFieldsFromLive[44] = "VB-CCY-MISMATCH;CARD-CCY=" + cardCcy + ";TX-CCY=" + txCcy + ";";
+      } else {
+        const bal = await getCardAccountBalance(v.cardId);
+        if (!bal.ok) {
+          responseCode = "96";
+          responseFieldsFromLive[44] = "VB-CARD-BALANCE-CHECK-FAILED;" + String(bal.error || "SETTLEMENT_UNREACHABLE") + ";";
+        } else if (bal.currency && String(bal.currency).toUpperCase() !== cardCcy) {
+          responseCode = "57";
+          responseFieldsFromLive[44] = "VB-CARD-CCY-MISMATCH;CARD-CCY=" + cardCcy + ";BAL-CCY=" + bal.currency + ";";
+        } else if ((Number(bal.balance) || 0) < amt) {
+          responseCode = "51";
+          responseFieldsFromLive[44] = "VB-INSUFFICIENT-CARD-BALANCE;BAL=" + (Number(bal.balance) || 0) + ";REQ=" + amt + ";SHORT=" + (amt - (Number(bal.balance) || 0)) + ";";
+        } else {
+          const deb = await debitCardAccount(v.cardId, v.vaultAccount || null, amt, cardCcy, "AUTH-" + (stan || rrn));
+          if (!deb.ok) {
+            responseCode = "96";
+            responseFieldsFromLive[44] = "VB-CARD-DEBIT-FAILED;" + String(deb.error || deb.raw || "UNKNOWN") + ";";
+          } else {
+            responseCode = "00";
+            responseFieldsFromLive[44] = "VB-CARD-DEBITED;CARD_VALIDATED;VAULT_ACCOUNT=" + (v.vaultAccount || "N/A") + ";CARD_BAL_AFTER=" + (deb.cardBalanceAfter != null ? deb.cardBalanceAfter : ((Number(bal.balance) || 0) - amt)) + ";VAULT_BAL_AFTER=" + (deb.vaultBalanceAfter != null ? deb.vaultBalanceAfter : "N/A") + ";";
+            if (v.ccy) responseFieldsFromLive[48] = "VAULT_CCY=" + v.ccy + ";CARD_HOLDER=" + (v.holder || "N/A") + ";DEBIT_LEDGER=" + (deb.ledgerId || "") + ";";
+            console.log(`[${ACQUIRER_NAME}] ✅ Vault card debited: panEnd=${panDigits.slice(-4)} amt=${amt} ${cardCcy} balAfter=${deb.cardBalanceAfter != null ? deb.cardBalanceAfter : "N/A"}`);
+          }
+        }
+      }
+    }
+  }
+
+  const authCode = liveResult && liveResult.fields && liveResult.fields[38]
+    ? String(liveResult.fields[38]).slice(0, 6)
+    : undefined;
 
   const responseMti = (iso.mti.startsWith("01") ? "0110" : iso.mti.startsWith("04") ? "0410" : iso.mti.startsWith("02") ? "0210" : "0110");
 
@@ -1266,7 +1314,7 @@ const server = net.createServer(socket => {
   socket.on("end", () => {});
 });
 
-const diagHttp = http.createServer((req, res) => {
+const diagHttp = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/status") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
@@ -1386,10 +1434,180 @@ const diagHttp = http.createServer((req, res) => {
     });
     return;
   }
+
+  // ── HTTP-JSON endpoints (for Render / HTTPS deployments) ──────────────────
+  // These wrap handleAuthRequest so the acquirer is reachable over HTTPS.
+  const ALPHA_TO_NUM_CCY = {};
+  for (const [num, alpha] of Object.entries(NUM_CCY_TO_ALPHA)) ALPHA_TO_NUM_CCY[alpha] = num;
+
+  function readJsonBody(req2) {
+    return new Promise((resolve, reject) => {
+      let buf = "";
+      req2.on("data", c => { buf += c; if (buf.length > 1e6) { req2.destroy(); reject(new Error("body too large")); } });
+      req2.on("end", () => { try { resolve(buf ? JSON.parse(buf) : {}); } catch (e) { reject(e); } });
+      req2.on("error", reject);
+    });
+  }
+
+  // Create a fake socket that captures write() output so handleAuthRequest
+  // can be reused without an actual TCP connection.
+  function createCaptureSocket() {
+    let captured = Buffer.alloc(0);
+    let ended = false;
+    return {
+      _captured: () => captured.toString("utf8"),
+      _ended: () => ended,
+      write(chunk) { captured = Buffer.concat([captured, Buffer.from(chunk)]); return true; },
+      end() { ended = true; },
+      on() { return this; },
+      once() { return this; },
+      destroy() { ended = true; },
+      setEncoding() {},
+      setNoDelay() {},
+      setKeepAlive() {},
+      ref() {}, unref() {},
+    };
+  }
+
+  function parseLegacyResponse(raw) {
+    const fields = {};
+    const parts = raw.split("|");
+    const mti = parts[0];
+    for (let i = 1; i < parts.length; i++) {
+      const eq = parts[i].indexOf("=");
+      if (eq > 0) fields[parts[i].slice(0, eq)] = parts[i].slice(eq + 1);
+    }
+    return { mti, fields };
+  }
+
+  function pad(n, w) { return String(n).padStart(w, "0"); }
+
+  // POST /card/authorize — JSON auth request, JSON response
+  if (req.method === "POST" && req.url === "/card/authorize") {
+    let body;
+    try { body = await readJsonBody(req); } catch (e) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, responseCode: "30", message: "Invalid JSON body" }));
+      return;
+    }
+    try {
+      const now = new Date();
+      const stan = String(body.stan || Math.floor(Math.random() * 900000 + 100000));
+      const ccyAlpha = String(body.currency || "USD").toUpperCase();
+      const ccyNum = ALPHA_TO_NUM_CCY[ccyAlpha] || "840";
+      const rrn = String(body.rrn || now.getTime()).slice(-12).padStart(12, "0");
+      const expiry = body.expiry ? String(body.expiry).replace(/\D/g, "") : "";
+
+      const fields = {
+        2:  body.cardNumber || "",
+        3:  body.processingCode || "000000",
+        4:  String(body.amountMinor || 0).padStart(12, "0"),
+        7:  `${pad(now.getUTCMonth()+1,2)}${pad(now.getUTCDate(),2)}${pad(now.getUTCHours(),2)}${pad(now.getUTCMinutes(),2)}${pad(now.getUTCSeconds(),2)}`,
+        11: stan,
+        12: `${pad(now.getUTCHours(),2)}${pad(now.getUTCMinutes(),2)}${pad(now.getUTCSeconds(),2)}`,
+        13: `${pad(now.getUTCMonth()+1,2)}${pad(now.getUTCDate(),2)}`,
+        18: body.mcc || process.env.MCC || "5999",
+        22: body.emvField55 ? "051" : "011",
+        25: body.posConditionCode || "00",
+        37: rrn,
+        41: body.terminalId || process.env.DEFAULT_TID || "T2013-001",
+        42: body.merchantAccount || process.env.ACQUIRER_MERCHANT_ACCOUNT || "MRC-1001",
+        49: ccyNum,
+      };
+      if (expiry) fields[14] = expiry;
+      if (body.emvField55) fields[55] = body.emvField55;
+
+      const iso = { mti: "0100", fields };
+      const sock = createCaptureSocket();
+      await handleAuthRequest(iso, sock, { receivedVia: "legacy", raw: "" });
+
+      const raw = sock._captured();
+      const { fields: resp } = parseLegacyResponse(raw);
+      const rc = String(resp["39"] || "96");
+      const approved = rc === "00";
+      const partial = rc === "10";
+      const referral = rc === "01" || rc === "02";
+      const approvalCode = (resp["38"] || "").trim();
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        success: approved,
+        responseCode: rc,
+        status: approved ? "Approved" : partial ? "PartialApproval" : referral ? "Referral" : "Declined",
+        authRef: resp["37"] || rrn,
+        approvalCode: approvalCode || (approved ? stan : ""),
+        approvedAmountMinor: partial && resp["4"] ? Number(resp["4"]) : undefined,
+        message: approved ? "Approved by vault bank acquirer" : referral ? "Call issuer for authorization" : `Declined RC=${rc}`,
+      }));
+      return;
+    } catch (e) {
+      console.error(`[${ACQUIRER_NAME}] /card/authorize error: ${e.message}`);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, responseCode: "96", message: "Acquirer internal error: " + e.message }));
+      return;
+    }
+  }
+
+  // POST /card/capture — JSON capture (financial advice) request
+  if (req.method === "POST" && req.url === "/card/capture") {
+    let body;
+    try { body = await readJsonBody(req); } catch (e) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, responseCode: "30", message: "Invalid JSON body" }));
+      return;
+    }
+    try {
+      const now = new Date();
+      const stan = String(body.stan || Math.floor(Math.random() * 900000 + 100000));
+      const ccyAlpha = String(body.currency || "USD").toUpperCase();
+      const ccyNum = ALPHA_TO_NUM_CCY[ccyAlpha] || "840";
+      const rrn = String(body.authRef || now.getTime()).slice(-12).padStart(12, "0");
+
+      const fields = {
+        3:  "000000",
+        4:  String(body.amountMinor || 0).padStart(12, "0"),
+        7:  `${pad(now.getUTCMonth()+1,2)}${pad(now.getUTCDate(),2)}${pad(now.getUTCHours(),2)}${pad(now.getUTCMinutes(),2)}${pad(now.getUTCSeconds(),2)}`,
+        11: stan,
+        12: `${pad(now.getUTCHours(),2)}${pad(now.getUTCMinutes(),2)}${pad(now.getUTCSeconds(),2)}`,
+        13: `${pad(now.getUTCMonth()+1,2)}${pad(now.getUTCDate(),2)}`,
+        25: "00",
+        37: rrn,
+        38: (body.authRef || "").slice(0, 6),
+        41: body.terminalId || process.env.DEFAULT_TID || "T2013-001",
+        42: body.merchantAccount || process.env.ACQUIRER_MERCHANT_ACCOUNT || "MRC-1001",
+        49: ccyNum,
+      };
+
+      const iso = { mti: "0200", fields };
+      const sock = createCaptureSocket();
+      await handleAuthRequest(iso, sock, { receivedVia: "legacy", raw: "" });
+
+      const raw = sock._captured();
+      const { fields: resp } = parseLegacyResponse(raw);
+      const rc = String(resp["39"] || "96");
+      const captured = rc === "00";
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        success: captured,
+        responseCode: rc,
+        status: captured ? "Captured" : "Declined",
+        captureRef: resp["37"] || rrn,
+        message: captured ? `Captured — RRN ${rrn}` : `Capture declined RC=${rc}`,
+      }));
+      return;
+    } catch (e) {
+      console.error(`[${ACQUIRER_NAME}] /card/capture error: ${e.message}`);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, responseCode: "96", message: "Acquirer internal error: " + e.message }));
+      return;
+    }
+  }
+
   res.writeHead(404); res.end();
 });
 
-const DIAG_HTTP_PORT = parseInt(process.env.VAULT_BANK_DIAG_PORT || "9009", 10);
+const DIAG_HTTP_PORT = parseInt(process.env.PORT || process.env.VAULT_BANK_DIAG_PORT || "9009", 10);
 
 server.listen(PORT, HOST, () => {
   const visaLoopback = LIVE_SCHEME_CONFIG.VISA && (LIVE_SCHEME_CONFIG.VISA.host === "127.0.0.1" || LIVE_SCHEME_CONFIG.VISA.host === "localhost");

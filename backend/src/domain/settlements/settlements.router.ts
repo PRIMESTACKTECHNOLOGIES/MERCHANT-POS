@@ -1,10 +1,111 @@
 import { Router } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../config/db';
+import { vaultEngine } from '../vault/vault.service';
 import { settlementReconciliationService } from './settlementReconciliation.service';
 import { settlementsController } from './settlements.controller';
 import { generatePain001, type Pain001Request } from './paymentInitiation.service';
 
+const OMNIBUS_ACCOUNT_ID = 'VAULT_BANK_OMNIBUS';
+
 const router = Router();
+
+/**
+ * Ensures omnibus_accounts, vault_accounts, and vault_real_funds tables exist
+ * and that a VAULT_BANK_OMNIBUS row is present for the given currency.
+ */
+async function ensureSettlementFundingTables(currency: string) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS omnibus_accounts (
+      account_id TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      balance REAL NOT NULL DEFAULT 0,
+      label TEXT NOT NULL DEFAULT 'VAULT BANK OMNIBUS',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (account_id, currency)
+    )
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS vault_real_funds (
+      id TEXT PRIMARY KEY,
+      currency TEXT NOT NULL,
+      confirmed_amount REAL NOT NULL,
+      available_amount REAL NOT NULL,
+      external_reference TEXT NOT NULL UNIQUE,
+      source TEXT NOT NULL,
+      confirmed_at TEXT NOT NULL
+    )
+  `);
+  const now = new Date().toISOString();
+  await db.query(
+    `INSERT OR IGNORE INTO omnibus_accounts (account_id, currency, balance, label, created_at, updated_at)
+     VALUES (?, ?, 0.00, 'VAULT BANK OMNIBUS', ?, ?)`,
+    [OMNIBUS_ACCOUNT_ID, String(currency).toUpperCase(), now, now]
+  );
+}
+
+/**
+ * Funds the VAULT_BANK_OMNIBUS + vault_accounts + vault_real_funds when a POS
+ * settlement is confirmed (real money received from the acquirer/card scheme).
+ *
+ * Pipeline (atomic, inside caller transaction):
+ *   1. Credit omnibus_accounts (VAULT_BANK_OMNIBUS) += amount
+ *   2. Credit vault_accounts via vaultEngine.creditVault (type BATCH_TO_VAULT)
+ *   3. Insert vault_real_funds row (confirmed real funds)
+ *
+ * Idempotent on `externalReference` — safe to call from retry flows.
+ */
+async function fundOmnibusFromSettlement(input: {
+  amount: number;
+  currency: string;
+  merchantId?: string | null;
+  externalReference: string;
+  settlementId: string;
+}): Promise<void> {
+  const { amount, currency, merchantId, externalReference, settlementId } = input;
+  const ccy = String(currency).toUpperCase();
+  const now = new Date().toISOString();
+
+  // Idempotency: skip if already funded
+  const existing = await db.query(
+    `SELECT id FROM vault_real_funds WHERE external_reference = ? LIMIT 1`,
+    [externalReference]
+  );
+  if (existing.rows?.length) return;
+
+  // 1) Credit VAULT_BANK_OMNIBUS
+  await db.query(
+    `INSERT INTO omnibus_accounts (account_id, currency, balance, label, created_at, updated_at)
+     VALUES (?, ?, ?, 'VAULT BANK OMNIBUS', ?, ?)
+     ON CONFLICT(account_id, currency) DO UPDATE SET
+       balance = balance + excluded.balance,
+       updated_at = excluded.updated_at`,
+    [OMNIBUS_ACCOUNT_ID, ccy, amount, now, now]
+  );
+
+  // 2) Credit vault_accounts via ledger (type BATCH_TO_VAULT)
+  await vaultEngine.creditVault({
+    merchantId: merchantId || undefined,
+    amount,
+    currency: ccy,
+    reference: externalReference,
+    type: 'BATCH_TO_VAULT',
+    meta: {
+      source: 'pos_settlement',
+      settlement_id: settlementId,
+      external_reference: externalReference,
+    },
+  });
+
+  // 3) Record confirmed real funds
+  await db.query(
+    `INSERT INTO vault_real_funds
+       (id, currency, confirmed_amount, available_amount, external_reference, source, confirmed_at)
+     VALUES (?, ?, ?, ?, ?, 'pos-acquirer-settlement', ?)`,
+    [uuidv4(), ccy, amount, amount, externalReference, now]
+  );
+}
 
 router.post('/merchant/:merchantId/payment-files/pain001', async (req, res) => {
   try {
@@ -35,7 +136,8 @@ router.get('/merchant/:merchantId/settlements/unsettled', async (req, res) => {
 });
 
 // POST /api/merchant/settlements/:settlementId/settle
-// — Bank sent real money for a single POS sale — mark it settled.
+// — Bank sent real money for a single POS sale — mark it settled AND fund the
+//   VAULT_BANK_OMNIBUS so the wallet balance becomes backed by real funds.
 router.post('/merchant/settlements/:settlementId/settle', async (req, res) => {
   const { settlementId } = req.params as any;
   const { note, external_ref, provider_ref, settled_by } = req.body || {};
@@ -43,13 +145,35 @@ router.post('/merchant/settlements/:settlementId/settle', async (req, res) => {
     await db.query('BEGIN IMMEDIATE');
     const sel = await db.query('SELECT * FROM merchant_pos_settlements WHERE id = ? LIMIT 1', [settlementId]);
     if (!sel.rows.length) { await db.query('ROLLBACK'); return res.status(404).json({ error: 'Settlement not found' }); }
-    const settlement = sel.rows[0];
+    const settlement = sel.rows[0] as any;
     if (settlement.status === 'settled') { await db.query('ROLLBACK'); return res.status(400).json({ error: 'Already settled' }); }
+
+    const currency = String(settlement.currency || 'USD').toUpperCase();
+    const amount = Number(settlement.amount);
+    await ensureSettlementFundingTables(currency);
+
+    // Fund the omnibus + vault accounts + vault_real_funds (real money received)
+    const extRef = String(external_ref || provider_ref || settlementId);
+    await fundOmnibusFromSettlement({
+      amount,
+      currency,
+      merchantId: settlement.merchant_id || null,
+      externalReference: extRef,
+      settlementId,
+    });
 
     const metaUpdate = Object.assign(
       {},
-      settlement.meta ? JSON.parse(settlement.meta) : {},
-      { note: note || null, external_ref: external_ref || null, provider_ref: provider_ref || null, settled_by: settled_by || null }
+      settlement.meta ? (typeof settlement.meta === 'string' ? JSON.parse(settlement.meta) : settlement.meta) : {},
+      {
+        note: note || null,
+        external_ref: external_ref || null,
+        provider_ref: provider_ref || null,
+        settled_by: settled_by || null,
+        omnibus_funded: true,
+        omnibus_currency: currency,
+        omnibus_amount: amount,
+      }
     );
     await db.query(
       `UPDATE merchant_pos_settlements SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, meta = ? WHERE id = ?`,
@@ -57,10 +181,11 @@ router.post('/merchant/settlements/:settlementId/settle', async (req, res) => {
     );
 
     await db.query('COMMIT');
-    res.json({ ok: true, status: 'settled', settlement_id: settlementId });
+    res.json({ ok: true, status: 'settled', settlement_id: settlementId, omnibus_funded: true, amount, currency });
   } catch (e: any) {
     try { await db.query('ROLLBACK'); } catch (err) { /* ignore */ }
-    console.error(e); res.status(500).json({ error: e.message });
+    console.error('[settle]', e);
+    res.status(500).json({ error: String(e?.message || e).slice(0, 500) });
   }
 });
 
@@ -91,7 +216,7 @@ router.post('/merchant/:merchantId/settlements/batch-settle', async (req, res) =
     await db.query('BEGIN IMMEDIATE');
     const placeholders = ids.map(() => '?').join(',');
     const existingQ = await db.query(
-      `SELECT id, status, meta FROM merchant_pos_settlements
+      `SELECT id, status, meta, amount, currency, merchant_id FROM merchant_pos_settlements
        WHERE merchant_id = ? AND id IN (${placeholders})`,
       [merchantId, ...ids]
     );
@@ -99,7 +224,7 @@ router.post('/merchant/:merchantId/settlements/batch-settle', async (req, res) =
       await db.query('ROLLBACK');
       return res.status(404).json({ error: 'No matching settlement rows found for this merchant' });
     }
-    const rows: Array<{ id: string; status: string; meta: any }> = existingQ.rows as any;
+    const rows: Array<{ id: string; status: string; meta: any; amount: number; currency: string; merchant_id: string }> = existingQ.rows as any;
 
     const alreadySettled = rows.filter(r => r.status === 'settled').map(r => r.id);
     if (alreadySettled.length) {
@@ -113,13 +238,42 @@ router.post('/merchant/:merchantId/settlements/batch-settle', async (req, res) =
       return res.status(404).json({ error: 'Some settlement_ids do not exist for this merchant', missing_ids: missing });
     }
 
+    // Ensure omnibus/vault tables exist for all currencies in this batch
+    const currencies = [...new Set(rows.map(r => String(r.currency || 'USD').toUpperCase()))];
+    for (const ccy of currencies) {
+      await ensureSettlementFundingTables(ccy);
+    }
+
     let settledCount = 0;
     let totalAmount = 0;
+    const batchRef = String(external_batch_ref || provider_ref || `batch-${Date.now()}`);
     for (const row of rows) {
+      const amount = Number(row.amount);
+      const ccy = String(row.currency || 'USD').toUpperCase();
+      totalAmount += amount;
+
+      // Fund omnibus + vault accounts + vault_real_funds for this settlement
+      const extRef = `${batchRef}:${row.id}`;
+      await fundOmnibusFromSettlement({
+        amount,
+        currency: ccy,
+        merchantId: row.merchant_id || null,
+        externalReference: extRef,
+        settlementId: row.id,
+      });
+
       const metaUpdate = Object.assign(
         {},
         row.meta ? (typeof row.meta === 'string' ? JSON.parse(row.meta) : row.meta) : {},
-        { note: note || null, external_batch_ref: external_batch_ref || null, provider_ref: provider_ref || null, settled_by: settled_by || null }
+        {
+          note: note || null,
+          external_batch_ref: external_batch_ref || null,
+          provider_ref: provider_ref || null,
+          settled_by: settled_by || null,
+          omnibus_funded: true,
+          omnibus_currency: ccy,
+          omnibus_amount: amount,
+        }
       );
       const up = await db.query(
         `UPDATE merchant_pos_settlements SET status = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, meta = ?
@@ -127,16 +281,16 @@ router.post('/merchant/:merchantId/settlements/batch-settle', async (req, res) =
         [JSON.stringify(metaUpdate), row.id]
       );
       settledCount += (up.rowCount as number) || 0;
-      // Read back amount (rows array has original row objects from SELECT but we didn't SELECT amount — re-query)
     }
-    const amountQ = await db.query(
-      `SELECT COALESCE(SUM(amount),0) AS total FROM merchant_pos_settlements WHERE id IN (${placeholders})`,
-      ids
-    );
-    totalAmount = Number((amountQ.rows?.[0] as any)?.total ?? 0);
 
     await db.query('COMMIT');
-    res.json({ ok: true, settled_count: settledCount, total_settled_amount: totalAmount, external_batch_ref: external_batch_ref || null });
+    res.json({
+      ok: true,
+      settled_count: settledCount,
+      total_settled_amount: totalAmount,
+      external_batch_ref: external_batch_ref || null,
+      omnibus_funded: true,
+    });
   } catch (e: any) {
     try { await db.query('ROLLBACK'); } catch (_err) { /* ignore */ }
     console.error('[batch-settle]', e);

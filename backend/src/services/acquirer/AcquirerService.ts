@@ -35,6 +35,8 @@ export interface AcquirerAuthResponse {
   approvalCode?: string;          // 6-digit auth code
   message?:      string;
   raw?:          any;             // full acquirer response for audit
+  fundsType?:    'internal' | 'external'; // 'internal' = vault card (ledger), 'external' = real VISA/MC card (real funds)
+  cardType?:     'vault' | 'external';
 }
 
 // ── Capture (201.3) ──────────────────────────────────────────────────────────
