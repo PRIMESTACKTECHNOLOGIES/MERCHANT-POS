@@ -973,48 +973,56 @@ export class PaymentsService {
           await persistLedgerEntry(ledgerEntry, db.query.bind(db));
 
           // ── FUND ROUTING ─────────────────────────────────────────────────────────
-          // RULE: Merchant wallet receives ONLY real, withdrawable funds.
+          // RULE: the captured card value is credited to the MERCHANT wallet.
           //
           //  - REAL FUNDS CAPTURED (acquirer confirmed capture, OR HTTP processor
-          //    returned status=CAPTURED) → credit MERCHANT wallet directly.
-          //    These are withdrawable funds the merchant can settle to Vault Bank.
+          //    returned status=CAPTURED) → merchant wallet, source=real_funds.
           //
-          //  - INTERNAL LEDGER ONLY (no real capture confirmed) → credit CUSTOMER
-          //    wallet. The customer holds the ledger balance; to convert it to
-          //    real merchant funds, the customer supplies provider API credentials
-          //    via pullProviderFundsToMerchant, which pulls real funds and credits
-          //    the merchant wallet.
+          //  - INTERNAL LEDGER ONLY (no real capture confirmed) → merchant wallet
+          //    as well, source=ledger. The capture is always recorded and always
+          //    lands with the merchant.
           //
-          //  - The customer wallet is the selected customer, or a per-merchant
-          //    WALK-IN wallet when none was selected — capture always lands.
+          //  - CUSTOMER wallet is used ONLY as a fallback, when the merchant wallet
+          //    credit cannot be applied (so the capture is never lost). The customer
+          //    wallet is the selected customer, or a per-merchant WALK-IN wallet
+          //    when none was selected.
           const realFundsCaptured = !ledgerCaptureOnly &&
             (acquirerCaptureConfirmed || online.status === 'CAPTURED');
 
-          if (realFundsCaptured) {
-            try {
-              const { walletsService: ws } = await import('../wallets/wallets.service');
-              await ws.creditMerchantWallet(
-                merchantId, captureAmount, 'pos_card_charge_real_funds', paymentIntentId, chargeCcy
-              );
-              console.log('[Charge] Real funds captured → merchant wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | merchant=' + merchantId);
-            } catch (mwErr: any) {
-              console.warn('[Charge] Merchant wallet credit (non-fatal):', mwErr.message);
-            }
-          } else if (ledgerCustomerId) {
-            try {
-              const { walletsService: ws } = await import('../wallets/wallets.service');
-              await ws.creditCustomerWallet(
-                ledgerCustomerId, captureAmount, 'pos_card_charge_ledger', paymentIntentId, chargeCcy
-              );
-              console.log('[Charge] Ledger-only → customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + ledgerCustomerId);
-            } catch (cwErr: any) {
-              console.warn('[Charge] Customer wallet credit (non-fatal):', cwErr.message);
-            }
-          } else {
-            console.warn(
-              '[Charge] No real funds captured and no customer wallet — skipping wallet credit to avoid money-from-thin-air. ' +
-              'paymentIntentId=' + paymentIntentId
+          let fundsTarget = 'NONE';
+          try {
+            const { walletsService: ws } = await import('../wallets/wallets.service');
+            await ws.creditMerchantWallet(
+              merchantId,
+              captureAmount,
+              realFundsCaptured ? 'pos_card_charge_real_funds' : 'pos_card_charge_ledger',
+              paymentIntentId,
+              chargeCcy
             );
+            fundsTarget = 'MERCHANT_WALLET';
+            console.log(
+              '[Charge] ' + (realFundsCaptured ? 'Real funds captured' : 'Ledger capture') +
+              ' → merchant wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | merchant=' + merchantId
+            );
+          } catch (mwErr: any) {
+            console.warn('[Charge] Merchant wallet credit failed: ' + mwErr.message);
+            if (ledgerCustomerId) {
+              try {
+                const { walletsService: ws } = await import('../wallets/wallets.service');
+                await ws.creditCustomerWallet(
+                  ledgerCustomerId, captureAmount, 'pos_card_charge_ledger', paymentIntentId, chargeCcy
+                );
+                fundsTarget = 'CUSTOMER_WALLET';
+                console.log('[Charge] Fallback → customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + ledgerCustomerId);
+              } catch (cwErr: any) {
+                console.warn('[Charge] Customer wallet credit (non-fatal):', cwErr.message);
+              }
+            } else {
+              console.warn(
+                '[Charge] No merchant credit and no customer wallet — skipping wallet credit. ' +
+                'paymentIntentId=' + paymentIntentId
+              );
+            }
           }
           // Record transaction in pos2013_transactions
           const ledgerEntryId = ledgerEntry.id;
@@ -1028,7 +1036,7 @@ export class PaymentsService {
             entry_mode: payload.emv ? 'CHIP' : 'MANUAL',
             cardholder_name: payload.cardholderName || payload.cardholder_name || '',
             funds_type: realFundsCaptured ? 'REAL_FUNDS' : 'INTERNAL_LEDGER',
-            funds_target: realFundsCaptured ? 'MERCHANT_WALLET' : (ledgerCustomerId ? 'CUSTOMER_WALLET' : 'NONE'),
+            funds_target: fundsTarget,
             ledger_customer_id: ledgerCustomerId || null,
             walk_in: ledgerCustomerId ? !payload.customerId : false
           });
@@ -1090,10 +1098,13 @@ export class PaymentsService {
             authCode,
             authCodeSource: online.authCodeSource || 'EXTERNAL_ACQUIRER',
             settlementId: settleId,
-            reason: ledgerCaptureOnly
-              ? `POS transaction captured to INTERNAL_LEDGER (customer wallet ${ledgerCustomerId}). ` +
-                'No real scheme capture — settle to merchant via provider-credential pull (C→M).'
-              : 'POS transaction approved online (real funds captured → merchant wallet)',
+            reason: fundsTarget === 'MERCHANT_WALLET'
+              ? (realFundsCaptured
+                  ? 'POS transaction approved online (real funds captured → merchant wallet)'
+                  : 'POS transaction captured to INTERNAL_LEDGER (merchant wallet credited)')
+              : fundsTarget === 'CUSTOMER_WALLET'
+                ? `POS transaction captured to INTERNAL_LEDGER (fallback: customer wallet ${ledgerCustomerId}).`
+                : 'POS transaction captured — wallet credit unavailable.',
           };
 
           await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), response);
