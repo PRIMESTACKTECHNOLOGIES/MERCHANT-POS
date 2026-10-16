@@ -924,6 +924,10 @@ export async function chargePayment(
     entryMode?: string;
     authCode?: string;
     protocolVersion?: "NORMAL" | "101.1" | "101.6" | "201.3";
+    /** Parsed EMV TLV data read from the card (contactless/chip). */
+    emv?: Record<string, any> | null;
+    /** Raw EMV TLV hex read from the card — forwarded to the acquirer as field 55. */
+    tlvRaw?: string | null;
   }
 ) {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/payments/charge`, {

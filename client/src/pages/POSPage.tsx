@@ -123,47 +123,87 @@ export const POSPage = () => {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  // ── NFC tap handler ───────────────────────────────────────────────────────
+  // ── NFC tap handler — TAP = AUTO-CHARGE ───────────────────────────────────
+  // A tap is a payment attempt: the card is read and immediately charged for the
+  // on-screen amount. The reader's EMV data (incl. the ARQC field 55) is
+  // forwarded so a live acquirer can authorize the contactless tap.
   const handleNfcTap = useCallback(async () => {
     if (nfcReading) return;
+
+    const amountVal = parseFloat(finalAmount);
+    if (!(amountVal > 0)) {
+      showToast('Enter an amount before tapping the card', 'error');
+      return;
+    }
+
     setNfcReading(true);
     showToast('Tap your card on the reader...', 'info' as any);
     try {
-      const result = await readAcr122uCard();
+      const currency = getTerminalCurrency();
+      const amountMinor = Math.round(amountVal * 100);
+      const result = await readAcr122uCard(amountMinor, currency);
       if (!result?.success) {
         showToast(result?.error || 'No card detected', 'error');
         return;
       }
       const card = result.card;
       const emv = result.emv || {};
+      const tlvRaw: string | null = result.tlvRaw || null;
 
-      // Extract PAN from EMV tag 5A, fallback to UID
+      // Extract PAN from EMV tag 5A, fallback to track 2 (57) prefix
       const panRaw: string = emv['5A'] || emv['57']?.split('D')?.[0] || '';
       const pan = panRaw.replace(/\s/g, '').replace(/F/gi, '').substring(0, 16);
+      if (!pan || pan.length < 13) {
+        showToast('NFC read did not return a usable card number', 'error');
+        return;
+      }
 
       // Extract expiry from tag 5F24 (YYMMDD) → MM/YY
       const expiryRaw: string = emv['5F24'] || '';
       let expiry = '';
       if (expiryRaw.length >= 4) {
-        const yy = expiryRaw.substring(0, 2);
-        const mm = expiryRaw.substring(2, 4);
-        expiry = `${mm}/${yy}`;
+        expiry = `${expiryRaw.substring(2, 4)}/${expiryRaw.substring(0, 2)}`;
       }
 
       setCardData(prev => ({
         ...prev,
-        pan: pan || prev.pan,
+        pan,
         expiry: expiry || prev.expiry,
       }));
       setNfcCardData({ uid: card?.uid, aid: card?.aid });
-      showToast(`Card detected: ****${pan.slice(-4) || card?.uid?.slice(-4)}`, 'success');
-      setShowCardForm(true);
+      setShowCardForm(false);
+
+      // ── AUTO-CHARGE: the tap is the capture attempt ────────────────────────
+      const res = await chargePayment(
+        amountMinor,
+        currency,
+        settings?.merchant_id || 'MRC-1001',
+        {
+          pan,
+          expiry: expiry || cardData.expiry,
+          customerId: selectedCustomer?.id,
+          terminalId: settings?.terminal_id || 'T2013-0001',
+          stan: generateStan(),
+          entryMode: 'CONTACTLESS',
+          emv,
+          tlvRaw,
+        }
+      );
+
+      if (res.status === 'APPROVED') {
+        showToast(`Approved ****${pan.slice(-4)} — captured`, 'success');
+        setAmount('0.00');
+        loadRecentTxns();
+      } else {
+        const detail = (res as any).reason || (res as any).error || (res as any).message;
+        showToast(detail ? `Declined: ${detail}` : 'Transaction Declined', 'error');
+      }
     } catch (e: any) {
       showToast(e?.message || 'NFC read failed', 'error');
     } finally {
       setNfcReading(false);
     }
-  }, [nfcReading, showToast]);
+  }, [nfcReading, finalAmount, settings, selectedCustomer, cardData.expiry, showToast, setAmount, loadRecentTxns]);
 
   const loadCustomers = async () => {
     try {
@@ -838,7 +878,7 @@ export const POSPage = () => {
               disabled={nfcReading}
               className="ml-2 px-2.5 py-1 bg-blue-600 text-white rounded-md text-xs font-bold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-60"
             >
-              {nfcReading ? '⏳ Reading...' : '📡 Tap Now'}
+              {nfcReading ? '⏳ Charging...' : '📡 Tap & Pay'}
             </button>
           )}
         </div>

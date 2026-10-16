@@ -235,7 +235,9 @@ export class PaymentsController {
         // Nested EMV templates (6F/A5/77/70) must be traversed or AIP (82),
         // AFL (94), PAN (5A), Track 2 (57) and AC (9F26) are lost.
         const tlv = parseTlvDeep(rawBuffer);
-        emv = extractEmvData(tlv);
+        // Pass the raw TLV hex so `field55` is carried through — the acquirer
+        // needs the full EMV data (incl. the ARQC 9F26) to authorize a tap.
+        emv = extractEmvData(tlv, tlvRaw);
         const oda = await performOda(tlv);
         return res.json({ success: true, card, emv, oda, tlvRaw });
       }
