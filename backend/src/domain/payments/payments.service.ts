@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 import { acquirerConfig } from '../../config/acquirer';
 import { createAcquirerClient, detectNetworkFromPan } from './acquirer';
 import { db } from "../../config/db";
@@ -52,6 +52,11 @@ interface PosTransactionResult {
 }
 
 const MAX_POS_TRANSACTION_AMOUNT = 1_000_000_000;
+
+/** Alpha currency → ISO 4217 numeric, as required by the EMV/HSM layer. */
+const CURRENCY_NUMERIC: Record<string, string> = {
+  USD: '840', EUR: '978', GBP: '826', AED: '784',
+};
 
 export class PaymentsService {
 
@@ -200,6 +205,32 @@ export class PaymentsService {
           return { success: false, status: 'ERROR', processor: { approved: false, reason: 'Acquirer merchant account missing' }, error: 'ACQUIRER_MERCHANT_ACCOUNT or merchantId is required' };
         }
         const field55 = String(payload.emv?.field55 || payload.emv?.field55Hex || payload.emv?.field55hex || payload.emv?.tlvRaw || '').trim();
+
+        // ── EMV ARQC validation ─────────────────────────────────────────────────
+        // The cryptogram is the issuer's proof that a genuine chip produced this
+        // transaction. It is validated *before* the acquirer is asked to move
+        // money, and a failure declines the transaction: a forged Field 55 must
+        // never reach an approval.
+        if (field55) {
+          try {
+            const { IssuerEmvValidator } = await import('../../services/hsm/issuerEmvValidator');
+            const { getHsmClient } = await import('../../services/hsm/hsmClientImpl');
+            const validator = new IssuerEmvValidator(getHsmClient());
+            const expiry = (payload.expiry || '3012').replace('/', '');
+            const currency = CURRENCY_NUMERIC[String(payload.currency || 'USD').toUpperCase()] || '840';
+            await validator.validate(field55, payload.pan || '', expiry, Number(payload.amountMinor), currency);
+            console.log('[EMV] ARQC validated for card ' + String(payload.pan || '').slice(-4));
+          } catch (emvErr: any) {
+            console.warn('[EMV] ARQC validation failed:', emvErr?.message || emvErr);
+            return {
+              success: false,
+              status: 'DECLINED',
+              processor: { approved: false, code: '05', reason: 'EMV cryptogram validation failed' },
+              error: emvErr?.message || 'EMV cryptogram validation failed',
+            };
+          }
+        }
+
         const result = await acquirer.authorize({
           merchantAccount,
           amountMinor: Number(payload.amountMinor),
@@ -210,21 +241,6 @@ export class PaymentsService {
           emvField55: field55 || undefined,
           protocol: field55 ? '101.6' : '101.1',
         });
-        // EMV ARQC validation when Field 55 is present
-        if (field55 && result.success) {
-          try {
-            const { IssuerEmvValidator } = await import('../../services/hsm/issuerEmvValidator');
-            const { getHsmClient } = await import('../../services/hsm/hsmClientImpl');
-            const validator = new IssuerEmvValidator(getHsmClient());
-            const expiry = (payload.expiry || '3012').replace('/', '');
-            const currency = payload.currency === 'EUR' ? '978' : payload.currency === 'GBP' ? '826' : '840';
-            await validator.validate(field55, payload.pan || '', expiry, Number(payload.amountMinor), currency);
-            console.log('[EMV] ARQC validated successfully for auth ' + result.approvalCode);
-          } catch (emvErr: any) {
-            console.warn('[EMV] ARQC validation failed:', emvErr.message, '— continuing with acquirer approval');
-            // Non-fatal for now — log and continue. Set to fatal when HSM is live.
-          }
-        }
 
         if (!result.success) {
           return {
@@ -973,56 +989,63 @@ export class PaymentsService {
           await persistLedgerEntry(ledgerEntry, db.query.bind(db));
 
           // ── FUND ROUTING ─────────────────────────────────────────────────────────
-          // RULE: the captured card value is credited to the MERCHANT wallet.
+          // RULE: a wallet is credited ONLY when a real acquirer/scheme confirmed
+          // the capture. There is no "internal ledger" credit path any more.
           //
           //  - REAL FUNDS CAPTURED (acquirer confirmed capture, OR HTTP processor
           //    returned status=CAPTURED) → merchant wallet, source=real_funds.
           //
-          //  - INTERNAL LEDGER ONLY (no real capture confirmed) → merchant wallet
-          //    as well, source=ledger. The capture is always recorded and always
-          //    lands with the merchant.
+          //  - NO REAL CAPTURE CONFIRMED → NO wallet is touched. The transaction is
+          //    recorded for audit, but no balance is raised (see NO UNBACKED FUNDS).
           //
-          //  - CUSTOMER wallet is used ONLY as a fallback, when the merchant wallet
-          //    credit cannot be applied (so the capture is never lost). The customer
+          //  - CUSTOMER wallet is used ONLY as a fallback, when a CONFIRMED real
+          //    capture could not be applied to the merchant wallet. The customer
           //    wallet is the selected customer, or a per-merchant WALK-IN wallet
           //    when none was selected.
           const realFundsCaptured = !ledgerCaptureOnly &&
             (acquirerCaptureConfirmed || online.status === 'CAPTURED');
 
+          // ── NO UNBACKED FUNDS ────────────────────────────────────────────────────
+          // A capture that no real acquirer/scheme confirmed MUST NOT raise any
+          // wallet balance. Crediting here would mint withdrawable money that no
+          // bank ever received (the €10M `onl_*` ledger capture was exactly this,
+          // and config/db.ts already voids one such $10M entry as "not real funds").
           let fundsTarget = 'NONE';
-          try {
-            const { walletsService: ws } = await import('../wallets/wallets.service');
-            await ws.creditMerchantWallet(
-              merchantId,
-              captureAmount,
-              realFundsCaptured ? 'pos_card_charge_real_funds' : 'pos_card_charge_ledger',
-              paymentIntentId,
-              chargeCcy
-            );
-            fundsTarget = 'MERCHANT_WALLET';
-            console.log(
-              '[Charge] ' + (realFundsCaptured ? 'Real funds captured' : 'Ledger capture') +
-              ' → merchant wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | merchant=' + merchantId
-            );
-          } catch (mwErr: any) {
-            console.warn('[Charge] Merchant wallet credit failed: ' + mwErr.message);
-            if (ledgerCustomerId) {
-              try {
-                const { walletsService: ws } = await import('../wallets/wallets.service');
-                await ws.creditCustomerWallet(
-                  ledgerCustomerId, captureAmount, 'pos_card_charge_ledger', paymentIntentId, chargeCcy
-                );
-                fundsTarget = 'CUSTOMER_WALLET';
-                console.log('[Charge] Fallback → customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + ledgerCustomerId);
-              } catch (cwErr: any) {
-                console.warn('[Charge] Customer wallet credit (non-fatal):', cwErr.message);
-              }
-            } else {
-              console.warn(
-                '[Charge] No merchant credit and no customer wallet — skipping wallet credit. ' +
-                'paymentIntentId=' + paymentIntentId
+          if (realFundsCaptured) {
+            try {
+              const { walletsService: ws } = await import('../wallets/wallets.service');
+              await ws.creditMerchantWallet(
+                merchantId,
+                captureAmount,
+                'pos_card_charge_real_funds',
+                paymentIntentId,
+                chargeCcy
               );
+              fundsTarget = 'MERCHANT_WALLET';
+              console.log(
+                '[Charge] Real funds captured → merchant wallet credited: ' +
+                chargeCcy + ' ' + captureAmount + ' | merchant=' + merchantId
+              );
+            } catch (mwErr: any) {
+              console.warn('[Charge] Merchant wallet credit failed: ' + mwErr.message);
+              if (ledgerCustomerId) {
+                try {
+                  const { walletsService: ws } = await import('../wallets/wallets.service');
+                  await ws.creditCustomerWallet(
+                    ledgerCustomerId, captureAmount, 'pos_card_charge_real_funds', paymentIntentId, chargeCcy
+                  );
+                  fundsTarget = 'CUSTOMER_WALLET';
+                  console.log('[Charge] Fallback → customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + ledgerCustomerId);
+                } catch (cwErr: any) {
+                  console.warn('[Charge] Customer wallet credit (non-fatal):', cwErr.message);
+                }
+              }
             }
+          } else {
+            console.warn(
+              '[Charge] No real scheme capture — no wallet credit posted (unbacked funds are never minted). ' +
+              'paymentIntentId=' + paymentIntentId
+            );
           }
           // Record transaction in pos2013_transactions
           const ledgerEntryId = ledgerEntry.id;
@@ -1035,7 +1058,7 @@ export class PaymentsService {
             panLast4: payload.pan ? payload.pan.slice(-4) : '',
             entry_mode: payload.emv ? 'CHIP' : 'MANUAL',
             cardholder_name: payload.cardholderName || payload.cardholder_name || '',
-            funds_type: realFundsCaptured ? 'REAL_FUNDS' : 'INTERNAL_LEDGER',
+            funds_type: realFundsCaptured ? 'REAL_FUNDS' : 'UNBACKED',
             funds_target: fundsTarget,
             ledger_customer_id: ledgerCustomerId || null,
             walk_in: ledgerCustomerId ? !payload.customerId : false
@@ -1075,17 +1098,23 @@ export class PaymentsService {
             ]
           );
 
-          // â”€â”€ FLOWCHART STEP 5: Create merchant_pos_settlements row (unsettled) â”€â”€
+          // ── FLOWCHART STEP 5: Create merchant_pos_settlements row (unsettled) ──
           // Status 'unsettled' = T+1 pending bank clearing (Square / Stripe style)
+          // ONLY for captures that a real acquirer/scheme confirmed. An unbacked
+          // capture produces no settlement row, so it can never be settled later.
           const settleId = `setl_online_${Date.now().toString(36)}`;
-          try {
-            await db.query(
-              `INSERT OR IGNORE INTO merchant_pos_settlements
-                (id, merchant_id, ledger_entry_id, amount, currency, status, settled_at, created_at, meta)
-               VALUES (?, ?, ?, ?, ?, 'unsettled', NULL, CURRENT_TIMESTAMP, ?)`,
-              [settleId, merchantId, ledgerEntryId, (payload.amountMinor / 100), payload.currency || 'USD', settleMeta]
-            );
-          } catch (err: any) { console.warn('[SETTLE] online merchant_pos_settlements insert skipped:', err.message); }
+          if (realFundsCaptured) {
+            try {
+              await db.query(
+                `INSERT OR IGNORE INTO merchant_pos_settlements
+                  (id, merchant_id, ledger_entry_id, amount, currency, status, settled_at, created_at, meta)
+                 VALUES (?, ?, ?, ?, ?, 'unsettled', NULL, CURRENT_TIMESTAMP, ?)`,
+                [settleId, merchantId, ledgerEntryId, (payload.amountMinor / 100), payload.currency || 'USD', settleMeta]
+              );
+            } catch (err: any) { console.warn('[SETTLE] online merchant_pos_settlements insert skipped:', err.message); }
+          } else {
+            console.warn('[SETTLE] No real capture — settlement row not created for ' + paymentIntentId);
+          }
 
           const response: PosTransactionResult = {
             success: true,
@@ -1097,14 +1126,14 @@ export class PaymentsService {
             processor: 'ONLINE',
             authCode,
             authCodeSource: online.authCodeSource || 'EXTERNAL_ACQUIRER',
-            settlementId: settleId,
-            reason: fundsTarget === 'MERCHANT_WALLET'
-              ? (realFundsCaptured
+            settlementId: realFundsCaptured ? settleId : undefined,
+            reason: realFundsCaptured
+              ? (fundsTarget === 'MERCHANT_WALLET'
                   ? 'POS transaction approved online (real funds captured → merchant wallet)'
-                  : 'POS transaction captured to INTERNAL_LEDGER (merchant wallet credited)')
-              : fundsTarget === 'CUSTOMER_WALLET'
-                ? `POS transaction captured to INTERNAL_LEDGER (fallback: customer wallet ${ledgerCustomerId}).`
-                : 'POS transaction captured — wallet credit unavailable.',
+                  : fundsTarget === 'CUSTOMER_WALLET'
+                    ? `POS transaction approved online (real funds captured → fallback customer wallet ${ledgerCustomerId}).`
+                    : 'POS transaction approved online — real funds captured, but no wallet credit could be applied.')
+              : 'POS transaction approved online, but NO real scheme capture was confirmed — no wallet was credited and no funds were minted.',
           };
 
           await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), response);

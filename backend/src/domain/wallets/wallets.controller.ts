@@ -414,127 +414,286 @@ export class WalletsController {
   // ── Send captured customer wallet funds → merchant wallet via real provider
   async sendFundsToMerchantWallet(req: Request, res: Response) {
     try {
-      const { customerId, merchantId, amount, currency, providerEndpoint, providerApiKey, providerSecretKey } = req.body || {};
+      const {
+        customerId, merchantId, amount, currency,
+        providerEndpoint, providerApiKey, providerSecretKey,
+      } = req.body || {};
+
       if (!customerId || !merchantId || !amount || Number(amount) <= 0) {
-        return res.status(400).json({ success: false, transactionId: null, error: 'customerId, merchantId, and positive amount required' });
-      }
-      const amt = Number(amount);
-      const ccy = (currency || 'USD').toString().toUpperCase();
-
-      // 1. Ensure stored provider credentials are present
-      const { db } = await import('../../config/db');
-      // Defensive CREATE TABLE IF NOT EXISTS
-      try {
-        await db.query(`CREATE TABLE IF NOT EXISTS provider_credentials (
-          merchant_id      TEXT PRIMARY KEY,
-          endpoint         TEXT NOT NULL,
-          api_key          TEXT NOT NULL,
-          secret_key       TEXT NOT NULL,
-          verified         INTEGER NOT NULL DEFAULT 0,
-          last_checked_at  TEXT DEFAULT CURRENT_TIMESTAMP,
-          meta             TEXT
-        )`);
-        try { await db.query(`ALTER TABLE provider_credentials ADD COLUMN meta TEXT`); } catch { /* ignore */ }
-      } catch { /* table exists */ }
-
-      let endpoint = providerEndpoint;
-      let apiKey = providerApiKey;
-      let secretKey = providerSecretKey;
-      if (!endpoint || !apiKey || !secretKey) {
-        const credRow = (await db.query(
-          'SELECT endpoint, api_key, secret_key FROM provider_credentials WHERE merchant_id = ? AND verified = 1 LIMIT 1',
-          [merchantId]
-        )).rows?.[0];
-        if (credRow) {
-          endpoint = endpoint || credRow.endpoint;
-          apiKey   = apiKey   || credRow.api_key;
-          secretKey = secretKey || credRow.secret_key;
-        }
-      }
-      const useInternalTransfer = !endpoint || !apiKey || !secretKey;
-      let providerPullSuccess = false;
-      let providerPullRef: string | null = null;
-      if (useInternalTransfer) {
-        // No external provider — direct internal POS transfer
-        providerPullSuccess = true;
-        providerPullRef = 'INTERNAL-' + Date.now();
-      } else {
-        let providerError: string | null = null;
-        try {
-          const axiosLib = await import('axios');
-          const pullResp = await axiosLib.default.request({
-            method: 'POST',
-            url: (String(endpoint).endsWith('/') ? String(endpoint).slice(0,-1) : String(endpoint)) + '/pull-funds',
-            headers: { 'x-api-key': String(apiKey), 'x-secret-key': String(secretKey), 'Content-Type': 'application/json' },
-            timeout: 20000, validateStatus: () => true,
-            data: { customerId, merchantId, amountMinor: Math.round(amt * 100), currency: ccy, externalReference: 'c2m-' + Date.now() },
-          });
-          if (pullResp.status === 200 && (pullResp.data?.success === true || pullResp.data?.status === 'SUCCESS' || pullResp.data?.approved === true)) {
-            providerPullSuccess = true;
-            providerPullRef = String(pullResp.data?.reference || pullResp.data?.id || 'PROV-' + Date.now());
-          } else { providerError = 'Provider HTTP ' + pullResp.status; }
-        } catch (pe: any) { providerError = 'Provider call failed: ' + (pe?.message || 'unknown'); }
-        if (!providerPullSuccess) {
-          return res.status(402).json({ success: false, transactionId: null, authCode: null, error: providerError || 'Provider pull failed' });
-        }
-      }
-
-
-
-      // 3. Only AFTER real provider pull succeeded: move customer → merchant wallet
-      //    Re-use atomic creditMerchantWallet + creditCustomerWallet pattern
-      const customerWallet = await walletsService.getOrCreateWallet(customerId, ccy);
-      const custBalance = Number(customerWallet.balance || 0);
-      if (custBalance < amt) {
         return res.status(400).json({
           success: false,
-          transactionId: null,
-          error: `Customer wallet has only ${ccy} ${custBalance.toFixed(2)} — cannot send ${ccy} ${amt.toFixed(2)}`
+          error: 'customerId, merchantId, and positive amount required',
         });
       }
 
-      // Debit customer wallet atomically
-      await db.query('BEGIN IMMEDIATE');
-      try {
-        const { v4: uuidv4 } = await import('uuid');
+      const amt = Number(amount);
+      const ccy = (currency || 'USD').toString().toUpperCase();
+      const { db } = await import('../../config/db');
+      const { v4: uuidv4 } = await import('uuid');
+
+      // ── STEP 1: Detect funds type in customer wallet ─────────────────────
+      // Real funds sources: pos_card_charge_real_funds, provider_real_funds_pull,
+      //                     customer_provider_transfer, pos_card_charge
+      // Ledger-only sources: pos_card_charge_ledger, offline_pos_capture,
+      //                      pos_card_charge_auto_credit, manual, topup
+      const REAL_FUND_SOURCES = [
+        'pos_card_charge_real_funds',
+        'provider_real_funds_pull',
+        'customer_provider_transfer',
+        'pos_card_charge',
+        'inbound_registered_capture',
+      ];
+
+      const customerWallet = await walletsService.getOrCreateWallet(customerId, ccy);
+      const custBalance = Number(customerWallet.balance || 0);
+
+      if (custBalance < amt) {
+        return res.status(400).json({
+          success: false,
+          error: `Insufficient balance. Customer has ${ccy} ${custBalance.toFixed(2)}, requested ${ccy} ${amt.toFixed(2)}`,
+        });
+      }
+
+      // Check what portion of the customer balance came from real sources
+      const realTxns = await db.query(
+        `SELECT COALESCE(SUM(amount), 0) as real_total
+           FROM wallet_transactions
+          WHERE wallet_id = ?
+            AND type = 'credit'
+            AND source IN (${REAL_FUND_SOURCES.map(() => '?').join(',')})`,
+        [customerWallet.id, ...REAL_FUND_SOURCES]
+      );
+      const realTotal = Number(realTxns.rows?.[0]?.real_total || 0);
+
+      // Also check debits already made from real sources
+      const realDebits = await db.query(
+        `SELECT COALESCE(SUM(amount), 0) as debit_total
+           FROM wallet_transactions
+          WHERE wallet_id = ?
+            AND type = 'debit'`,
+        [customerWallet.id]
+      );
+      const totalDebits = Number(realDebits.rows?.[0]?.debit_total || 0);
+      const availableRealFunds = Math.max(0, realTotal - totalDebits);
+
+      const isRealFunds = availableRealFunds >= amt;
+
+      // ── PATH A: REAL FUNDS — direct transfer, no provider needed ─────────
+      if (isRealFunds) {
         const now = new Date().toISOString();
         const txnId = uuidv4();
 
-        await db.query(
-          `UPDATE customer_wallets SET balance = balance - ?, updated_at = ? WHERE id = ? AND balance >= ?`,
-          [amt, now, customerWallet.id, amt]
-        );
-        const custTxnId = uuidv4();
-        await db.query(
-          `INSERT INTO wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description, created_at)
-           VALUES (?, ?, 'debit', ?, ?, 'provider_pull_merchant', ?, ?, ?)`,
-          [custTxnId, customerWallet.id, amt, ccy, providerPullRef || `prov:merchant:${merchantId}`, `Provider pulled → merchant wallet (${merchantId})`, now]
-        );
+        await db.query('BEGIN IMMEDIATE');
+        try {
+          // Debit customer wallet
+          await db.query(
+            `UPDATE customer_wallets SET balance = balance - ?, updated_at = ? WHERE id = ? AND balance >= ?`,
+            [amt, now, customerWallet.id, amt]
+          );
+          await db.query(
+            `INSERT INTO wallet_transactions
+               (id, wallet_id, type, amount, currency, source, reference, description, created_at)
+             VALUES (?, ?, 'debit', ?, ?, 'c2m_real_funds', ?, ?, ?)`,
+            [uuidv4(), customerWallet.id, amt, ccy,
+             `C2M-${txnId}`, `Real funds sent to merchant ${merchantId}`, now]
+          );
+          // Credit merchant wallet
+          await walletsService.creditMerchantWallet(
+            merchantId, amt, 'c2m_real_funds', `C2M-${txnId}`, ccy
+          );
+          await db.query('COMMIT');
+        } catch (err) {
+          try { await db.query('ROLLBACK'); } catch { /* ignore */ }
+          throw err;
+        }
 
-        // Credit merchant wallet (corresponding)
-        await walletsService.creditMerchantWallet(
-          merchantId, amt,
-          `CUSTOMER_PROVIDER_PULL:${providerPullRef || txnId}`,
-          `Customer ${customerId} via real provider`,
-          ccy
-        );
-
-        await db.query('COMMIT');
+        console.log(`[C2M] ✅ REAL FUNDS: ${ccy} ${amt} from customer ${customerId} → merchant ${merchantId}`);
         return res.status(200).json({
           success: true,
           transactionId: txnId,
           status: 'COMPLETED',
-          authCode: providerPullRef,
+          fundsType: 'REAL_FUNDS',
           currency: ccy,
-          amount,
-          message: `Real provider pull succeeded. ${ccy} ${amt.toFixed(2)} debited from customer wallet and credited to merchant wallet (${merchantId})`
+          amount: amt,
+          message: `✅ ${ccy} ${amt.toFixed(2)} real funds transferred directly to merchant wallet.`,
         });
-      } catch (innerErr) {
-        try { await db.query('ROLLBACK'); } catch { /* preserve */ }
-        throw innerErr;
       }
+
+      // ── PATH B: LEDGER FUNDS — provider credentials required ─────────────
+      // Customer has only ledger/internal balance — must pull real funds first.
+
+      // Try to get stored provider credentials if not passed in request
+      let endpoint  = providerEndpoint;
+      let apiKey    = providerApiKey;
+      let secretKey = providerSecretKey;
+
+      if (!endpoint || !apiKey || !secretKey) {
+        try {
+          await db.query(`CREATE TABLE IF NOT EXISTS provider_credentials (
+            merchant_id     TEXT PRIMARY KEY,
+            endpoint        TEXT NOT NULL,
+            api_key         TEXT NOT NULL,
+            secret_key      TEXT NOT NULL,
+            verified        INTEGER NOT NULL DEFAULT 0,
+            last_checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            meta            TEXT
+          )`);
+        } catch { /* exists */ }
+
+        const credRow = (await db.query(
+          `SELECT endpoint, api_key, secret_key
+             FROM provider_credentials
+            WHERE merchant_id = ? AND verified = 1 LIMIT 1`,
+          [merchantId]
+        )).rows?.[0];
+
+        if (credRow) {
+          endpoint  = endpoint  || credRow.endpoint;
+          apiKey    = apiKey    || credRow.api_key;
+          secretKey = secretKey || credRow.secret_key;
+        }
+      }
+
+      // No provider credentials available — ask the customer to provide them
+      if (!endpoint || !apiKey || !secretKey) {
+        return res.status(402).json({
+          success: false,
+          fundsType: 'LEDGER_ONLY',
+          requiresProvider: true,
+          availableRealFunds: availableRealFunds.toFixed(2),
+          requestedAmount: amt.toFixed(2),
+          currency: ccy,
+          error: `Your wallet balance of ${ccy} ${custBalance.toFixed(2)} is ledger-only (not yet backed by real funds). ` +
+                 `To transfer to merchant wallet, provide your payment provider credentials.`,
+          requiredFields: ['providerEndpoint', 'providerApiKey', 'providerSecretKey'],
+          hint: 'Provide your provider API endpoint URL, API key, and secret key to pull real funds.',
+        });
+      }
+
+      // Validate provider URL
+      let providerUrl: URL;
+      try {
+        providerUrl = new URL(String(endpoint));
+      } catch {
+        return res.status(400).json({ success: false, error: 'providerEndpoint is not a valid URL' });
+      }
+      if (providerUrl.protocol !== 'https:') {
+        return res.status(400).json({ success: false, error: 'providerEndpoint must use HTTPS' });
+      }
+
+      // Check allowlist
+      const allowedHosts = String(process.env.CUSTOMER_WALLET_PROVIDER_ALLOWED_HOSTS || '')
+        .split(',').map(h => h.trim().toLowerCase()).filter(Boolean);
+      if (allowedHosts.length > 0 && !allowedHosts.includes(providerUrl.hostname.toLowerCase())) {
+        return res.status(403).json({
+          success: false,
+          error: `Provider host ${providerUrl.hostname} is not on the approved list. Contact support to add it.`,
+        });
+      }
+
+      // Call provider to pull real funds
+      const externalRef = `C2M-${uuidv4().slice(0, 12).toUpperCase()}`;
+      let providerRef: string | null = null;
+      try {
+        const axiosLib = await import('axios');
+        const pullResp = await axiosLib.default.post(
+          `${String(endpoint).replace(/\/+$/, '')}/pull-funds`,
+          {
+            customerId, merchantId,
+            amountMinor: Math.round(amt * 100),
+            currency: ccy,
+            reference: externalRef,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+              'X-Secret-Key': String(secretKey),
+              'Idempotency-Key': externalRef,
+            },
+            timeout: 20000,
+            validateStatus: () => true,
+          }
+        );
+
+        const data = pullResp.data || {};
+        const responseStatus = String(data.status || data.result || '').toUpperCase();
+        const confirmed = data.success === true || data.ok === true ||
+          ['SUCCESS', 'COMPLETED', 'CONFIRMED', 'SETTLED', 'APPROVED'].includes(responseStatus);
+
+        if (pullResp.status < 200 || pullResp.status >= 300 || !confirmed) {
+          return res.status(402).json({
+            success: false,
+            error: `Provider rejected the fund pull (HTTP ${pullResp.status}): ${data.message || data.error || 'Not confirmed'}`,
+            requiresProvider: true,
+          });
+        }
+
+        // Provider MUST return its own transaction ID
+        providerRef = String(data.providerTransactionId || data.transactionId || data.reference || data.id || '');
+        if (!providerRef || providerRef === externalRef) {
+          return res.status(402).json({
+            success: false,
+            error: 'Provider did not return a real transaction ID. Cannot verify real funds.',
+            requiresProvider: true,
+          });
+        }
+
+        // Check for mock/sandbox indicators
+        if (/(mock|demo|simulat|sandbox|test)/i.test(JSON.stringify(data))) {
+          return res.status(402).json({
+            success: false,
+            error: 'Provider response contains mock/sandbox indicators. Real funds required.',
+          });
+        }
+      } catch (provErr: any) {
+        return res.status(502).json({
+          success: false,
+          error: `Provider call failed: ${provErr.message}`,
+          requiresProvider: true,
+        });
+      }
+
+      // Provider confirmed — now atomically move customer → merchant wallet
+      const now = new Date().toISOString();
+      const txnId = uuidv4();
+
+      await db.query('BEGIN IMMEDIATE');
+      try {
+        await db.query(
+          `UPDATE customer_wallets SET balance = balance - ?, updated_at = ? WHERE id = ? AND balance >= ?`,
+          [amt, now, customerWallet.id, amt]
+        );
+        await db.query(
+          `INSERT INTO wallet_transactions
+             (id, wallet_id, type, amount, currency, source, reference, description, created_at)
+           VALUES (?, ?, 'debit', ?, ?, 'provider_real_funds_pull', ?, ?, ?)`,
+          [uuidv4(), customerWallet.id, amt, ccy,
+           providerRef, `Provider-confirmed real funds → merchant ${merchantId}`, now]
+        );
+        await walletsService.creditMerchantWallet(
+          merchantId, amt, 'provider_real_funds_pull', providerRef, ccy
+        );
+        await db.query('COMMIT');
+      } catch (err) {
+        try { await db.query('ROLLBACK'); } catch { /* ignore */ }
+        throw err;
+      }
+
+      console.log(`[C2M] ✅ PROVIDER PULL: ${ccy} ${amt} from customer ${customerId} → merchant ${merchantId} | providerRef=${providerRef}`);
+      return res.status(200).json({
+        success: true,
+        transactionId: txnId,
+        providerReference: providerRef,
+        status: 'COMPLETED',
+        fundsType: 'PROVIDER_REAL_FUNDS',
+        currency: ccy,
+        amount: amt,
+        message: `✅ ${ccy} ${amt.toFixed(2)} real funds confirmed by provider and credited to merchant wallet.`,
+      });
+
     } catch (e: any) {
-      res.status(500).json({ success: false, transactionId: null, error: e.message || 'Failed to transfer funds' });
+      res.status(500).json({ success: false, error: e.message || 'Failed to transfer funds' });
     }
   }
 

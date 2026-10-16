@@ -3,11 +3,66 @@ import { db } from "../config/db";
 import {
   generateVirtualCard,
   encryptPan,
+  decryptPan,
+  hashPan,
   validateLuhn,
   detectSchemeFromPan,
   CardScheme,
   GeneratedCard,
 } from "../utils/virtualCard";
+
+/** Masked form kept in `card_number`; the real PAN lives encrypted in `pan_encrypted`. */
+function maskedPan(last4: string): string {
+  return `XXXX-XXXX-XXXX-${last4}`;
+}
+
+/** The one-time CVV is only ever handed back at issuance — it is never stored. */
+export type IssuedWalletCard = WalletCardRecord & { one_time_cvv: string };
+
+let pciStorageReady: Promise<void> | null = null;
+
+/**
+ * One-off migration to PCI-DSS 4.0 storage rules for `wallet_cards`.
+ *
+ * - `pan_hash` (keyed HMAC of the PAN) becomes the lookup/uniqueness key,
+ *   replacing the UNIQUE index that used to sit on the plaintext PAN.
+ * - every PAN still stored in the clear is encrypted into `pan_encrypted` and
+ *   the plaintext column is replaced with a masked placeholder.
+ * - the stored CVV is erased: it is recomputed from PAN + expiry on demand.
+ *
+ * Safe to run on every boot — rows that are already migrated are skipped.
+ */
+async function ensurePciStorage(): Promise<void> {
+  if (!pciStorageReady) {
+    pciStorageReady = (async () => {
+      try { await db.query("ALTER TABLE wallet_cards ADD COLUMN pan_hash TEXT"); } catch (_) { /* already present */ }
+      try { await db.query("DROP INDEX IF EXISTS idx_wallet_cards_pan"); } catch (_) { /* never created */ }
+      try { await db.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_cards_pan_hash ON wallet_cards(pan_hash)"); } catch (_) { /* duplicate legacy data */ }
+
+      const rows = await db.query("SELECT id, card_number, last4, pan_encrypted FROM wallet_cards");
+      let migrated = 0;
+      for (const row of rows.rows || []) {
+        const pan = String(row.card_number || "");
+        if (!/^\d{13,19}$/.test(pan)) continue;      // already masked / already migrated
+        const { encrypted, kid } = encryptPan(pan);
+        await db.query(
+          `UPDATE wallet_cards
+              SET card_number = ?, pan_encrypted = ?, pan_kid = ?, pan_hash = ?, cvv = ''
+            WHERE id = ?`,
+          [maskedPan(String(row.last4 || pan.slice(-4))), encrypted, kid, hashPan(pan), row.id]
+        );
+        migrated++;
+      }
+      if (migrated) {
+        console.log(`[wallet_cards] PCI migration: removed plaintext PAN/CVV from ${migrated} card(s)`);
+      }
+    })().catch((err) => {
+      pciStorageReady = null;
+      throw err;
+    });
+  }
+  return pciStorageReady;
+}
 
 export type WalletCardStatus = "ACTIVE" | "INACTIVE" | "DEACTIVATED" | "EXPIRED" | "BLOCKED";
 
@@ -18,10 +73,10 @@ export interface WalletCardRecord {
   scheme: CardScheme;
   bin: string;
   last4: string;
+  /** Masked at rest — `XXXX-XXXX-XXXX-1234`. Never the real PAN. */
   card_number: string;
   expiry_month: string;
   expiry_year: string;
-  cvv: string;
   cardholder_name: string | null;
   currency: string;
   status: WalletCardStatus;
@@ -29,6 +84,9 @@ export interface WalletCardRecord {
   used_amount: number;
   pan_encrypted: string | null;
   pan_kid: string | null;
+  cvv?: string | null;
+  /** Keyed HMAC of the PAN — the lookup/uniqueness key. */
+  pan_hash: string | null;
   meta_json: Record<string, any> | null;
   created_at: string;
   updated_at: string;
@@ -59,7 +117,6 @@ function parseCardRow(row: any): WalletCardRecord {
     card_number: row.card_number,
     expiry_month: row.expiry_month,
     expiry_year: row.expiry_year,
-    cvv: row.cvv,
     cardholder_name: row.cardholder_name || null,
     currency: row.currency || "USD",
     status: row.status as WalletCardStatus,
@@ -67,6 +124,7 @@ function parseCardRow(row: any): WalletCardRecord {
     used_amount: Number(row.used_amount || 0),
     pan_encrypted: row.pan_encrypted || null,
     pan_kid: row.pan_kid || null,
+    pan_hash: row.pan_hash || null,
     meta_json: row.meta_json ? JSON.parse(row.meta_json) : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -92,14 +150,15 @@ export class WalletVirtualCardService {
   }
 
   async ensurePanUnique(pan: string): Promise<void> {
-    const prior = await db.query("SELECT id FROM wallet_cards WHERE card_number = ? LIMIT 1", [pan]);
+    const prior = await db.query("SELECT id FROM wallet_cards WHERE pan_hash = ? LIMIT 1", [hashPan(pan)]);
     if (prior.rows?.length) {
       throw new Error("PAN_COLLISION_RETRY");
     }
   }
 
-  async issueCard(options: CreateWalletCardOptions): Promise<WalletCardRecord> {
+  async issueCard(options: CreateWalletCardOptions): Promise<IssuedWalletCard> {
     if (!options.customer_id) throw new Error("CUSTOMER_ID_REQUIRED");
+    await ensurePciStorage();
 
     const scheme: CardScheme = (options.scheme || "VISA").toUpperCase() as CardScheme;
     const currency = (options.currency || "USD").trim().toUpperCase();
@@ -129,6 +188,8 @@ export class WalletVirtualCardService {
       }
     }
 
+    // PCI-DSS 4.0: the PAN is only ever persisted encrypted, the CVV is not
+    // persisted at all, and lookups go through a keyed PAN fingerprint.
     const { encrypted, kid } = encryptPan(card.card_number);
     const now = new Date().toISOString();
     const id = `card_${uuidv4().replace(/-/g, "")}`;
@@ -137,9 +198,9 @@ export class WalletVirtualCardService {
       `INSERT INTO wallet_cards
          (id, customer_id, wallet_id, scheme, bin, last4, card_number,
           expiry_month, expiry_year, cvv, cardholder_name, currency, status,
-          spending_limit, used_amount, pan_encrypted, pan_kid, meta_json,
+          spending_limit, used_amount, pan_encrypted, pan_kid, pan_hash, meta_json,
           created_at, updated_at, activated_at, deactivated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         id,
         options.customer_id,
@@ -147,10 +208,10 @@ export class WalletVirtualCardService {
         scheme,
         card.bin,
         card.last4,
-        card.card_number,
+        maskedPan(card.last4),
         card.expiry_month,
         card.expiry_year,
-        card.cvv,
+        "",
         options.cardholder_name || null,
         currency,
         "ACTIVE",
@@ -158,6 +219,7 @@ export class WalletVirtualCardService {
         0,
         encrypted,
         kid,
+        hashPan(card.card_number),
         options.meta ? JSON.stringify(options.meta) : null,
         now,
         now,
@@ -166,7 +228,11 @@ export class WalletVirtualCardService {
       ]
     );
 
-    return this.getCard(id) as Promise<WalletCardRecord>;
+    const stored = await this.getCard(id);
+    if (!stored) throw new Error("CARD_ISSUE_FAILED");
+    // The PAN and CVV are returned exactly once — this is the only moment the
+    // caller ever sees them in the clear.
+    return { ...stored, card_number: card.card_number, one_time_cvv: card.cvv };
   }
 
   async getCard(id: string, includeSecrets: boolean = true): Promise<WalletCardRecord | null> {
@@ -174,18 +240,21 @@ export class WalletVirtualCardService {
     if (!res.rows?.length) return null;
     const rec = parseCardRow(res.rows[0]);
     if (!includeSecrets) {
-      (rec as any).card_number = `XXXX-XXXX-XXXX-${rec.last4}`;
-      (rec as any).cvv = "***";
-      (rec as any).pan_encrypted = null;
+      rec.pan_encrypted = null;
     }
     return rec;
   }
 
+  /** Issuer lookup by PAN fingerprint — the PAN itself is never persisted. */
   async getByPan(pan: string): Promise<WalletCardRecord | null> {
     const clean = pan.replace(/\D/g, "");
-    const res = await db.query("SELECT * FROM wallet_cards WHERE card_number = ? LIMIT 1", [clean]);
+    if (!/^\d{13,19}$/.test(clean)) return null;
+    await ensurePciStorage();
+    const res = await db.query("SELECT * FROM wallet_cards WHERE pan_hash = ? LIMIT 1", [hashPan(clean)]);
     if (!res.rows?.length) return null;
-    return parseCardRow(res.rows[0]);
+    const rec = parseCardRow(res.rows[0]);
+    rec.pan_encrypted = null;
+    return rec;
   }
 
   async listCustomerCards(
