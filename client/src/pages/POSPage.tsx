@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   uploadBatch, 
   chargePayment, 
@@ -70,6 +70,7 @@ export const POSPage = () => {
   const [nfcReading, setNfcReading] = useState(false);
   const [nfcCardData, setNfcCardData] = useState<{ uid?: string; aid?: string } | null>(null);
   const [nfcReaderName, setNfcReaderName] = useState<string>('');
+  const [nfcError, setNfcError] = useState<string>('');
 
   const cartSubtotal = useMemo(() => 
     cart.reduce((sum, ci) => sum + (ci.product.price_minor * ci.qty), 0) / 100,
@@ -104,24 +105,33 @@ export const POSPage = () => {
     loadRecentTxns();
   }, []);
 
-  // ── NFC reader status poll (every 5 seconds) ──────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    const checkNfc = async () => {
-      try {
-        const status = await getAcr122uStatus();
-        if (!cancelled) {
-          setNfcStatus(status.connected ? 'connected' : 'disconnected');
-          if (status.readerName) setNfcReaderName(status.readerName);
-        }
-      } catch {
-        if (!cancelled) setNfcStatus('disconnected');
+  // ── NFC reader status poll (every 3 seconds) ──────────────────────────────
+  // The ACR122U is hot-pluggable, so the reader is re-checked continuously. A
+  // single transient API failure must not report the reader as unplugged, hence
+  // the failure counter before the status flips.
+  const nfcPollFailures = useRef(0);
+
+  const refreshNfcStatus = useCallback(async () => {
+    try {
+      const status = await getAcr122uStatus();
+      nfcPollFailures.current = 0;
+      setNfcStatus(status.connected ? 'connected' : 'disconnected');
+      setNfcReaderName(status.readerName || '');
+      setNfcError(status.connected ? '' : (status.error || ''));
+    } catch (e: any) {
+      nfcPollFailures.current += 1;
+      if (nfcPollFailures.current >= 2) {
+        setNfcStatus('disconnected');
+        setNfcError(e?.message || 'NFC service unreachable');
       }
-    };
-    checkNfc();
-    const interval = setInterval(checkNfc, 5000);
-    return () => { cancelled = true; clearInterval(interval); };
+    }
   }, []);
+
+  useEffect(() => {
+    refreshNfcStatus();
+    const interval = setInterval(refreshNfcStatus, 3000);
+    return () => clearInterval(interval);
+  }, [refreshNfcStatus]);
 
   // ── NFC tap handler — TAP = AUTO-CHARGE ───────────────────────────────────
   // A tap is a payment attempt: the card is read and immediately charged for the
@@ -202,8 +212,11 @@ export const POSPage = () => {
       showToast(e?.message || 'NFC read failed', 'error');
     } finally {
       setNfcReading(false);
+      // A failed read usually means the reader state changed (unplugged or a card
+      // left the field) — refresh immediately instead of waiting for the poll.
+      refreshNfcStatus();
     }
-  }, [nfcReading, finalAmount, settings, selectedCustomer, cardData.expiry, showToast, setAmount, loadRecentTxns]);
+  }, [nfcReading, finalAmount, settings, selectedCustomer, cardData.expiry, showToast, setAmount, loadRecentTxns, refreshNfcStatus]);
 
   const loadCustomers = async () => {
     try {
@@ -860,26 +873,41 @@ export const POSPage = () => {
       <div className="p-4 bg-white border-t border-gray-200 space-y-3 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
 
         {/* NFC Reader Status Bar */}
-        <div className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium
+        <div className={`px-3 py-2 rounded-lg text-xs font-medium
           ${nfcStatus === 'connected' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
             nfcStatus === 'disconnected' ? 'bg-gray-50 text-gray-400 border border-gray-200' :
             'bg-gray-50 text-gray-300 border border-gray-100'}`}>
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${nfcStatus === 'connected' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}/>
-            <span>
-              {nfcStatus === 'connected' ? `📡 ${nfcReaderName || 'ACR122U'} — Ready` :
-               nfcStatus === 'disconnected' ? '🔌 NFC Reader not connected' :
-               'Checking NFC reader...'}
-            </span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`w-2 h-2 shrink-0 rounded-full ${nfcStatus === 'connected' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}/>
+              <span className="truncate">
+                {nfcStatus === 'connected' ? `📡 ${nfcReaderName || 'ACR122U'} — Ready` :
+                 nfcStatus === 'disconnected' ? '🔌 NFC Reader not connected' :
+                 'Checking NFC reader...'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {nfcStatus !== 'connected' && (
+                <button
+                  onClick={refreshNfcStatus}
+                  className="px-2 py-1 bg-white text-gray-600 border border-gray-300 rounded-md text-xs font-semibold hover:bg-gray-50 active:scale-95 transition-all"
+                >
+                  Rescan
+                </button>
+              )}
+              {nfcStatus === 'connected' && (
+                <button
+                  onClick={handleNfcTap}
+                  disabled={nfcReading}
+                  className="px-2.5 py-1 bg-blue-600 text-white rounded-md text-xs font-bold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-60"
+                >
+                  {nfcReading ? '⏳ Charging...' : '📡 Tap & Pay'}
+                </button>
+              )}
+            </div>
           </div>
-          {nfcStatus === 'connected' && (
-            <button
-              onClick={handleNfcTap}
-              disabled={nfcReading}
-              className="ml-2 px-2.5 py-1 bg-blue-600 text-white rounded-md text-xs font-bold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-60"
-            >
-              {nfcReading ? '⏳ Charging...' : '📡 Tap & Pay'}
-            </button>
+          {nfcStatus === 'disconnected' && nfcError && (
+            <div className="mt-1 text-[11px] leading-snug text-gray-400 break-words">{nfcError}</div>
           )}
         </div>
 
@@ -937,14 +965,17 @@ export const POSPage = () => {
               <div className="w-full h-8 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 rounded-lg opacity-50"></div>
             </div>
             <div className="p-6 space-y-4">
-              {/* NFC Tap Button */}
+              {/* NFC Tap Button — when the reader is missing this acts as a rescan */}
               <button
-                onClick={handleNfcTap}
-                disabled={nfcReading || nfcStatus === 'disconnected'}
+                onClick={() => {
+                  if (nfcStatus === 'connected') return handleNfcTap();
+                  refreshNfcStatus();
+                }}
+                disabled={nfcReading}
                 className={`w-full flex items-center justify-center gap-3 py-3.5 rounded-xl border-2 font-semibold text-sm transition-all
                   ${nfcStatus === 'connected'
                     ? 'border-blue-400 bg-blue-50 text-blue-700 hover:bg-blue-100 active:scale-[0.98]'
-                    : 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'}`}
+                    : 'border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 active:scale-[0.98]'}`}
               >
                 <svg className={`w-6 h-6 ${nfcReading ? 'animate-pulse' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path strokeLinecap="round" d="M8.5 8.5C9.5 7.5 10.7 7 12 7s2.5.5 3.5 1.5"/>
@@ -954,7 +985,8 @@ export const POSPage = () => {
                 </svg>
                 {nfcReading ? '📡 Reading card...' :
                   nfcStatus === 'connected' ? '📡 Tap Card on ACR122U Reader' :
-                  '🔌 NFC Reader Not Connected'}
+                  nfcStatus === 'disconnected' ? '🔌 NFC Reader Not Connected — tap to rescan' :
+                  '⏳ Checking NFC reader...'}
               </button>
 
               {/* NFC card detected indicator */}

@@ -193,20 +193,23 @@ export class PaymentsController {
 
   async readAcr122uCard(req: Request, res: Response) {
     try {
-      if (!acr122uReaderService.isEnabled()) {
-        return res.status(503).json({
-          success: false,
-          error: "ACR122U reader unavailable."
-        });
-      }
-
       const amountMinor = Number(req.body?.amountMinor || 0);
       const currency = String(req.body?.currency || 'USD').toUpperCase();
       const card = await acr122uReaderService.readCard(amountMinor, currency);
       if (!card) {
-        return res.status(404).json({
+        // Distinguish "reader is here, no card tapped" from "reader is missing" so
+        // the operator gets an actionable message instead of a generic failure.
+        const status = await acr122uReaderService.getStatus();
+        return res.status(status.connected ? 404 : 503).json({
           success: false,
-          error: "No card detected."
+          connected: status.connected,
+          enabled: status.enabled,
+          readerName: status.readerName,
+          error: status.connected
+            ? "No card detected — tap the card on the reader and try again."
+            : status.enabled
+              ? "NFC reader not detected — plug the ACR122U reader in and try again."
+              : `NFC subsystem unavailable on this host${status.error ? ': ' + status.error : '.'}`
         });
       }
 
@@ -259,13 +262,16 @@ export class PaymentsController {
         success: true,
         enabled: status.enabled,
         connected: status.connected,
-        readerName: (status as any).readerName || null
+        readerName: status.readerName || null,
+        scannerReady: status.scannerReady,
+        error: status.error || null
       });
     } catch (error: any) {
       res.status(500).json({
         success: false,
         enabled: false,
         connected: false,
+        scannerReady: false,
         error: error.message || "Unable to determine NFC status"
       });
     }

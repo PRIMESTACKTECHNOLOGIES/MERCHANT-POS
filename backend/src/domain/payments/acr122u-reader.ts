@@ -37,9 +37,25 @@ interface TlvEntry {
 export class ACR122UReaderService {
   private nfc: any = null;
   private reader: any = null;
-  private connected = false;
+  private readerName: string | null = null;
   private enabled = true;
+  /** True when the PC/SC scanner itself reported an error and must be rebuilt. */
+  private scannerFailed = false;
+  private initializing: Promise<void> | null = null;
+  private lastInitError: string | null = null;
+  private lastInitAttempt = 0;
+  private lastScannerHealthyAt = 0;
+  private watchdog: NodeJS.Timeout | null = null;
   private latestCard: any = null;
+
+  // The reader is hot-pluggable and the native PC/SC subsystem can be absent
+  // (module not built yet, smart-card service restarting), so a failed scan must
+  // never latch the reader off permanently — every status poll retries, and the
+  // watchdog rebuilds a scanner that went stale.
+  private static readonly INIT_RETRY_COOLDOWN_MS = 2000;
+  private static readonly READER_ENUMERATION_WAIT_MS = 1500;
+  private static readonly WATCHDOG_INTERVAL_MS = 4000;
+  private static readonly SCANNER_STALE_MS = 30000;
 
   // Blind application selection list, sourced from the EMV AID registry
   // (services/emv/emvAidRegistry.ts). Ordered contactless-first.
@@ -59,55 +75,136 @@ export class ACR122UReaderService {
   ];
   private static readonly MIFARE_KEY_LENGTH = 6; // Lc for FF 82 MIFARE keys
 
+  /**
+   * Idempotent, self-healing initialisation of the PC/SC NFC subsystem.
+   * Safe under concurrent callers (the POS UI polls the status endpoint), and
+   * retried on a cooldown so plugging the reader in always recovers.
+   */
   async connect(): Promise<void> {
-    if (!this.enabled) {
-      throw new Error('ACR122U reader is disabled');
+    // A live scanner already receives PC/SC hot-plug notifications, so nothing
+    // needs rebuilding — unless it went stale (no reader seen for a long time),
+    // which usually means the PC/SC context died when the USB device was removed.
+    if (this.nfc && !this.scannerFailed) {
+      const stale = !this.reader &&
+        Date.now() - this.lastScannerHealthyAt > ACR122UReaderService.SCANNER_STALE_MS;
+      if (!stale) return;
+      console.warn('[ACR122U] No reader for a while — rebuilding the PC/SC scanner.');
     }
 
-    if (this.connected) {
+    if (this.initializing) {
+      return this.initializing;
+    }
+
+    if (Date.now() - this.lastInitAttempt < ACR122UReaderService.INIT_RETRY_COOLDOWN_MS) {
       return;
     }
+    this.lastInitAttempt = Date.now();
 
-    try {
-      const nfcModule = require('nfc-pcsc') as { NFC: new () => any };
-      this.nfc = new nfcModule.NFC();
-
-      this.nfc.on('reader', (reader: ReaderLike) => {
-        console.log(`[ACR122U] Reader connected: ${reader.reader.name}`);
-        this.reader = reader;
-
-        // nfc-pcsc otherwise tries to process ISO 14443-4 cards immediately
-        // and raises "AID was not set" before our EMV AID-selection logic runs.
-        // Manual mode emits the card event and lets readEmvCard() select PPSE/AIDs.
-        (reader as any).autoProcessing = false;
-
-        reader.on('card', (card: any) => {
-          console.log(`[ACR122U] Card detected: ${card.uid}`);
-          this.latestCard = card;
-        });
-
-        reader.on('error', (err: any) => {
-          console.warn('[ACR122U] Reader error:', err);
-        });
-
-        reader.on('end', () => {
-          console.log('[ACR122U] Reader disconnected');
-          this.reader = null;
-          this.latestCard = null;
-        });
+    this.initializing = this.initNfc()
+      .catch((error: any) => {
+        const message = error?.message || String(error);
+        this.scannerFailed = true;
+        this.enabled = false;
+        // Retries are frequent, so only log when the failure actually changes.
+        if (message !== this.lastInitError) {
+          console.warn('[ACR122U] NFC initialization failed (will retry): ' + message);
+        }
+        this.lastInitError = message;
+      })
+      .finally(() => {
+        this.initializing = null;
       });
 
-      this.nfc.on('error', (err: any) => {
-        console.warn('[ACR122U] NFC error:', err);
-      });
+    return this.initializing;
+  }
 
-      this.connected = true;
-    } catch (error) {
-      console.warn('[ACR122U] Unable to initialize NFC reader. Native module may be missing or node-gyp build tools may not be installed.', error);
-      this.enabled = false;
-      this.nfc = null;
-      this.connected = false;
-      throw error;
+  private async initNfc(): Promise<void> {
+    const nfcModule = require('nfc-pcsc') as { NFC: new () => any };
+
+    this.disposeNfc();
+
+    const nfc = new nfcModule.NFC();
+    this.nfc = nfc;
+    this.scannerFailed = false;
+    this.enabled = true;
+    this.lastScannerHealthyAt = Date.now();
+
+    nfc.on('reader', (reader: ReaderLike) => {
+      this.reader = reader;
+      this.readerName = reader?.reader?.name || null;
+      this.lastScannerHealthyAt = Date.now();
+      this.lastInitError = null;
+      this.scannerFailed = false;
+      this.enabled = true;
+      console.log(`[ACR122U] Reader connected: ${this.readerName}`);
+      this.attachReaderHandlers(reader);
+    });
+
+    nfc.on('error', (err: any) => {
+      this.lastInitError = err?.message || String(err);
+      this.scannerFailed = true;
+      console.warn('[ACR122U] NFC scanner error:', this.lastInitError);
+    });
+
+    this.startWatchdog();
+  }
+
+  private attachReaderHandlers(reader: ReaderLike): void {
+    // nfc-pcsc otherwise tries to process ISO 14443-4 cards immediately
+    // and raises "AID was not set" before our EMV AID-selection logic runs.
+    // Manual mode emits the card event and lets readEmvCard() select PPSE/AIDs.
+    (reader as any).autoProcessing = false;
+
+    reader.on('card', (card: any) => {
+      console.log(`[ACR122U] Card detected: ${card.uid}`);
+      this.latestCard = card;
+    });
+
+    // Drop the cached card when it leaves the field — otherwise a removed card
+    // would be re-submitted on the next read.
+    reader.on('card.off', () => {
+      this.latestCard = null;
+    });
+
+    reader.on('error', (err: any) => {
+      console.warn('[ACR122U] Reader error:', err);
+    });
+
+    reader.on('end', () => {
+      console.log('[ACR122U] Reader disconnected');
+      this.reader = null;
+      this.readerName = null;
+      this.latestCard = null;
+      this.lastScannerHealthyAt = Date.now();
+    });
+  }
+
+  private disposeNfc(): void {
+    const nfc = this.nfc;
+    this.nfc = null;
+    this.reader = null;
+    this.readerName = null;
+    this.latestCard = null;
+    if (!nfc) return;
+    try { nfc.removeAllListeners?.(); } catch { /* ignore */ }
+    try { nfc.close?.(); } catch { /* ignore */ }
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(() => {
+      if (this.initializing) return;
+      if (this.reader && !this.scannerFailed) return;
+      void this.connect();
+    }, ACR122UReaderService.WATCHDOG_INTERVAL_MS);
+    // A poller must never keep the process alive.
+    this.watchdog.unref?.();
+  }
+
+  private async waitForReader(timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!this.reader && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 
@@ -115,35 +212,30 @@ export class ACR122UReaderService {
     return this.enabled;
   }
 
-  async getStatus(): Promise<{ enabled: boolean; connected: boolean; readerName?: string }> {
-    if (!this.enabled) {
-      return { enabled: false, connected: false };
+  async getStatus(): Promise<{
+    enabled: boolean;
+    connected: boolean;
+    readerName: string | null;
+    scannerReady: boolean;
+    error: string | null;
+  }> {
+    // Never throws: connect() swallows its own failures so the UI always gets a
+    // usable answer and keeps polling until the reader shows up.
+    await this.connect();
+
+    // If no reader has been reported yet, give PC/SC a moment to enumerate it —
+    // this is what picks up a device that was just plugged in.
+    if (!this.reader && this.nfc && !this.scannerFailed) {
+      await this.waitForReader(ACR122UReaderService.READER_ENUMERATION_WAIT_MS);
     }
 
-    try {
-      await this.connect();
-
-      // If reader already detected, return immediately
-      if (this.reader) {
-        return { enabled: true, connected: true, readerName: (this.reader as any)?.reader?.name };
-      }
-
-      // Give PC/SC up to 1.5s to enumerate the reader after connect()
-      await new Promise<void>(resolve => {
-        const timeout = setTimeout(resolve, 1500);
-        if (this.nfc) {
-          this.nfc.once('reader', () => { clearTimeout(timeout); resolve(); });
-        }
-      });
-
-      return {
-        enabled: this.enabled,
-        connected: Boolean(this.reader),
-        readerName: (this.reader as any)?.reader?.name
-      };
-    } catch {
-      return { enabled: false, connected: false };
-    }
+    return {
+      enabled: this.enabled,
+      connected: Boolean(this.reader),
+      readerName: this.readerName,
+      scannerReady: Boolean(this.nfc) && !this.scannerFailed,
+      error: this.lastInitError,
+    };
   }
 
   private async ensureReader(): Promise<any> {
@@ -153,20 +245,23 @@ export class ACR122UReaderService {
 
     await this.connect();
 
-    return new Promise((resolve, reject) => {
-      if (!this.nfc) {
-        return reject(new Error('NFC subsystem unavailable'));
-      }
+    if (this.reader) {
+      return this.reader;
+    }
 
-      const timeout = setTimeout(() => {
-        reject(new Error('No NFC reader found'));
-      }, 5000);
+    // Force a fresh enumeration when the scanner never produced a reader.
+    if (!this.nfc || this.scannerFailed) {
+      this.lastInitAttempt = 0;
+      await this.connect();
+    }
 
-      this.nfc.once('reader', (reader: any) => {
-        clearTimeout(timeout);
-        resolve(reader);
-      });
-    });
+    await this.waitForReader(5000);
+
+    if (!this.reader) {
+      throw new Error('No NFC reader found — plug the ACR122U reader in and try again');
+    }
+
+    return this.reader;
   }
 
   private async transmitApdu(reader: any, apdu: Buffer, responseMaxLength = 512, operation = 'APDU'): Promise<Buffer> {
@@ -625,6 +720,10 @@ export class ACR122UReaderService {
   }
 
   async readCard(amountMinor = 0, currency = 'USD'): Promise<ACR122UCardData | null> {
+    // A previously failed scan must not block a fresh attempt — the reader may
+    // have been plugged in or out since the last read.
+    await this.connect();
+
     if (!this.enabled) {
       return null;
     }
