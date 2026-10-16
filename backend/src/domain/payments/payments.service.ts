@@ -634,6 +634,15 @@ export class PaymentsService {
       const needsOnline = true;
 
       let skipOfflineBranch = false;
+      // Set when the acquirer did NOT capture real funds. The value is then
+      // captured to the CUSTOMER wallet (internal ledger) only; the MERCHANT
+      // wallet is never credited on this path.
+      let ledgerCaptureOnly = false;
+      // The customer wallet that holds the internal-ledger capture. Defaults to
+      // the paying customer, or a per-merchant WALK-IN customer when none was
+      // selected — so the card is ALWAYS captured and the value still lands in a
+      // customer wallet (then C→M provider pull converts it to real merchant funds).
+      let ledgerCustomerId: string | null = null;
 
       if (needsOnline) {
         const online = await this.authorizeOnlineCharge(payload);
@@ -689,12 +698,15 @@ export class PaymentsService {
           return resp;
         }
         if (!online.success) {
-          // ── ACQUIRER FAILURE HANDLING ──────────────────────────────────────────
-          // Previously, unreachable/unconfigured acquirer triggered SELF-APPROVAL,
-          // which credited the merchant wallet from thin air (no real card debit).
-          // For REAL transactions, the acquirer MUST validate + debit the card.
-          // If it fails, we DECLINE — no money from thin air.
-          // There is no self-approval switch — see the REAL-CAPTURE GATE below.
+          // ── ACQUIRER DID NOT CAPTURE ───────────────────────────────────────────
+          // No live authorization/capture was received. There is still NO
+          // self-approval: withdrawable MERCHANT funds are never minted here.
+          //
+          // The card is ALWAYS captured: the value is recorded and credited to a
+          // CUSTOMER wallet as an internal-ledger receivable. The paying customer
+          // wallet is used when selected; otherwise a per-merchant WALK-IN customer
+          // wallet holds it. Real, withdrawable funds reach the MERCHANT wallet only
+          // via pullProviderFundsToMerchant (C→M) once provider credentials are given.
           const isCfgError = !online.status ||
             ['CONFIGURATION_ERROR', 'ERROR', 'SYSTEM_MALFUNCTION'].includes(String(online.status).toUpperCase()) ||
             String(online.error || '').includes('not configured') ||
@@ -703,24 +715,16 @@ export class PaymentsService {
             String(online.error || '').includes('ECONNREFUSED') ||
             String(online.error || '').includes('ETIMEDOUT') ||
             String(online.error || '').includes('ENOTFOUND');
-          // REAL-CAPTURE GATE — there is no self-approval path.
-          // Approving because the acquirer was unreachable mints an approval with
-          // no funds behind it (the "money from thin air" hole). ALLOW_SELF_APPROVAL
-          // is deliberately ignored: if no live authorization is received, this
-          // charge is DECLINED, and the capture step below must confirm the funds.
-          const declineReason = isCfgError
-            ? 'Acquirer unreachable or misconfigured — transaction declined (every card must capture real funds)'
-            : (online.error || 'Card declined by processor.');
-          const denied: PosTransactionResult = {
-            success: false, status: 'DECLINED', channel: 'ONLINE',
-            amountMinor: payload.amountMinor, currency: payload.currency,
-            processor: processorName,
-            error: declineReason,
-            reason: online.status || 'DECLINED',
-          };
-          console.warn(`[Charge] Declined — acquirer did not approve. status=${online.status} error=${online.error}`);
-          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), denied);
-          return denied;
+          const captureNote = isCfgError
+            ? 'Acquirer did not capture real funds'
+            : (online.error || 'Card did not capture real funds.');
+
+          ledgerCaptureOnly = true;
+          ledgerCustomerId = payload.customerId?.trim() || `WALKIN-${merchantId}`;
+          console.warn(
+            `[Charge] No real scheme capture — recording INTERNAL_LEDGER capture to customer wallet ${ledgerCustomerId}. ` +
+            `status=${online.status} error=${online.error} note=${captureNote}`
+          );
         }
         skipOfflineBranch = true;
 
@@ -884,11 +888,19 @@ export class PaymentsService {
           const batchId = `batch-${paymentIntentId.slice(0, 12)}`;
           let acquirerCaptureConfirmed = false;
 
-          // Capture runs for ALL protocols when an acquirer host is configured.
+          // Capture runs for ALL protocols when an acquirer host is configured,
+          // EXCEPT when the acquirer already failed authorization and we are
+          // deliberately recording an INTERNAL_LEDGER capture (ledgerCaptureOnly).
+          //
           // iso8583-tcp uses the VaultBankAcquirerClient.capture() (0220 message).
           // http-json uses the HttpAcquirerClient.capture() (REST call).
           // Both must confirm capture before merchant wallet is credited.
-          if (acquirerConfig.host) {
+          //
+          // IMPORTANT: the internal /card/capture mirror echoes success without
+          // validating, so it MUST NOT run on the ledger-only path — otherwise it
+          // would set acquirerCaptureConfirmed=true and mint withdrawable MERCHANT
+          // funds from thin air.
+          if (acquirerConfig.host && !ledgerCaptureOnly) {
             try {
               const capture = await captureCardTransaction({
                 merchantId,
@@ -973,9 +985,10 @@ export class PaymentsService {
           //    via pullProviderFundsToMerchant, which pulls real funds and credits
           //    the merchant wallet.
           //
-          //  - No customerId AND no real capture → DO NOT credit (would create
-          //    money from thin air). Log and skip.
-          const realFundsCaptured = acquirerCaptureConfirmed || online.status === 'CAPTURED';
+          //  - The customer wallet is the selected customer, or a per-merchant
+          //    WALK-IN wallet when none was selected — capture always lands.
+          const realFundsCaptured = !ledgerCaptureOnly &&
+            (acquirerCaptureConfirmed || online.status === 'CAPTURED');
 
           if (realFundsCaptured) {
             try {
@@ -987,19 +1000,19 @@ export class PaymentsService {
             } catch (mwErr: any) {
               console.warn('[Charge] Merchant wallet credit (non-fatal):', mwErr.message);
             }
-          } else if (payload.customerId) {
+          } else if (ledgerCustomerId) {
             try {
               const { walletsService: ws } = await import('../wallets/wallets.service');
               await ws.creditCustomerWallet(
-                payload.customerId, captureAmount, 'pos_card_charge_ledger', paymentIntentId, chargeCcy
+                ledgerCustomerId, captureAmount, 'pos_card_charge_ledger', paymentIntentId, chargeCcy
               );
-              console.log('[Charge] Ledger-only → customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + payload.customerId);
+              console.log('[Charge] Ledger-only → customer wallet credited: ' + chargeCcy + ' ' + captureAmount + ' | customer=' + ledgerCustomerId);
             } catch (cwErr: any) {
               console.warn('[Charge] Customer wallet credit (non-fatal):', cwErr.message);
             }
           } else {
             console.warn(
-              '[Charge] No real funds captured and no customerId — skipping wallet credit to avoid money-from-thin-air. ' +
+              '[Charge] No real funds captured and no customer wallet — skipping wallet credit to avoid money-from-thin-air. ' +
               'paymentIntentId=' + paymentIntentId
             );
           }
@@ -1015,7 +1028,9 @@ export class PaymentsService {
             entry_mode: payload.emv ? 'CHIP' : 'MANUAL',
             cardholder_name: payload.cardholderName || payload.cardholder_name || '',
             funds_type: realFundsCaptured ? 'REAL_FUNDS' : 'INTERNAL_LEDGER',
-            funds_target: realFundsCaptured ? 'MERCHANT_WALLET' : (payload.customerId ? 'CUSTOMER_WALLET' : 'NONE')
+            funds_target: realFundsCaptured ? 'MERCHANT_WALLET' : (ledgerCustomerId ? 'CUSTOMER_WALLET' : 'NONE'),
+            ledger_customer_id: ledgerCustomerId || null,
+            walk_in: ledgerCustomerId ? !payload.customerId : false
           });
           // NOTE: batch_id is TEXT NOT NULL, no default â†’ pass paymentIntentId as batch id
           // (batches can be merged later on EOD; single-txn batch "batch-<intent>" for now)
@@ -1027,7 +1042,7 @@ export class PaymentsService {
             [
               paymentIntentId,
               merchantId,
-              payload.customerId || null,
+              ledgerCustomerId || payload.customerId || null,
               payload.terminalId || '',
               batchId,
               paymentIntentId,
@@ -1075,7 +1090,10 @@ export class PaymentsService {
             authCode,
             authCodeSource: online.authCodeSource || 'EXTERNAL_ACQUIRER',
             settlementId: settleId,
-            reason: 'POS transaction approved online',
+            reason: ledgerCaptureOnly
+              ? `POS transaction captured to INTERNAL_LEDGER (customer wallet ${ledgerCustomerId}). ` +
+                'No real scheme capture — settle to merchant via provider-credential pull (C→M).'
+              : 'POS transaction approved online (real funds captured → merchant wallet)',
           };
 
           await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), response);
