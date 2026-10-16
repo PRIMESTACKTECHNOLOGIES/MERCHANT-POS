@@ -4,7 +4,11 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { ToastProvider } from "./components/ui/Toast";
 import { registerAutoSync } from "./lib/offline-sync";
+import { installClientSecurityGuard } from "./lib/security-guard";
 import "./index.css";
+
+// Install client-side intrusion deterrents + attempt reporting (see lib/security-guard.ts)
+installClientSecurityGuard();
 
 // Apply saved theme before first paint (no flash)
 const savedTheme = localStorage.getItem('pos_theme');

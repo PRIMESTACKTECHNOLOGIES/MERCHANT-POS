@@ -96,7 +96,7 @@ services:
       - key: VAULT_BANK_SECRET_KEY
         sync: false
       - key: VAULT_BANK_TRANSFER_URL
-        value: https://vault-bank-kycj.onrender.com/api/vault/settlement
+        value: https://merchant-pos-0nno.onrender.com/api/vault-bank/settlement
       - key: VAULT_ACTIVE_API_KEY
         sync: false
       - key: VAULT_EXTERNAL_LOAD_HMAC_SECRET

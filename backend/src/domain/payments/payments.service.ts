@@ -619,27 +619,19 @@ export class PaymentsService {
         }
       }
 
-      // If decision requires online authorization, attempt it
-      const needsOnline = !!payload.authCode || !!(
-        decision &&
-        (decision.mode === 'online' || decision.decision === 'ONLINE_APPROVE' || decision.onlineRequired ||
-          decision.goOnline || decision.requiresOnlineAuth)
-      );
-
-      if (!needsOnline) {
-        const denied: PosTransactionResult = {
-          success: false,
-          status: 'DECLINED',
-          channel: 'OFFLINE',
-          amountMinor: payload.amountMinor,
-          currency: payload.currency,
-          processor: processorName,
-          error: 'Offline approvals are disabled; a live online authorization is required.',
-          reason: 'No provider authorization was requested, so no funds were credited.',
-        };
-        await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), denied);
-        return denied;
-      }
+      // ═══ REAL-CAPTURE GATE — EVERY CARD MUST CAPTURE REAL FUNDS ═══════════════
+      // An approval is issued ONLY when one of these is true:
+      //   1. a live acquirer/processor authorization is received AND the capture
+      //      step below confirms the funds were actually taken, or
+      //   2. a fund-verified inbound registration backs the amount (see inbound
+      //      routing below — fund_verification_status = VERIFIED).
+      //
+      // There is NO offline approval path any more. An offline EMV TC proves the
+      // card data is genuine but moves no money, and a locally generated approval
+      // code is not a capture. Offline-capable cards are therefore sent online;
+      // if the issuer cannot be reached, the charge is DECLINED.
+      // ═════════════════════════════════════════════════════════════════════════
+      const needsOnline = true;
 
       let skipOfflineBranch = false;
 
@@ -702,8 +694,7 @@ export class PaymentsService {
           // which credited the merchant wallet from thin air (no real card debit).
           // For REAL transactions, the acquirer MUST validate + debit the card.
           // If it fails, we DECLINE — no money from thin air.
-          // Set ALLOW_SELF_APPROVAL=true only for local testing (never production).
-          const allowSelfApproval = String(process.env.ALLOW_SELF_APPROVAL || '').toLowerCase() === 'true';
+          // There is no self-approval switch — see the REAL-CAPTURE GATE below.
           const isCfgError = !online.status ||
             ['CONFIGURATION_ERROR', 'ERROR', 'SYSTEM_MALFUNCTION'].includes(String(online.status).toUpperCase()) ||
             String(online.error || '').includes('not configured') ||
@@ -712,25 +703,24 @@ export class PaymentsService {
             String(online.error || '').includes('ECONNREFUSED') ||
             String(online.error || '').includes('ETIMEDOUT') ||
             String(online.error || '').includes('ENOTFOUND');
-          if (isCfgError && allowSelfApproval) {
-            // Self-approve ONLY when explicitly enabled for testing
-            console.log('[Charge] Processor unreachable/unconfigured — self-approving (ALLOW_SELF_APPROVAL=true, TEST ONLY)');
-          } else {
-            // Acquirer failed or declined → HARD DECLINE (no wallet credit)
-            const declineReason = isCfgError
-              ? 'Acquirer unreachable or misconfigured — transaction declined (no self-approval in production)'
-              : (online.error || 'Card declined by processor.');
-            const denied: PosTransactionResult = {
-              success: false, status: 'DECLINED', channel: 'ONLINE',
-              amountMinor: payload.amountMinor, currency: payload.currency,
-              processor: processorName,
-              error: declineReason,
-              reason: online.status || 'DECLINED',
-            };
-            console.warn(`[Charge] Declined — acquirer did not approve. status=${online.status} error=${online.error}`);
-            await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), denied);
-            return denied;
-          }
+          // REAL-CAPTURE GATE — there is no self-approval path.
+          // Approving because the acquirer was unreachable mints an approval with
+          // no funds behind it (the "money from thin air" hole). ALLOW_SELF_APPROVAL
+          // is deliberately ignored: if no live authorization is received, this
+          // charge is DECLINED, and the capture step below must confirm the funds.
+          const declineReason = isCfgError
+            ? 'Acquirer unreachable or misconfigured — transaction declined (every card must capture real funds)'
+            : (online.error || 'Card declined by processor.');
+          const denied: PosTransactionResult = {
+            success: false, status: 'DECLINED', channel: 'ONLINE',
+            amountMinor: payload.amountMinor, currency: payload.currency,
+            processor: processorName,
+            error: declineReason,
+            reason: online.status || 'DECLINED',
+          };
+          console.warn(`[Charge] Declined — acquirer did not approve. status=${online.status} error=${online.error}`);
+          await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), denied);
+          return denied;
         }
         skipOfflineBranch = true;
 
@@ -1094,7 +1084,13 @@ export class PaymentsService {
       }
 
       // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-      // Decision was OFFLINE-capable (decision.mode !== 'online').
+      // ═══ OFFLINE SECTION — DISABLED / UNREACHABLE ════════════════════════════
+      // Every POS charge now returns above through the REAL-CAPTURE GATE, so
+      // nothing below can execute. It is kept only as a hard stop: an offline EMV
+      // TC or a terminal floor limit captures no funds, so no approval may ever be
+      // issued here. Do not re-enable without a real, verifiable capture step.
+      //
+      // (historical) Decision was OFFLINE-capable (decision.mode !== 'online').
       //
       // NO DEMO STAND-IN APPROVAL. Two conditions before we approve:
       //   (A) EMV data must be present and contain a VALID offline cryptogram
@@ -1150,7 +1146,12 @@ export class PaymentsService {
         terminalOfflineAllowed = false;
       }
 
-      if (!offlineEmvApproved && !terminalOfflineAllowed) {
+      // REAL-CAPTURE GATE (defence in depth) — unreachable now, because every
+      // charge above is forced online (needsOnline === true). It stays as a hard
+      // stop: an offline cryptogram and a terminal floor limit capture no funds,
+      // so nothing below is allowed to approve.
+      const offlineCanCaptureFunds = false;
+      if (!offlineCanCaptureFunds) {
         // âŒ NO MORE OFFLINE STAND-IN DEMO APPROVAL
         const resp: PosTransactionResult = {
           success: false,
@@ -1158,8 +1159,8 @@ export class PaymentsService {
           amountMinor: payload.amountMinor,
           currency: payload.currency,
           processor: processorName,
-          error: 'Offline declined: no EMV TC cryptogram and terminal not configured for offline. NO demo approval fallback.',
-          reason: '[OFFLINE_NOT_AUTH] Card not EMV-offline-approved (no TC) and terminal offline=OFF. Require online authorization or correct EMV data.',
+          error: 'Offline approval is disabled — an offline transaction cannot capture real funds.',
+          reason: `[OFFLINE_APPROVAL_DISABLED] Real funds can only be captured by a live authorization.${offlineEmvApproved ? ' EMV TC present, but a TC captures no funds.' : ''}${terminalOfflineAllowed ? ' Terminal floor limit allows offline, but offline captures no funds.' : ''}`,
         };
         await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), resp);
         const nowOffDecl = new Date();

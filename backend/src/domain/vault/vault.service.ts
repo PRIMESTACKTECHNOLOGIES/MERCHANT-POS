@@ -78,31 +78,39 @@ export class VaultEngine {
     this.validateMovement(input);
     const balanceBefore = await this.getVaultBalance(input.currency);
     const signedAmount = input.direction === 'credit' ? input.amount : -input.amount;
+    const ledgerId = uuidv4();
+    const ts = new Date().toISOString();
+    const reference = input.reference.trim();
+    const meta = input.meta || {};
     await db.query(
       `INSERT INTO vault_ledger
         (id, ts, type, merchant_id, amount, currency, reference, status, meta)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?)`,
       [
-        uuidv4(),
-        new Date().toISOString(),
+        ledgerId,
+        ts,
         input.type,
         input.merchantId || null,
         signedAmount,
         input.currency,
-        input.reference.trim(),
-        JSON.stringify(input.meta || {}),
+        reference,
+        JSON.stringify(meta),
       ]
     );
-    const result = await db.query(
-      `SELECT id, ts, type, merchant_id, amount, currency, reference, status, meta
-         FROM vault_ledger WHERE rowid = last_insert_rowid()`
-    );
-    const row = result.rows?.[0];
-    const entry = {
-      ...row,
-      amount: Number(row.amount),
-      meta: JSON.parse(row.meta || '{}'),
-    } as VaultLedgerEntry;
+    // The entry is built from the values we just wrote. It cannot be read back
+    // with `last_insert_rowid()`: every write flushes the database
+    // (schedulePersist → db.export()), which resets last_insert_rowid() to 0.
+    const entry: VaultLedgerEntry = {
+      id: ledgerId,
+      ts,
+      type: input.type,
+      merchant_id: input.merchantId || null,
+      amount: signedAmount,
+      currency: input.currency,
+      reference,
+      status: 'COMPLETED',
+      meta,
+    };
 
     // ── Sync vault_accounts.balance with the ledger total ────────────────────
     // Use incremental UPDATE (not recompute from ledger) to avoid divergence
@@ -167,28 +175,24 @@ export class VaultEngine {
 
     const now = new Date().toISOString();
     const id = uuidv4();
-    await db.query('BEGIN IMMEDIATE');
-    try {
-      await db.query(
-        `INSERT INTO vault_ledger
-          (id, ts, type, merchant_id, amount, currency, reference, status, meta)
-         VALUES (?, ?, 'BATCH_TO_VAULT', ?, ?, ?, ?, 'COMPLETED', ?)`,
-        [
-          id, now, input.merchantId || null, input.amount, currency, input.reference,
-          JSON.stringify({ ...(input.meta || {}), vault_account_id: input.accountId }),
-        ],
-      );
-      await db.query(
-        `UPDATE vault_accounts
-            SET balance = balance + ?, updated_at = ?
-          WHERE id = ?`,
-        [input.amount, now, input.accountId],
-      );
-      await db.query('COMMIT');
-    } catch (error) {
-      try { await db.query('ROLLBACK'); } catch { /* preserve original error */ }
-      throw error;
-    }
+    // No BEGIN/COMMIT — see debitVault(): the flush performed after every write
+    // ends the transaction, so COMMIT would always throw even though the writes
+    // had already been applied.
+    await db.query(
+      `INSERT INTO vault_ledger
+        (id, ts, type, merchant_id, amount, currency, reference, status, meta)
+       VALUES (?, ?, 'BATCH_TO_VAULT', ?, ?, ?, ?, 'COMPLETED', ?)`,
+      [
+        id, now, input.merchantId || null, input.amount, currency, input.reference,
+        JSON.stringify({ ...(input.meta || {}), vault_account_id: input.accountId }),
+      ],
+    );
+    await db.query(
+      `UPDATE vault_accounts
+          SET balance = balance + ?, updated_at = ?
+        WHERE id = ?`,
+      [input.amount, now, input.accountId],
+    );
 
     return {
       id,
@@ -204,19 +208,16 @@ export class VaultEngine {
   }
 
   async debitVault(input: Omit<Parameters<VaultEngine['appendMovement']>[0], 'direction'>): Promise<VaultLedgerEntry> {
-    await db.query('BEGIN IMMEDIATE');
-    try {
-      const balance = await this.getVaultBalance(input.currency);
-      if (balance < input.amount) {
-        throw Object.assign(new Error(`Insufficient ${input.currency} vault funds`), { code: 'NO_FUNDS' });
-      }
-      const entry = await this.appendMovement({ ...input, direction: 'debit' });
-      await db.query('COMMIT');
-      return entry;
-    } catch (error) {
-      try { await db.query('ROLLBACK'); } catch { /* preserve original error */ }
-      throw error;
+    // No BEGIN/COMMIT here: every write flushes the database through
+    // db.export(), which ends the open transaction — so a COMMIT would always
+    // fail with "cannot commit - no transaction is active" *after* the ledger
+    // row had already been written. The balance check below is what guards the
+    // debit; the ledger row and the vault_accounts update are applied in order.
+    const balance = await this.getVaultBalance(input.currency);
+    if (balance < input.amount) {
+      throw Object.assign(new Error(`Insufficient ${input.currency} vault funds`), { code: 'NO_FUNDS' });
     }
+    return this.appendMovement({ ...input, direction: 'debit' });
   }
 
   async getVaultBalance(currency: string): Promise<number> {

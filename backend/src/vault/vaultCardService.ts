@@ -1,4 +1,4 @@
-﻿// vaultCardService.ts — Issue and manage vault bank cards
+// vaultCardService.ts — Issue and manage vault bank cards
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../config/db";
 import { VAULT_BIN, VAULT_BIN_EUR } from "./vaultBin";
@@ -92,12 +92,38 @@ export async function authorizeVaultEmv(input: {
 
   // Increment ATC
   const newAtc = (card.atc || 0) + 1;
+
+  // ── REAL-CAPTURE GATE ────────────────────────────────────────────────────────
+  // A valid EMV cryptogram only proves the card data is genuine — it captures no
+  // funds. Before answering responseCode "00" we take the money out of the vault
+  // account that owns this card. If that account cannot cover the amount, the
+  // authorization is refused rather than approved against thin air.
+  const captureRef = `VEMV-${Date.now().toString(36).toUpperCase()}`;
+  const { vaultEngine } = await import("../domain/vault/vault.service");
+  await vaultEngine.debitVault({
+    amount:     input.amountMinor / 100,
+    currency:   ccy,
+    reference:  captureRef,
+    merchantId: input.merchantId,
+    type:       "VAULT_RESERVE",
+    meta: {
+      source:           "vault_emv_authorize",
+      vault_card_id:    card.id,
+      vault_account_id: card.vault_account_id,
+      last4:            card.last4,
+      atc:              newAtc,
+    },
+  });
+
+  // ATC advances only after the hold is committed to the ledger
   await db.query("UPDATE vault_cards SET atc = ?, updated_at = ? WHERE id = ?", [newAtc, new Date().toISOString(), card.id]);
 
   return {
     approved:    true,
     responseCode: "00",
-    authCode:    `VEMV-${Date.now().toString(36).toUpperCase()}`,
+    authCode:    captureRef,
+    captureRef,
+    captured:    true,
     cardId:      card.id,
     last4:       card.last4,
     amountMinor: input.amountMinor,

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../config/db';
 import { authenticateToken } from '../../middleware/auth.middleware';
+import { requirePermission, requireMFA, enforceIPWhitelist } from '../../middleware/security.middleware';
 import { vaultBankService } from './vaultBank.service';
 import { generateVaultApiKey, generateVaultSecretKey } from './gateway/auth/apiKey';
 import { vaultController } from './vault.controller';
@@ -18,6 +19,9 @@ import crypto from 'crypto';
 import { custodyReserveEngine } from './custodyReserve.service';
 import { debitCard, getCardBalance } from './cardBalance.service';
 import { luhnValidate } from './luhn';
+import { verifyVaultApiKey } from './gateway/middleware/verifyApiKey';
+import { verifyVaultHmac } from './gateway/middleware/verifySignature';
+import { vaultRateLimiter } from './gateway/middleware/rateLimiter';
 
 const router = Router();
 
@@ -37,8 +41,11 @@ router.post('/payouts', vaultController.createControlledPayout.bind(vaultControl
 router.post('/payouts/:id/confirm', vaultController.confirmControlledPayout.bind(vaultController));
 router.post('/payouts/:id/fail', vaultController.failControlledPayout.bind(vaultController));
 router.post('/entries/credit', vaultController.creditControlledAccount.bind(vaultController));
-router.post('/credit', vaultController.creditVault.bind(vaultController));
-router.post('/debit', vaultController.debitVault.bind(vaultController));
+// Vault ledger writes require the same HMAC gateway auth as /api/vault-bank/*.
+// These two routes previously accepted unauthenticated credits/debits, so anyone
+// who could reach the host could mint ledger balance from thin air.
+router.post('/credit', verifyVaultApiKey, verifyVaultHmac, vaultRateLimiter, vaultController.creditVault.bind(vaultController));
+router.post('/debit', verifyVaultApiKey, verifyVaultHmac, vaultRateLimiter, vaultController.debitVault.bind(vaultController));
 router.post('/merchant-transfer', async (req, res) => {
   try {
     return res.status(201).json(await transferMerchantFundsToVault({
@@ -114,7 +121,7 @@ router.get('/custody-reserve/:currency/entries', authenticateToken, async (req, 
     return res.status(error?.code === 'VALIDATION_ERROR' ? 400 : 500).json({ error: error?.code || 'INTERNAL_ERROR', message: error?.message || 'Failed to load custody reserve entries' });
   }
 });
-router.post('/custody-reserve/withdrawals', authenticateToken, async (req, res) => {
+router.post('/custody-reserve/withdrawals', authenticateToken, enforceIPWhitelist(), requirePermission('vault.withdraw'), requireMFA(), async (req, res) => {
   try {
     return res.status(201).json(await custodyReserveEngine.createWithdrawal({
       currency: req.body?.currency,
@@ -127,7 +134,7 @@ router.post('/custody-reserve/withdrawals', authenticateToken, async (req, res) 
     return res.status(status).json({ error: error?.code || 'INTERNAL_ERROR', message: error?.message || 'Failed to create custody withdrawal' });
   }
 });
-router.post('/custody-reserve/withdrawals/:id/settle', authenticateToken, async (req, res) => {
+router.post('/custody-reserve/withdrawals/:id/settle', authenticateToken, enforceIPWhitelist(), requirePermission('vault.withdraw'), requireMFA(), async (req, res) => {
   try {
     return res.json(await custodyReserveEngine.settleWithdrawal(req.params.id, String(req.body?.providerReference || '')));
   } catch (error: any) {
@@ -135,7 +142,7 @@ router.post('/custody-reserve/withdrawals/:id/settle', authenticateToken, async 
     return res.status(status).json({ error: error?.code || 'INTERNAL_ERROR', message: error?.message || 'Failed to settle custody withdrawal' });
   }
 });
-router.post('/custody-reserve/withdrawals/:id/release', authenticateToken, async (req, res) => {
+router.post('/custody-reserve/withdrawals/:id/release', authenticateToken, enforceIPWhitelist(), requirePermission('vault.withdraw'), requireMFA(), async (req, res) => {
   try {
     return res.json(await custodyReserveEngine.releaseWithdrawal(req.params.id));
   } catch (error: any) {
@@ -143,7 +150,7 @@ router.post('/custody-reserve/withdrawals/:id/release', authenticateToken, async
     return res.status(status).json({ error: error?.code || 'INTERNAL_ERROR', message: error?.message || 'Failed to release custody withdrawal' });
   }
 });
-router.post('/custody-reserve/crypto-purchases', authenticateToken, async (req, res) => {
+router.post('/custody-reserve/crypto-purchases', authenticateToken, enforceIPWhitelist(), requirePermission('vault.withdraw'), requireMFA(), async (req, res) => {
   let hold: { holdId: string; externalReference: string; currency: string; amount: number } | null = null;
   try {
     const customerId = String(req.body?.customerId || req.body?.customer_id || '').trim();
@@ -1277,24 +1284,19 @@ router.post('/card/authorize', async (req, res) => {
       });
     }
 
-    // ── 3. EXTERNAL CARD (VISA/MC — real funds from card scheme) ─────────────
-    // The actual VISA/MC authorization is performed by the external processor
-    // (the merchant's VISA terminal / acquirer). Our system records this as a
-    // real-funds capture. Funds go directly to the MERCHANT wallet (withdrawable).
-    const authRef = `AUTH-EXT-${Date.now().toString(36).toUpperCase()}`;
-    const approvalCode = String(Math.floor(100000 + Math.random() * 900000));
-
-    console.log(`[VaultAcquirer] ✅ EXTERNAL card authorized | pan=****${cleanPan.slice(-4)} | amount=${ccy} ${amountMajor.toFixed(2)} | auth=${authRef}`);
-
+    // ── 3. EXTERNAL CARD (VISA/MC) — NOT authorizable at this endpoint ───────
+    // A VISA/MC PAN can only be authorized by its issuer over the card scheme.
+    // This endpoint serves vault-issued cards (internal ledger) only. Approving
+    // an external PAN here would fabricate an approval with no real card debit
+    // (money from thin air), so it is declined instead.
+    console.warn(`[VaultAcquirer] ⛔ EXTERNAL card rejected — no scheme authorization | pan=****${cleanPan.slice(-4)} | ${ccy} ${amountMajor.toFixed(2)}`);
     return res.json({
-      success: true,
-      responseCode: '00',
-      status: 'Approved',
-      authRef,
-      approvalCode,
+      success: false,
+      responseCode: '96',
+      status: 'Declined',
       fundsType: 'external',
       cardType: 'external',
-      message: `Approved — ${ccy} ${amountMajor.toFixed(2)} external card charge (real funds to merchant wallet)`,
+      message: 'External card requires a live card-scheme authorization — this vault endpoint cannot approve it (no self-approval).',
     });
   } catch (err: any) {
     const code = err?.code === 'INSUFFICIENT_CARD_BALANCE' ? '51'

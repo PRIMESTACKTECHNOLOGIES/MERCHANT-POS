@@ -134,6 +134,18 @@ export class SecurityService {
   }
 
   /**
+   * Whether the user has an enrolled (verified) MFA device.
+   * Step-up middleware uses this to decide if a challenge must be presented.
+   */
+  async isMFAEnrolled(userId: string): Promise<boolean> {
+    const result = await db.query(
+      `SELECT 1 FROM mfa_tokens WHERE user_id = ? AND verified = 1 LIMIT 1`,
+      [userId]
+    );
+    return result.rowCount > 0;
+  }
+
+  /**
    * Generate backup codes
    */
   private generateBackupCodes(count: number): string[] {
@@ -523,6 +535,21 @@ export class SecurityService {
     });
 
     return false;
+  }
+
+  /**
+   * Whether the user has any active IP whitelist entries.
+   * When none are configured, IP enforcement is a no-op for that user.
+   */
+  async hasActiveIPWhitelist(userId: string): Promise<boolean> {
+    const result = await db.query(`
+      SELECT 1 FROM ip_whitelist
+      WHERE user_id = ?
+      AND status = 'active'
+      AND (expires_at IS NULL OR expires_at > datetime('now'))
+      LIMIT 1
+    `, [userId]);
+    return result.rowCount > 0;
   }
 
   /**

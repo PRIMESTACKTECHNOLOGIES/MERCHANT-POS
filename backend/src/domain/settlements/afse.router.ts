@@ -1,12 +1,13 @@
 import { Router, Request, Response } from "express";
 import { afse } from "./automatic-fund-settlement-engine";
 import { authenticateToken } from "../../middleware/auth.middleware";
+import { requirePermission, requireMFA, enforceIPWhitelist } from "../../middleware/security.middleware";
 import axios from "axios";
 import * as crypto from "crypto";
 
 const router = Router();
 
-router.get("/status", authenticateToken, async (req: Request, res: Response) => {
+router.get("/status", authenticateToken, requirePermission("settlements.view"), async (req: Request, res: Response) => {
   try {
     const s = await afse.getStatus();
     res.json(s);
@@ -15,7 +16,7 @@ router.get("/status", authenticateToken, async (req: Request, res: Response) => 
   }
 });
 
-router.post("/run-for-auth/:code", authenticateToken, async (req: Request, res: Response) => {
+router.post("/run-for-auth/:code", authenticateToken, enforceIPWhitelist(), requirePermission("settlements.run"), requireMFA(), async (req: Request, res: Response) => {
   try {
     const op = (req as any).user?.id || "system";
     const r = await afse.runForAuthCode(req.params.code, op);
@@ -35,7 +36,7 @@ router.post("/run-for-auth/:code", authenticateToken, async (req: Request, res: 
   }
 });
 
-router.post("/run-all", authenticateToken, async (req: Request, res: Response) => {
+router.post("/run-all", authenticateToken, enforceIPWhitelist(), requirePermission("settlements.run"), requireMFA(), async (req: Request, res: Response) => {
   try {
     const op = (req as any).user?.id || "system";
     const r = await afse.runAll(op);
@@ -127,7 +128,7 @@ function encryptForTransactPay(payload: object, encryptionKeyB64: string): strin
 //   }
 //   redirectUrl?: string      // required for 3DS flow
 // }
-router.post("/transactpay/initiate", authenticateToken, async (req: Request, res: Response) => {
+router.post("/transactpay/initiate", authenticateToken, enforceIPWhitelist(), requirePermission("settlements.run"), requireMFA(), async (req: Request, res: Response) => {
   try {
     const baseUrl = String(process.env.TRANSACTPAY_BASE_URL || "https://payment-api-service.transactpay.ai").trim().replace(/\/+$/, "");
     const publicKey = String(process.env.TRANSACTPAY_PUBLIC_KEY || "").trim();

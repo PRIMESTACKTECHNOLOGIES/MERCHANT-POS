@@ -202,38 +202,11 @@ export class WalletsService {
   private async authorizeCardTopup(amount: number, currency: string, cardNumber: string, expiry: string, cvv: string, emvData?: string) {
     const ccy = this.normalizeCurrency(currency);
     const sanitizedPan = (cardNumber || '').replace(/\D/g, '');
-    const normalizedEmv = (emvData || '').trim();
-
-    if (normalizedEmv) {
-      try {
-        const parsed = JSON.parse(normalizedEmv);
-        const approved = parsed?.approved === true || parsed?.success === true || parsed?.status === 'approved' || parsed?.status === 'APPROVED';
-        if (approved) {
-          return {
-            authCode: parsed?.authCode || parsed?.processorId || parsed?.authorizationCode || parsed?.id || `AUTH-${Date.now().toString(36).toUpperCase()}`,
-            processorId: parsed?.processorId || parsed?.id || null,
-            processor: parsed?.processor || 'PROVIDED',
-            status: 'APPROVED',
-          };
-        }
-        if (parsed?.message) {
-          throw new Error(parsed.message);
-        }
-      } catch (parseError) {
-        const trimmed = normalizedEmv.replace(/^['"]|['"]$/g, '');
-        if (/^AUTH[-:_A-Z0-9]{3,}$/i.test(trimmed)) {
-          return {
-            authCode: trimmed,
-            processorId: trimmed,
-            processor: 'PROVIDED',
-            status: 'APPROVED',
-          };
-        }
-        if (trimmed) {
-          throw new Error('Card authorization payload was invalid');
-        }
-      }
-    }
+    // REAL-CAPTURE GATE — a caller cannot approve its own top-up.
+    // `emvData` used to be parsed for an `{approved:true}` verdict (or an "AUTH-…"
+    // token) and taken as authorization. That let a client mint an approval with
+    // no funds behind it. It is now treated as card/EMV data only — never as a
+    // decision. Only the acquirer or a live card processor may authorize.
 
     const acquirerActive = Boolean(acquirerConfig.host);
     const enabledRaw = String(process.env.CARD_PROCESSOR_ENABLED || 'false').trim().toLowerCase();
@@ -258,8 +231,13 @@ export class WalletsService {
         if (!result.success) {
           throw new Error(result.message || `Acquirer declined wallet topup (RC=${result.responseCode})`);
         }
+        // A real authorization must return a reference we can settle against.
+        const authRef = String(result.approvalCode || result.authRef || '').trim();
+        if (!authRef) {
+          throw new Error('Acquirer approved without returning an authorization reference — top-up refused.');
+        }
         return {
-          authCode: result.approvalCode || `AUTH-${Date.now().toString(36).toUpperCase()}`,
+          authCode: authRef,
           processorId: result.authRef || null,
           processor: 'VAULT_BANK_ACQUIRER',
           status: 'APPROVED',
@@ -292,7 +270,14 @@ export class WalletsService {
       throw new Error(response?.data?.message || 'Card authorization declined');
     }
 
-    const authCode = response?.data?.authCode || response?.data?.authorizationCode || response?.data?.processorId || response?.data?.id || `AUTH-${Date.now().toString(36).toUpperCase()}`;
+    // A real authorization must return a reference we can settle against — no
+    // locally invented auth code, or the top-up would be unbacked by any capture.
+    const authCode = String(
+      response?.data?.authCode || response?.data?.authorizationCode || response?.data?.processorId || response?.data?.id || '',
+    ).trim();
+    if (!authCode) {
+      throw new Error('Card processor approved without returning an authorization reference — top-up refused.');
+    }
     const processor = response?.data?.processor || 'PROCESSOR';
     const isMock = /mock/i.test(authCode) || /mock/i.test(processor) || response?.data?.mock === true;
     if (isMock) {

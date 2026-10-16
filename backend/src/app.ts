@@ -1,4 +1,4 @@
-﻿import express, { Request, Response, NextFunction } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors, { type CorsOptions } from "cors";
 import path from "path";
 import { db } from "./config/db";
@@ -22,6 +22,7 @@ import payoutBankRouter from './domain/payouts/bank.router';
 import payoutCryptoRouter from './domain/payouts/crypto.router';
 import { mt103Router } from './domain/payouts/mt103.router';
 import settlementsRouter from './domain/settlements/settlements.router';
+import acquirerSettlementRouter from './domain/settlements/acquirerSettlement.router';
 import { conflictResolutionRouter } from './domain/conflicts/conflict-resolution.router';
 import { auditTrailRouter } from './domain/audit/audit-trail.router';
 import { dashboardRouter } from './domain/dashboard/dashboard.router';
@@ -51,6 +52,7 @@ import developerIntegrationRouter from './domain/developer/developer-integration
 import { prismaLaposRouter } from './domain/payments/prisma-lapos/prisma-lapos.router';
 import { cardTopupRouter } from './domain/vault/cardTopup.router';
 import { transakVbaRouter } from './domain/wallets/transakVba.router';
+import { securityEventRouter } from './domain/security/security.router';
 
 export const app = express();
 
@@ -107,6 +109,9 @@ app.use("/auth", authRouter);
 // â”€â”€ Health checks (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+
+// ── Client intrusion reporting (public, rate-limited, whitelisted events) ────
+app.use("/api/security", express.json({ limit: "16kb" }), securityEventRouter);
 
 // ── One-time password reset (protected by RESET_TOKEN env var) ───────────────
 app.post("/api/admin/reset-password", async (req: Request, res: Response) => {
@@ -350,6 +355,7 @@ app.use('/api', apiRouter);
 app.use('/api/vault', vaultRouter);
 app.use('/api/vault/cardtopup', cardTopupRouter);
 app.use('/api/settlements', settlementsRouter);
+app.use('/api/acquirer', acquirerSettlementRouter);
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/terminals', terminalsRouter);

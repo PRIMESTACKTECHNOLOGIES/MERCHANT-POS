@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { payoutsService, CreatePayoutInput, PayoutStatus } from './payouts.service';
 import { authenticateToken } from '../../middleware/auth.middleware';
 import { payoutIdempotency } from '../../middleware/idempotency.middleware';
+import { requirePermission, requireMFA, enforceIPWhitelist } from '../../middleware/security.middleware';
 import { v4 as uuidv4 } from 'uuid';
 import { vaultPayoutEngine } from './vaultPayoutEngine';
 
@@ -95,7 +96,13 @@ function buildStatusResponse(payout: any) {
   };
 }
 
-router.post('/', authenticateToken, payoutIdempotency({ require: true }), async (req: Request, res: Response) => {
+router.post('/',
+  authenticateToken,
+  enforceIPWhitelist(),
+  requirePermission('payouts.create'),
+  requireMFA(),
+  payoutIdempotency({ require: true }),
+  async (req: Request, res: Response) => {
   try {
     const body = req.body || {};
     const {
@@ -153,7 +160,7 @@ router.post('/', authenticateToken, payoutIdempotency({ require: true }), async 
   }
 });
 
-router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
+router.get('/:id', authenticateToken, requirePermission('payouts.view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const payout = await payoutsService.getPayout(id);
@@ -166,7 +173,7 @@ router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   }
 });
 
-router.get('/', authenticateToken, async (req: Request, res: Response) => {
+router.get('/', authenticateToken, requirePermission('payouts.view'), async (req: Request, res: Response) => {
   try {
     const {
       status, channel, merchant_id, merchantId,
@@ -198,7 +205,12 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/:id/execute', authenticateToken, async (req: Request, res: Response) => {
+router.post('/:id/execute',
+  authenticateToken,
+  enforceIPWhitelist(),
+  requirePermission('payouts.execute'),
+  requireMFA(),
+  async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     return res.json(await vaultPayoutEngine.executePayout(id));
@@ -212,10 +224,10 @@ router.post('/:id/execute', authenticateToken, async (req: Request, res: Respons
   }
 });
 
-router.patch('/:id', authenticateToken, patchPayoutStatus);
-router.patch('/:id/status', authenticateToken, patchPayoutStatus);
+router.patch('/:id', authenticateToken, requirePermission('payouts.update'), patchPayoutStatus);
+router.patch('/:id/status', authenticateToken, requirePermission('payouts.update'), patchPayoutStatus);
 
-router.get('/:id/payload', authenticateToken, async (req: Request, res: Response) => {
+router.get('/:id/payload', authenticateToken, requirePermission('payouts.view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const payout = await payoutsService.getPayout(id);
