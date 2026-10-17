@@ -70,6 +70,7 @@ export interface TopupResult {
   message:      string;
   txnId?:       string;
   error?:       string;
+  status?:      'PENDING' | 'CONFIRMED';
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -104,36 +105,111 @@ export async function topupViaBankWire(input: BankWireTopupInput): Promise<Topup
       message: 'wireReference, senderName and positive amount are required', error: 'VALIDATION_ERROR' };
   }
 
-  // Record the wire confirmation for audit
+  await ensureWireConfirmationsTable();
   const now = new Date().toISOString();
-  await db.query(`CREATE TABLE IF NOT EXISTS vault_wire_confirmations (
-    id TEXT PRIMARY KEY, card_id TEXT, currency TEXT, amount REAL, wire_reference TEXT UNIQUE,
-    sender_name TEXT, sender_bank TEXT, transfer_type TEXT, confirmed_at TEXT, note TEXT
-  )`).catch(() => {});
   try {
     await db.query(
-      `INSERT INTO vault_wire_confirmations (id, card_id, currency, amount, wire_reference, sender_name, sender_bank, transfer_type, confirmed_at, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO vault_wire_confirmations
+         (id, card_id, currency, amount, wire_reference, sender_name, sender_bank, transfer_type,
+          confirmed_at, note, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'PENDING', ?)`,
       [uuidv4(), input.cardId, input.currency.toUpperCase(), input.amount, input.wireReference,
-       input.senderName, input.senderBank, input.transferType, now, input.note ?? null]
+       input.senderName, input.senderBank, input.transferType, input.note ?? null, now]
     );
   } catch (dupErr: any) {
     if (String(dupErr.message).toLowerCase().includes('unique')) {
       return { ok: false, channel: 'bank_wire', cardId: input.cardId, currency: input.currency,
         amount: input.amount, providerRef: input.wireReference, balanceAfter: 0,
-        message: 'This wire reference has already been credited', error: 'DUPLICATE_WIRE_REF' };
+        message: 'This wire reference has already been recorded', error: 'DUPLICATE_WIRE_REF' };
     }
     throw dupErr;
   }
 
-  const txn = await creditCard(input.cardId, input.currency, input.amount, 'bank_wire',
-    input.wireReference, `${input.transferType}:${input.senderBank}`, input.note);
-  await syncToSettlement(input.cardId, input.currency, input.amount, input.wireReference);
-  const bal = await getCardBalance(input.cardId, input.currency);
+  // Phase 1 records the claim only. Nothing is credited until an operator
+  // confirms the funds actually landed in the vault bank account (phase 2).
+  return { ok: true, channel: 'bank_wire', status: 'PENDING', cardId: input.cardId,
+    currency: input.currency, amount: input.amount, providerRef: input.wireReference, balanceAfter: 0,
+    message: `Wire ${input.wireReference} recorded as PENDING. Not credited until an operator confirms the funds landed in the bank account.` };
+}
 
-  return { ok: true, channel: 'bank_wire', cardId: input.cardId, currency: input.currency,
-    amount: input.amount, providerRef: input.wireReference, balanceAfter: bal.balance,
-    message: `${input.transferType} wire of ${input.currency} ${input.amount.toFixed(2)} credited to card`, txnId: txn.id };
+// ── Phase 2: operator confirms the wire actually arrived ─────────────────────
+export interface BankWireConfirmInput {
+  wireReference: string;
+  operatorCode:  string;
+  confirmedBy?:  string;
+}
+
+export async function confirmBankWireTopup(input: BankWireConfirmInput): Promise<TopupResult> {
+  const expectedCode = (process.env.VAULT_CASH_OPERATOR_CODE || '').trim();
+  if (expectedCode && String(input.operatorCode || '').trim() !== expectedCode) {
+    return { ok: false, channel: 'bank_wire', cardId: '', currency: '', amount: 0,
+      providerRef: input.wireReference, balanceAfter: 0,
+      message: 'Operator code invalid', error: 'INVALID_OPERATOR_CODE' };
+  }
+  await ensureWireConfirmationsTable();
+  const ref = String(input.wireReference || '').trim();
+  if (!ref) {
+    return { ok: false, channel: 'bank_wire', cardId: '', currency: '', amount: 0,
+      providerRef: '', balanceAfter: 0, message: 'wireReference is required', error: 'VALIDATION_ERROR' };
+  }
+
+  const row = (await db.query(
+    `SELECT id, card_id, currency, amount, wire_reference, transfer_type, sender_bank, status, note
+       FROM vault_wire_confirmations WHERE wire_reference = ? LIMIT 1`, [ref])).rows[0] as any;
+  if (!row) {
+    return { ok: false, channel: 'bank_wire', cardId: '', currency: '', amount: 0,
+      providerRef: ref, balanceAfter: 0, message: `No wire recorded for reference ${ref}`, error: 'WIRE_NOT_FOUND' };
+  }
+  if (String(row.status).toUpperCase() === 'CONFIRMED') {
+    return { ok: false, channel: 'bank_wire', cardId: row.card_id, currency: row.currency,
+      amount: Number(row.amount), providerRef: ref, balanceAfter: 0,
+      message: `Wire ${ref} is already confirmed and credited`, error: 'ALREADY_CONFIRMED' };
+  }
+
+  const cardId   = String(row.card_id);
+  const currency = String(row.currency);
+  const amount   = Number(row.amount);
+  const now      = new Date().toISOString();
+
+  // Mark confirmed first so a concurrent double-confirm cannot credit twice.
+  const claimed = await db.query(
+    `UPDATE vault_wire_confirmations SET status = 'CONFIRMED', confirmed_at = ?, confirmed_by = ?
+      WHERE wire_reference = ? AND status = 'PENDING'`, [now, input.confirmedBy ?? 'operator', ref]);
+  if (!claimed.rowCount) {
+    return { ok: false, channel: 'bank_wire', cardId, currency, amount, providerRef: ref,
+      balanceAfter: 0, message: `Wire ${ref} is already confirmed and credited`, error: 'ALREADY_CONFIRMED' };
+  }
+
+  const txn = await creditCard(cardId, currency, amount, 'bank_wire_confirmed', ref,
+    `${row.transfer_type || 'WIRE'}:${row.sender_bank || ''}`, row.note ?? `Operator-confirmed wire ${ref}`);
+  await syncToSettlement(cardId, currency, amount, ref);
+  const bal = await getCardBalance(cardId, currency);
+
+  return { ok: true, channel: 'bank_wire', status: 'CONFIRMED', cardId, currency, amount,
+    providerRef: ref, balanceAfter: bal.balance,
+    message: `Confirmed: ${row.transfer_type || 'wire'} of ${currency} ${amount.toFixed(2)} credited to card ${cardId}`,
+    txnId: txn.id };
+}
+
+/** Wires awaiting operator confirmation — the real-money intake queue. */
+export async function listPendingBankWires(): Promise<Array<Record<string, unknown>>> {
+  await ensureWireConfirmationsTable();
+  const rows = (await db.query(
+    `SELECT id, card_id, currency, amount, wire_reference, sender_name, sender_bank, transfer_type, note, created_at
+       FROM vault_wire_confirmations WHERE status = 'PENDING' ORDER BY created_at DESC LIMIT 100`)).rows;
+  return rows.map((r: any) => ({
+    id: r.id, cardId: r.card_id, currency: r.currency, amount: Number(r.amount),
+    wireReference: r.wire_reference, senderName: r.sender_name, senderBank: r.sender_bank,
+    transferType: r.transfer_type, note: r.note, createdAt: r.created_at,
+  }));
+}
+
+async function ensureWireConfirmationsTable(): Promise<void> {
+  await db.query(`CREATE TABLE IF NOT EXISTS vault_wire_confirmations (
+    id TEXT PRIMARY KEY, card_id TEXT, currency TEXT, amount REAL, wire_reference TEXT UNIQUE,
+    sender_name TEXT, sender_bank TEXT, transfer_type TEXT, confirmed_at TEXT, note TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING', confirmed_by TEXT, created_at TEXT
+  )`).catch(() => {});
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

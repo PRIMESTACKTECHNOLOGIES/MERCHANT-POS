@@ -5,9 +5,12 @@ import { VAULT_BIN, VAULT_BIN_EUR } from "./vaultBin";
 import { generateVaultPan, generateExpiry, generateCvv } from "./luhn";
 import { generateVaultField55 } from "./vaultEmvGenerator";
 import { validateVaultEmv } from "./vaultEmvValidator";
+import { currencyToBcd } from "../issuer/emvCdol";
+import { SoftwareEmvIssuerCrypto } from "../issuer/issuerCrypto";
 
-const CURRENCY_CODE: Record<string, string> = {
-  USD: "0840", EUR: "0978", GBP: "0826", AED: "0784",
+/** ISO 4217 numeric currency, converted to tag 5F2A BCD on demand. */
+const CURRENCY_NUMERIC: Record<string, string> = {
+  USD: "840", EUR: "978", GBP: "826", AED: "784",
 };
 
 export async function ensureVaultCardsTable() {
@@ -85,13 +88,37 @@ export async function authorizeVaultEmv(input: {
 
   const card   = row.rows[0] as any;
   const ccy    = (input.currency || "USD").toUpperCase();
-  const ccyCode = CURRENCY_CODE[ccy] || "0840";
+  const ccyBcd = currencyToBcd(CURRENCY_NUMERIC[ccy] || "840");
 
-  const validation = validateVaultEmv(input.field55, { pan: card.card_number, atc: card.atc }, input.amountMinor, ccyCode);
+  const validation = validateVaultEmv(
+    input.field55,
+    { pan: card.card_number, panSequence: String(card.pan_sequence || "00") },
+    input.amountMinor,
+    ccyBcd,
+  );
   if (!validation.valid) throw new Error(`EMV_VALIDATION_FAILED: ${validation.reason}`);
 
-  // Increment ATC
-  const newAtc = (card.atc || 0) + 1;
+  // ── ATC REPLAY GUARD ─────────────────────────────────────────────────────────
+  // The card owns the ATC and increments it on every GENERATE AC. The issuer
+  // stores the highest ATC it has seen and refuses anything at or below it, so a
+  // captured Field 55 block cannot be replayed for a second authorization.
+  const presentedAtc = validation.atc!;
+  if (presentedAtc <= (card.atc || 0)) {
+    throw new Error(`EMV_ATC_REPLAY: presented=${presentedAtc} stored=${card.atc || 0}`);
+  }
+  const newAtc = presentedAtc;
+
+  // ── ARPC ─────────────────────────────────────────────────────────────────────
+  // The card MAC'd `validation.cdol1Hex`; the ARPC must be derived from the
+  // identical bytes so the card can verify it after the second GENERATE AC.
+  const arpcHex = SoftwareEmvIssuerCrypto.fromEnvironment().generateArpc({
+    pan: card.card_number,
+    panSequence: String(card.pan_sequence || "00"),
+    atc: validation.atcHex!,
+    cdol1Hex: validation.cdol1Hex!,
+    arqc: validation.arqcHex!,
+    responseCode: "00",
+  });
 
   // ── REAL-CAPTURE GATE ────────────────────────────────────────────────────────
   // A valid EMV cryptogram only proves the card data is genuine — it captures no
@@ -129,6 +156,7 @@ export async function authorizeVaultEmv(input: {
     amountMinor: input.amountMinor,
     currency:    ccy,
     atc:         newAtc,
+    arpcHex,
   };
 }
 
@@ -138,7 +166,12 @@ export async function generateField55ForCard(cardId: string, amountMinor: number
   if (!row.rows[0]) throw new Error("VAULT_CARD_NOT_FOUND");
   const card   = row.rows[0] as any;
   const ccy    = (currency || "USD").toUpperCase();
-  const ccyCode = CURRENCY_CODE[ccy] || "0840";
-  const field55 = generateVaultField55({ pan: card.card_number, expiry: card.expiry, atc: (card.atc || 0) + 1 }, amountMinor, ccyCode);
-  return { field55, cardId, last4: card.last4, atc: (card.atc || 0) + 1 };
+  const nextAtc = (card.atc || 0) + 1;
+  // The generator takes the alpha currency and owns the numeric→BCD conversion.
+  const field55 = generateVaultField55(
+    { pan: card.card_number, expiry: card.expiry, atc: nextAtc, panSequence: String(card.pan_sequence || "00") },
+    amountMinor,
+    ccy,
+  );
+  return { field55, cardId, last4: card.last4, atc: nextAtc };
 }

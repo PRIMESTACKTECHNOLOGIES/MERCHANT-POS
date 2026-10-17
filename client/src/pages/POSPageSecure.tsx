@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   chargePayment,
   fetchSettings,
@@ -67,7 +67,13 @@ export const POSPageSecure = () => {
     offlineMode: false,
     manualEntry: false
   });
-  const [nfcStatus, setNfcStatus] = useState({ enabled: false, connected: false, loading: true });
+  const [nfcStatus, setNfcStatus] = useState({
+    enabled: false,
+    connected: false,
+    loading: true,
+    readerName: '',
+    error: '',
+  });
   const [merchantConfig, setMerchantConfig] = useState({
     merchantId: 'MRC-1001',
     terminalId: 'WEB-TERMINAL',
@@ -91,6 +97,9 @@ export const POSPageSecure = () => {
     expiry: "", 
     cvv: "" 
   });
+  // EMV data (tag set incl. the ARQC) captured by the last NFC tap. Forwarded to
+  // the processor as field 55 so a contactless charge carries real card data.
+  const [nfcEmvData, setNfcEmvData] = useState<{ emv: Record<string, any>; tlvRaw: string | null } | null>(null);
   const [voiceAuth, setVoiceAuth] = useState(false);
   const [voiceAuthCode, setVoiceAuthCode] = useState("");
   const [posProtocol, setPosProtocol] = useState<PosProtocol>('NORMAL');
@@ -190,15 +199,44 @@ export const POSPageSecure = () => {
     }
   };
 
-  const fetchNfcStatus = async () => {
+  // ── NFC reader status poll ────────────────────────────────────────────────
+  // The ACR122U is hot-pluggable, so the reader is re-checked continuously:
+  // plugging it in must flip the badge to "NFC Ready" without a page reload.
+  // A single transient API failure must not report the reader as unplugged,
+  // hence the failure counter before the status downgrades.
+  const nfcPollFailures = useRef(0);
+
+  const fetchNfcStatus = useCallback(async () => {
     try {
       const status = await getAcr122uStatus();
-      setNfcStatus({ enabled: !!status.enabled, connected: !!status.connected, loading: false });
+      nfcPollFailures.current = 0;
+      setNfcStatus({
+        enabled: !!status.enabled,
+        connected: !!status.connected,
+        loading: false,
+        readerName: status.readerName || '',
+        error: status.error || '',
+      });
     } catch (error) {
+      nfcPollFailures.current += 1;
+      if (nfcPollFailures.current >= 2) {
+        setNfcStatus(prev => ({
+          ...prev,
+          enabled: false,
+          connected: false,
+          loading: false,
+          error: 'NFC service unreachable',
+        }));
+      }
       console.warn('NFC status fetch failed', error);
-      setNfcStatus({ enabled: false, connected: false, loading: false });
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void fetchNfcStatus();
+    const interval = window.setInterval(() => { void fetchNfcStatus(); }, 3000);
+    return () => window.clearInterval(interval);
+  }, [fetchNfcStatus]);
 
   // Load merchant config and pending transactions on mount
   useEffect(() => {
@@ -224,8 +262,6 @@ export const POSPageSecure = () => {
       if (cancelled) return;
       try { await checkBackendHealth(2500); setIsOnline(true); } catch { setIsOnline(false); }
     }, 10_000);
-
-    fetchNfcStatus();
 
     return () => {
       cancelled = true;
@@ -413,8 +449,15 @@ export const POSPageSecure = () => {
       return false;
     }
     
-    if (posProtocol !== '101.1' && cardData.cvv.length < 3) {
+    // A contactless tap carries no CVV — the reader-supplied EMV data (ARQC)
+    // replaces it, so the CVV check must not block a tap capture.
+    if (posProtocol !== '101.1' && cardEntryMode !== 'NFC' && cardData.cvv.length < 3) {
       showToast(`CVV must be at least 3 digits for ${posProtocol === 'NORMAL' ? 'normal card transactions' : posProtocol}`, 'error');
+      return false;
+    }
+    // CVV-less tap captures are only valid when the reader actually supplied EMV data.
+    if (cardEntryMode === 'NFC' && !nfcEmvData) {
+      showToast('Tap the card on the reader first so the EMV data can be captured', 'error');
       return false;
     }
     if (posProtocol !== 'NORMAL' && !voiceAuthCode.trim()) {
@@ -439,22 +482,50 @@ export const POSPageSecure = () => {
   };
 
   const handleReaderTap = async () => {
+    // The status badge can be up to one poll interval stale, and the backend
+    // re-enumerates a just-plugged reader, so a "not connected" badge warns but
+    // never blocks the capture attempt.
+    if (!nfcStatus.connected) {
+      showToast('NFC reader not connected yet — checking for a card anyway...', 'info');
+      void fetchNfcStatus();
+    }
+
     setLoading(true);
     try {
       const amountForNfc = Math.round(parseFloat(amount || '0') * Math.pow(10, getCurrency(currency).decimals));
       const result = await readAcr122uCard(amountForNfc, currency);
-      if (result?.card?.uid && result?.card?.emvReady) {
-        showToast('Contactless EMV payment card detected. Enter any required card details and continue.', 'success');
+
+      if (result?.success && result?.card?.emvReady) {
+        // Capture the tapped card: PAN from EMV tag 5A (fallback Track 2 / tag
+        // 57), expiry from tag 5F24 (YYMMDD → MM/YY). Without this the reader
+        // detected the card but the operator still had to type everything.
+        const emv: Record<string, any> = result.emv || {};
+        const panRaw: string = emv['5A'] || (emv['57'] ? String(emv['57']).split('D')[0] : '') || '';
+        const pan = panRaw.replace(/\s/g, '').replace(/F/gi, '').substring(0, 16);
+        if (!pan || pan.length < 13) {
+          showToast('NFC read did not return a usable card number', 'error');
+          return;
+        }
+
+        const expiryRaw: string = emv['5F24'] || '';
+        const expiry = expiryRaw.length >= 4
+          ? `${expiryRaw.substring(2, 4)}/${expiryRaw.substring(0, 2)}`
+          : '';
+
+        setCardData(prev => ({ ...prev, pan, expiry: expiry || prev.expiry }));
+        setNfcEmvData({ emv, tlvRaw: result.tlvRaw || null });
         setCardEntryMode('NFC');
+        showToast(`Contactless card captured ****${pan.slice(-4)} — complete the payment.`, 'success');
       } else if (result?.nfcDetected) {
         showToast(result.error || 'NFC device detected, but it is not readable as an EMV payment card.', 'warning');
       } else {
-        showToast('No card detected by ACR122U reader', 'info');
+        showToast(result?.error || 'No card detected by ACR122U reader', 'info');
+        void fetchNfcStatus();
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showToast(message || 'Reader unavailable', 'warning');
-      setCardEntryMode('MANUAL');
+      void fetchNfcStatus();
     } finally {
       setLoading(false);
     }
@@ -490,7 +561,7 @@ export const POSPageSecure = () => {
         cleanPan,
         cleanPan.length > 0 ? '*'.repeat(Math.max(0, cleanPan.length - 4)) + cleanPan.slice(-4) : undefined,
         cardData.expiry,
-        cardData.cvv,
+        cardEntryMode === 'NFC' && !cardData.cvv ? undefined : cardData.cvv,
         undefined,
         posProtocol,
         posProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined
@@ -504,6 +575,8 @@ export const POSPageSecure = () => {
       setLoading(false);
       setAmount('0');
       setCardData({ pan: '', expiry: '', cvv: '' });
+      setNfcEmvData(null);
+      setCardEntryMode('MANUAL');
       setVoiceAuth(false);
       setVoiceAuthCode("");
     }
@@ -561,13 +634,19 @@ export const POSPageSecure = () => {
           {
             pan: cardData.pan.replace(/\s/g, ''),
             expiry: cardData.expiry,
-            cvv: selectedProtocol === '101.1' ? undefined : cardData.cvv,
+            // Contactless taps carry no CVV — send undefined rather than an empty string.
+            cvv: selectedProtocol === '101.1' || (cardEntryMode === 'NFC' && !cardData.cvv) ? undefined : cardData.cvv,
             customerId: selectedCustomerId || undefined,
             terminalId: merchantConfig.terminalId,
             stan,
             entryMode: selectedProtocol === '201.3' ? 'OFFLINE_201_3' : selectedProtocol === '101.1' ? 'VOICE_AUTH' : selectedProtocol === '101.6' ? '101.6' : cardEntryMode,
             authCode: selectedProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined,
             protocolVersion: selectedProtocol,
+            // NFC taps carry the card's EMV data (incl. the ARQC) so the
+            // processor can authorize a real contactless transaction.
+            ...(cardEntryMode === 'NFC' && nfcEmvData
+              ? { emv: nfcEmvData.emv, tlvRaw: nfcEmvData.tlvRaw }
+              : {}),
           }
         );
 
@@ -713,6 +792,8 @@ export const POSPageSecure = () => {
       setLoading(false);
       setAmount("0");
       setCardData({ pan: "", expiry: "", cvv: "" });
+      setNfcEmvData(null);
+      setCardEntryMode('MANUAL');
       setVoiceAuth(false);
       setVoiceAuthCode("");
     }
@@ -764,9 +845,22 @@ export const POSPageSecure = () => {
               <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${forceOffline ? 'left-4.5' : 'left-0.5'}`}></div>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold">
-            <span className={`inline-flex h-2.5 w-2.5 rounded-full ${nfcStatus.enabled ? 'bg-green-400' : 'bg-red-400'}`}></span>
-            <span>{nfcStatus.loading ? 'Checking NFC...' : nfcStatus.enabled ? (nfcStatus.connected ? 'NFC Ready' : 'NFC Available') : 'NFC Disabled'}</span>
+          <div
+            className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold"
+            title={nfcStatus.connected ? `Reader: ${nfcStatus.readerName || 'ACR122U'}` : (nfcStatus.error || 'Plug the ACR122U reader in — it is detected automatically')}
+          >
+            <span className={`inline-flex h-2.5 w-2.5 rounded-full ${
+              nfcStatus.loading ? 'bg-gray-300'
+                : nfcStatus.connected ? 'bg-green-400 animate-pulse'
+                : nfcStatus.enabled ? 'bg-amber-400'
+                : 'bg-red-400'
+            }`}></span>
+            <span>
+              {nfcStatus.loading ? 'Checking NFC...'
+                : nfcStatus.connected ? 'NFC Ready'
+                : nfcStatus.enabled ? 'NFC — plug in reader'
+                : 'NFC Unavailable'}
+            </span>
           </div>
         </div>
       </div>
@@ -1041,8 +1135,9 @@ export const POSPageSecure = () => {
                     placeholder="MM/YY"
                   />
                 </div>
-                {/* CVV is required for normal, 101.6, and 201.3 transactions. */}
-                {posProtocol !== '101.1' && (
+                {/* CVV is required for normal, 101.6, and 201.3 transactions — but
+                    never for a contactless tap (the reader supplies the ARQC). */}
+                {posProtocol !== '101.1' && cardEntryMode !== 'NFC' && (
                   <div>
                     <label className={`block text-xs font-semibold uppercase mb-1 ${posProtocol === '201.3' ? 'text-purple-600' : 'text-gray-500'}`}>CVV</label>
                     <input
@@ -1054,6 +1149,11 @@ export const POSPageSecure = () => {
                       inputMode="numeric"
                       autoComplete="cc-csc"
                     />
+                  </div>
+                )}
+                {cardEntryMode === 'NFC' && (
+                  <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800 flex items-center">
+                    📡 Contactless tap — card data captured from the reader. CVV is not required.
                   </div>
                 )}
                 {/* Auth Code — customer-provided for every explicit protocol */}

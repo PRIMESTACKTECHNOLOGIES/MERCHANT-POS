@@ -13,6 +13,11 @@ export interface ArqcValidationRequest {
   unpredictableNumber: Buffer;   // 9F37
   arqc:                Buffer;   // 9F26
   iad:                 Buffer;   // 9F10
+  /** The exact CDOL1 byte string the card MAC'd. ARQC validation recomputes the
+   *  retail MAC over this data, so it is required by any conforming HSM adapter
+   *  (Thales EA/Utimaco equivalent). An HSM that derives the session key itself
+   *  still needs the data; omitting it makes the comparison meaningless. */
+  cdol1Hex?:           string;
 }
 
 export interface ArqcValidationResponse {

@@ -1,84 +1,118 @@
-﻿// vaultEmvValidator.ts — Issuer-side EMV cryptogram validation
-import crypto from "crypto";
+// vaultEmvValidator.ts — Issuer-side EMV cryptogram validation for vault cards.
+//
+// The ARQC is validated with the same 3DES key schedule the card used:
+//   IMK → UDK (PAN ‖ PSN) → session key (ATC) → ISO 9797-1 Alg 3 retail MAC
+// See issuer/issuerCrypto.ts. The previous SHA-256 comparison was not a
+// cryptographic proof — it only proved the caller knew the same secret input,
+// which anyone holding the PAN could reproduce.
 
-export interface EmvField55Parsed {
-  pan?:               string;
-  expiry?:            string;
-  iad?:               Buffer;
-  arqc?:              Buffer;
-  cryptogramType?:    Buffer;
-  atc?:               number;
-  unpredictableNumber?: Buffer;
-  tvr?:               Buffer;
-  tsi?:               Buffer;
-  aip?:               Buffer;
-  amountMinor?:       number;
-  currencyCode?:      string;
+import { parseEmvField55 } from '../services/hsm/emvField55Parser';
+import { SoftwareEmvIssuerCrypto } from '../issuer/issuerCrypto';
+import {
+  cdol1FromField55,
+  decodeBcdAmount,
+} from '../issuer/emvCdol';
+
+export interface VaultEmvResult {
+  valid: boolean;
+  reason?: string;
+  /** Cryptogram the card presented (9F26). */
+  arqcHex?: string;
+  atc?: number;
+  atcHex?: string;
+  /** The exact CDOL1 byte string the card MAC'd. Reused to derive the ARPC so
+   *  both cryptograms are bound to the same transaction data. */
+  cdol1Hex?: string;
 }
 
-export function parseEmvField55(hex: string): EmvField55Parsed {
-  const src = hex.toUpperCase().replace(/\s/g, "");
-  const result: EmvField55Parsed = {};
-  let i = 0;
-  while (i < src.length - 4) {
-    let tag: string;
-    const fb = parseInt(src.slice(i, i + 2), 16);
-    if ((fb & 0x1F) === 0x1F) { tag = src.slice(i, i + 4); i += 4; }
-    else                       { tag = src.slice(i, i + 2); i += 2; }
-    if (i + 2 > src.length) break;
-    const len = parseInt(src.slice(i, i + 2), 16);
-    i += 2;
-    if (i + len * 2 > src.length) break;
-    const val = Buffer.from(src.slice(i, i + len * 2), "hex");
-    i += len * 2;
-    switch (tag) {
-      case "5A":   result.pan              = val.toString("hex").replace(/f$/i, ""); break;
-      case "5F24": result.expiry           = val.toString("hex"); break;
-      case "9F10": result.iad              = val; break;
-      case "9F26": result.arqc             = val; break;
-      case "9F27": result.cryptogramType   = val; break;
-      case "9F36": result.atc              = (val[0] << 8) | val[1]; break;
-      case "9F37": result.unpredictableNumber = val; break;
-      case "95":   result.tvr              = val; break;
-      case "9B":   result.tsi              = val; break;
-      case "82":   result.aip              = val; break;
-      case "9F02": result.amountMinor      = parseInt(val.toString("hex"), 16); break;
-      case "5F2A": result.currencyCode     = val.toString("hex"); break;
-    }
-  }
-  return result;
+function hexOf(value?: Buffer): string | undefined {
+  return value ? value.toString('hex').toUpperCase() : undefined;
 }
 
+/**
+ * Validate the EMV Field 55 block presented for a vault card.
+ *
+ * @param field55Hex  DE55 TLV block from the terminal.
+ * @param card        PAN and PAN sequence number from the card record.
+ * @param amountMinor Authorized amount in minor units (ISO 8583 DE4).
+ * @param currencyBcd 2-byte BCD currency as it appears in tag 5F2A ("0840").
+ */
 export function validateVaultEmv(
   field55Hex: string,
-  card: { pan: string; atc: number },
+  card: { pan: string; panSequence?: string },
   amountMinor: number,
-  currencyCode: string
-): { valid: boolean; reason?: string } {
-  let emv: EmvField55Parsed;
-  try { emv = parseEmvField55(field55Hex); } catch {
-    return { valid: false, reason: "EMV_PARSE_ERROR" };
+  currencyBcd: string,
+): VaultEmvResult {
+  let tags: ReturnType<typeof parseEmvField55>;
+  try {
+    tags = parseEmvField55(String(field55Hex || ''));
+  } catch {
+    return { valid: false, reason: 'EMV_PARSE_ERROR' };
+  }
+  if (!tags || Object.keys(tags).length === 0) {
+    return { valid: false, reason: 'EMV_FIELD55_EMPTY' };
   }
 
-  if (!emv.arqc)              return { valid: false, reason: "EMV_ARQC_MISSING" };
-  if (!emv.iad)               return { valid: false, reason: "EMV_IAD_MISSING" };
-  if (!emv.tvr)               return { valid: false, reason: "EMV_TVR_MISSING" };
-  if (emv.atc === undefined)  return { valid: false, reason: "EMV_ATC_MISSING" };
+  const arqcHex = hexOf(tags.arqc);
+  if (!arqcHex || arqcHex.length !== 16) return { valid: false, reason: 'EMV_ARQC_INVALID_LENGTH' };
+  if (!tags.atc || tags.atc.length !== 2) return { valid: false, reason: 'EMV_ATC_MISSING' };
+  if (!tags.unpredictableNumber || tags.unpredictableNumber.length !== 4) {
+    return { valid: false, reason: 'EMV_UNPREDICTABLE_NUMBER_MISSING' };
+  }
+  if (!tags.amount || tags.amount.length !== 6) return { valid: false, reason: 'EMV_AMOUNT_MISSING' };
+  if (!tags.currency || tags.currency.length !== 2) return { valid: false, reason: 'EMV_CURRENCY_MISSING' };
+  if (!tags.iad) return { valid: false, reason: 'EMV_IAD_MISSING' };
+  if (!tags.tvr || tags.tvr.length !== 5) return { valid: false, reason: 'EMV_TVR_MISSING' };
+  if (!tags.txnDate || tags.txnDate.length !== 3) return { valid: false, reason: 'EMV_TXN_DATE_MISSING' };
+  if (!tags.txnType || tags.txnType.length !== 1) return { valid: false, reason: 'EMV_TXN_TYPE_MISSING' };
 
-  const un     = emv.unpredictableNumber || Buffer.alloc(4);
-  const atcBuf = Buffer.from([emv.atc >> 8, emv.atc & 0xff]);
+  // The amount inside the cryptogram must be the amount being authorized.
+  let cryptogramAmount: number;
+  try {
+    cryptogramAmount = decodeBcdAmount(hexOf(tags.amount)!);
+  } catch {
+    return { valid: false, reason: 'EMV_AMOUNT_NOT_BCD' };
+  }
+  if (cryptogramAmount !== amountMinor) {
+    return { valid: false, reason: 'EMV_AMOUNT_MISMATCH' };
+  }
 
-  const recomputed = crypto.createHash("sha256")
-    .update(card.pan)
-    .update(atcBuf)
-    .update(Buffer.from(String(amountMinor)))
-    .update(Buffer.from(currencyCode))
-    .update(un)
-    .digest()
-    .subarray(0, 8);
+  const presentedCurrency = hexOf(tags.currency)!;
+  if (presentedCurrency !== currencyBcd.toUpperCase()) {
+    return { valid: false, reason: 'EMV_CURRENCY_MISMATCH' };
+  }
 
-  if (!recomputed.equals(emv.arqc))
-    return { valid: false, reason: "EMV_CRYPTOGRAM_INVALID" };
+  // Rebuild the exact CDOL1 byte string the card MAC'd (shared mapping).
+  const { cdol1Hex, missing } = cdol1FromField55(tags);
+  if (missing.length) {
+    return { valid: false, reason: `EMV_CDOL1_TAG_MISSING:${missing.join(',')}` };
+  }
 
-  return { valid: true };
+  if (!process.env.EMV_ISSUER_MASTER_KEY_HEX) {
+    // Fail closed: without the issuer master key no cryptogram can be proven.
+    return { valid: false, reason: 'EMV_ISSUER_KEY_NOT_CONFIGURED' };
+  }
+
+  try {
+    SoftwareEmvIssuerCrypto.fromEnvironment().validate({
+      pan: card.pan,
+      panSequence: card.panSequence,
+      atc: hexOf(tags.atc)!,
+      cdol1Hex,
+      arqc: arqcHex,
+    });
+  } catch (err: any) {
+    return {
+      valid: false,
+      reason: err?.message === 'EMV_ARQC_INVALID' ? 'EMV_CRYPTOGRAM_INVALID' : `EMV_CRYPTO_ERROR:${err?.message || err}`,
+    };
+  }
+
+  return {
+    valid: true,
+    arqcHex,
+    atc: (tags.atc[0] << 8) | tags.atc[1],
+    atcHex: hexOf(tags.atc),
+    cdol1Hex,
+  };
 }

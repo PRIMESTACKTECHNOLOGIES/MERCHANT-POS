@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, useCallback, type ReactNode, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useState, useCallback, type ReactNode, type ChangeEvent, type FormEvent } from "react";
 import {
   RefreshCw, ShieldCheck, Play, Check, X, FileText,
   Activity, Wallet, ArrowDownToLine, ArrowUpFromLine,
@@ -411,29 +411,27 @@ export function VaultDashboardPage() {
   const [loadNote, setLoadNote]         = useState("");
   const [loadBusy, setLoadBusy]         = useState(false);
   const [loadHistory, setLoadHistory]   = useState<AnyRecord[]>([]);
-  const [externalEndpoint, setExternalEndpoint] = useState("");
-  const [externalApiKey, setExternalApiKey] = useState("");
-  const [externalProviderName, setExternalProviderName] = useState("");
-  const [externalProviderAccount, setExternalProviderAccount] = useState("");
-  const [externalEnvironment, setExternalEnvironment] = useState<"sandbox" | "production">("production");
-  const [externalSourceReference, setExternalSourceReference] = useState("");
-  const [externalCardId, setExternalCardId] = useState<"usd" | "eur">("usd");
-  const [fundingMethod, setFundingMethod] = useState<"card-to-card" | "server-to-card" | "bank-to-card" | "wallet-to-card">("wallet-to-card");
-  const [sourceCardReference, setSourceCardReference] = useState("");
-  const [sourceServerReference, setSourceServerReference] = useState("");
-  const [sourceBankName, setSourceBankName] = useState("");
-  const [sourceBankReference, setSourceBankReference] = useState("");
-  const [sourceBankSenderName, setSourceBankSenderName] = useState("");
-  const [sourceBankAccountReference, setSourceBankAccountReference] = useState("");
-  const [sourceTransferType, setSourceTransferType] = useState("SWIFT");
-  const [sourceTransferNetworkCode, setSourceTransferNetworkCode] = useState("");
-  const [sourceWalletId, setSourceWalletId] = useState("");
-  const [sourceWalletNetwork, setSourceWalletNetwork] = useState("");
-  const [sourceWalletTransactionId, setSourceWalletTransactionId] = useState("");
-  const [sourceServerName, setSourceServerName] = useState("");
-  const [sourceServerAccount, setSourceServerAccount] = useState("");
-  const [sourceCardIssuer, setSourceCardIssuer] = useState("");
-  const [sourceCardLast4, setSourceCardLast4] = useState("");
+  const [inboundBalance, setInboundBalance] = useState<{ cardId: string; currency: string; total: number; reserved: number; balance: number } | null>(null);
+  const [inboundBalanceBusy, setInboundBalanceBusy] = useState(false);
+  const [inboundBalanceError, setInboundBalanceError] = useState("");
+  // ── External source load panel state ───────────────────────────────────────
+  const [extLoadChannel, setExtLoadChannel] = useState<"bank_wire" | "wise" | "crypto">("bank_wire");
+  const [extLoadBusy, setExtLoadBusy] = useState(false);
+  const [extLoadError, setExtLoadError] = useState("");
+  const [extLoadSuccess, setExtLoadSuccess] = useState("");
+  const [extWireReference, setExtWireReference] = useState("");
+  const [extSenderName, setExtSenderName] = useState("");
+  const [extSenderBank, setExtSenderBank] = useState("");
+  const [extTransferType, setExtTransferType] = useState("SWIFT");
+  const [extOperatorCode, setExtOperatorCode] = useState("");
+  const [extWiseTransferId, setExtWiseTransferId] = useState("");
+  const [extTxHash, setExtTxHash] = useState("");
+  const [extNetwork, setExtNetwork] = useState("tron");
+  const [extAmount, setExtAmount] = useState("");
+  const [mintLabel, setMintLabel] = useState("");
+  const [mintBusy, setMintBusy] = useState(false);
+  const [mintError, setMintError] = useState("");
+  const [mintResult, setMintResult] = useState<{ apiKey: string; secretKey: string; warning: string; label: string } | null>(null);
   // ── Bank Credentials tab state ─────────────────────────────────────────────
   const [creds, setCreds] = useState<AnyRecord>({});
   const [credsRevealed, setCredsRevealed] = useState(false);
@@ -763,6 +761,37 @@ export function VaultDashboardPage() {
     }
   }, []);
 
+  const loadInboundBalance = useCallback(async () => {
+    if (!selectedLoadingCard) {
+      setInboundBalance(null);
+      setInboundBalanceError("");
+      return;
+    }
+    const cardId = selectedLoadingCard;
+    const currency = cardId === "usd" ? "USD" : "EUR";
+    setInboundBalanceBusy(true);
+    setInboundBalanceError("");
+    try {
+      const res = await api(`/api/vault/cardtopup/balance/${cardId}?currency=${currency}`);
+      setInboundBalance({
+        cardId: String(res.cardId || cardId),
+        currency: String(res.currency || currency),
+        total: Number(res.total || 0),
+        reserved: Number(res.reserved || 0),
+        balance: Number(res.balance || 0),
+      });
+    } catch (e) {
+      setInboundBalance(null);
+      setInboundBalanceError(e instanceof Error ? e.message : "Unable to load card balance");
+    } finally {
+      setInboundBalanceBusy(false);
+    }
+  }, [selectedLoadingCard]);
+
+  useEffect(() => {
+    if (tab === "cardload" && selectedLoadingCard) void loadInboundBalance();
+  }, [tab, selectedLoadingCard, loadInboundBalance]);
+
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => { void loadVirtualAccounts(); }, [loadVirtualAccounts]);
@@ -844,67 +873,64 @@ export function VaultDashboardPage() {
     }
   };
 
-  const handleExternalCardLoad = async () => {
-    const amt = Number(loadAmount);
-    if (!externalProviderName.trim() || !externalProviderAccount.trim() || !externalEndpoint || !externalApiKey || !externalSourceReference || !loadAmount || amt <= 0) {
-      setError("Enter the provider name, provider account, endpoint, API key, source reference, and a positive amount");
-      return;
-    }
-    const routeMissing =
-      fundingMethod === "card-to-card"
-        ? !sourceCardReference.trim()
-        : fundingMethod === "server-to-card"
-          ? !sourceServerReference.trim() || !sourceServerName.trim() || !sourceServerAccount.trim()
-          : fundingMethod === "bank-to-card"
-            ? !sourceBankName.trim() || !sourceBankReference.trim() || !sourceBankSenderName.trim()
-            : !sourceWalletId.trim() || !sourceWalletNetwork.trim() || !sourceWalletTransactionId.trim();
-    if (routeMissing) {
-      setError("Complete all required fields for the selected funding route");
-      return;
-    }
-    setLoadBusy(true); setError(""); setMessage("");
+  const handleMintApiKey = async () => {
+    const label = mintLabel.trim();
+    if (!label) { setMintError("Enter a label for the sending server"); return; }
+    setMintBusy(true); setMintError(""); setMintResult(null);
     try {
-      const result = await api("/api/vault/card-load/external", {
+      const result = await api("/api/vault/security/api-key/mint", {
         method: "POST",
-        body: JSON.stringify({
-          endpoint: externalEndpoint,
-          apiKey: externalApiKey,
-          providerName: externalProviderName.trim(),
-          providerAccount: externalProviderAccount.trim(),
-          environment: externalEnvironment,
-          sourceReference: externalSourceReference,
-          fundingMethod,
-          cardId: externalCardId,
-          currency: externalCardId === "usd" ? "USD" : "EUR",
-          amount: amt,
-          sourceDetails: {
-            sourceCardReference,
-            sourceServerReference,
-            sourceBankName,
-            sourceBankReference,
-            sourceBankSenderName,
-            sourceBankAccountReference,
-            transferType: sourceTransferType,
-            transferNetworkCode: sourceTransferNetworkCode.trim() || undefined,
-            sourceWalletId,
-            sourceWalletNetwork,
-            sourceWalletTransactionId,
-            sourceServerName,
-            sourceServerAccount,
-            sourceCardIssuer,
-            sourceCardLast4,
-          },
-          note: loadNote || undefined,
-        }),
+        body: JSON.stringify({ label }),
       });
-      setMessage(`External ${result.currency} card load confirmed by the provider.`);
-      setLoadAmount(""); setLoadNote(""); setExternalSourceReference("");
-      const hist = await api("/api/vault/card-loads");
-      setLoadHistory(hist.loads || []);
+      setMintResult({
+        apiKey: String(result.apiKey || ""),
+        secretKey: String(result.secretKey || ""),
+        warning: String(result.warning || ""),
+        label: String(result.label || label),
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "External card load failed");
+      setMintError(e instanceof Error ? e.message : "Failed to generate credentials");
     } finally {
-      setLoadBusy(false);
+      setMintBusy(false);
+    }
+  };
+
+  // ── Load from an external source (bank wire / wise / usdt on-chain) ─────────
+  const handleExternalLoad = async () => {
+    if (!selectedLoadingCard) { setExtLoadError("Select a target card first"); return; }
+    const amountValue = Number(extAmount);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) { setExtLoadError("Enter a valid amount"); return; }
+
+    const base = {
+      cardId: selectedLoadingCard,
+      currency: selectedLoadingCard === "usd" ? "USD" : "EUR",
+      amount: amountValue,
+    };
+
+    setExtLoadBusy(true); setExtLoadError(""); setExtLoadSuccess("");
+    try {
+      let path: string;
+      let payload: Record<string, unknown>;
+      if (extLoadChannel === "bank_wire") {
+        path = "/api/vault/cardtopup/bank-wire";
+        payload = { ...base, wireReference: extWireReference, senderName: extSenderName, senderBank: extSenderBank, transferType: extTransferType, operatorCode: extOperatorCode };
+      } else if (extLoadChannel === "wise") {
+        path = "/api/vault/cardtopup/wise";
+        payload = { ...base, transferId: extWiseTransferId };
+      } else {
+        path = "/api/vault/cardtopup/crypto";
+        payload = { ...base, txHash: extTxHash, network: extNetwork };
+      }
+
+      const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
+      setExtLoadSuccess(`✅ ${String(result.message || "Load recorded")} — new balance ${fmtNum(Number(result.balanceAfter || 0), String(result.currency || base.currency))}`);
+      setExtWireReference(""); setExtSenderName(""); setExtSenderBank(""); setExtOperatorCode("");
+      setExtWiseTransferId(""); setExtTxHash("");
+      void loadInboundBalance();
+    } catch (e) {
+      setExtLoadError(e instanceof Error ? e.message : "Failed to load from external source");
+    } finally {
+      setExtLoadBusy(false);
     }
   };
 
@@ -1725,6 +1751,8 @@ export function VaultDashboardPage() {
       status: bal > 0 ? '● Available' : '○ Empty',
     }));
 
+    const inboundWebhookUrl = `${API}/api/vault/card-load/webhook`;
+
     const selectedCard = selectedLoadingCard === "usd"
       ? {
           holderName: "AJI ALOSIOUS",
@@ -1880,120 +1908,249 @@ export function VaultDashboardPage() {
             <p className="px-5 pb-4 pt-2 text-xs text-gray-400">Only separately confirmed real funds can be loaded. Ledger balances are not eligible.</p>
           </Card>
 
-          {/* Load form */}
-          <Card title="Load Amount onto Card">
+          {/* Load from an external source */}
+          <Card title="Load from an external source">
             <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                {/* Currency selector */}
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Currency</label>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.keys(vaultByCurrency).length ? Object.keys(vaultByCurrency).map(ccy => (
-                      <button
-                        key={ccy}
-                        type="button"
-                        onClick={() => setLoadCurrency(ccy)}
-                        className={`px-4 py-2 rounded-xl text-sm font-bold border-2 transition-all ${loadCurrency === ccy ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}
-                      >
-                        {ccy}
-                      </button>
-                    )) : ['EUR','USD'].map(ccy => (
-                      <button key={ccy} type="button" onClick={() => setLoadCurrency(ccy)}
-                        className={`px-4 py-2 rounded-xl text-sm font-bold border-2 transition-all ${loadCurrency === ccy ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
-                        {ccy}
-                      </button>
-                    ))}
-                  </div>
-                  {loadCurrency && vaultByCurrency[loadCurrency] !== undefined && (
-                    <p className="mt-2 text-xs text-gray-500">
-                      Available: <span className="font-bold text-gray-700">{fmtNum(vaultByCurrency[loadCurrency], loadCurrency)}</span>
-                    </p>
-                  )}
-                </div>
+              {!selectedLoadingCard && (
+                <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                  Select a target card with “Add card” above.
+                </p>
+              )}
 
-                {/* Amount */}
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Amount</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">{loadCurrency}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={loadAmount}
-                      onChange={e => setLoadAmount(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl text-sm font-mono outline-none focus:border-indigo-500 transition-colors"
-                    />
-                  </div>
-                  {loadAmount && loadCurrency && vaultByCurrency[loadCurrency] !== undefined && parseFloat(loadAmount) > vaultByCurrency[loadCurrency] && (
-                    <p className="mt-1 text-xs text-red-500 font-semibold">⚠ Exceeds vault balance</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Note */}
+              {/* Channel selector */}
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Note (optional)</label>
-                <input
-                  type="text"
-                  value={loadNote}
-                  onChange={e => setLoadNote(e.target.value)}
-                  placeholder="e.g. Card load for JJ DUMBA settlement"
-                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-500 transition-colors"
-                />
-              </div>
-
-              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
-                <p className="text-xs font-black uppercase tracking-wider text-indigo-800">Real-funds loading configuration</p>
-                <p className="mt-1 text-xs text-indigo-700">Choose the funding route. The backend signs the provider request; do not enter PAN, CVV, PIN, or HMAC secrets here.</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500">Channel</p>
+                <div className="grid gap-3 sm:grid-cols-3">
                   {([
-                    ["card-to-card", "Card to card"],
-                    ["server-to-card", "Server to card"],
-                    ["bank-to-card", "Bank to card"],
-                    ["wallet-to-card", "Wallet to card"],
-                  ] as const).map(([value, label]) => (
-                    <button key={value} type="button" onClick={() => setFundingMethod(value)}
-                      className={`rounded-lg border px-3 py-3 text-left text-xs font-extrabold transition ${fundingMethod === value ? "border-indigo-600 bg-indigo-700 text-white" : "border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400"}`}>
-                      {label}
+                    { id: "bank_wire", title: "Bank wire", subtitle: "SWIFT / SEPA / ACH", badge: "Operator-confirmed" },
+                    { id: "wise", title: "Wise", subtitle: "", badge: "Verified" },
+                    { id: "crypto", title: "USDT on-chain", subtitle: "", badge: "Verified" },
+                  ] as const).map(ch => (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => { setExtLoadChannel(ch.id); setExtLoadError(""); setExtLoadSuccess(""); }}
+                      className={`rounded-xl border p-4 text-left transition-colors ${extLoadChannel === ch.id ? "border-slate-900 bg-slate-50 ring-1 ring-inset ring-slate-900" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-extrabold text-slate-900">{ch.title}</span>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${ch.id === "bank_wire" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{ch.badge}</span>
+                      </span>
+                      {ch.subtitle && <span className="mt-1 block text-[11px] text-slate-500">{ch.subtitle}</span>}
                     </button>
                   ))}
                 </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <label className="text-xs font-bold text-indigo-900">Provider name<input value={externalProviderName} onChange={e => setExternalProviderName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Licensed bank, processor, or wallet provider" /></label>
-                  <label className="text-xs font-bold text-indigo-900">Provider account / merchant ID<input value={externalProviderAccount} onChange={e => setExternalProviderAccount(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Account or merchant reference supplied by provider" /></label>
-                  <label className="text-xs font-bold text-indigo-900">Provider HTTPS endpoint<input value={externalEndpoint} onChange={e => setExternalEndpoint(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="https://provider.example/load" /></label>
-                  <label className="text-xs font-bold text-indigo-900">Provider API key<input value={externalApiKey} onChange={e => setExternalApiKey(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Public provider API key" type="password" /></label>
-                  <label className="text-xs font-bold text-indigo-900">Provider environment<select value={externalEnvironment} onChange={e => setExternalEnvironment(e.target.value as "sandbox" | "production")} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"><option value="production">Production / real funds</option><option value="sandbox">Sandbox / test funds</option></select></label>
-                  <label className="text-xs font-bold text-indigo-900">Source transfer / transaction reference<input value={externalSourceReference} onChange={e => setExternalSourceReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider transfer ID or settlement reference" /></label>
-                  <label className="text-xs font-bold text-indigo-900">Target card<select value={externalCardId} onChange={e => { const id = e.target.value as "usd" | "eur"; setExternalCardId(id); setLoadCurrency(id === "usd" ? "USD" : "EUR"); }} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm">
-                    <option value="usd">USD · AJI ALOSIOUS</option>
-                    <option value="eur">EUR · DANIA ALOSIOUS</option>
-                  </select></label>
-                  {fundingMethod === "card-to-card" && <><label className="text-xs font-bold text-indigo-900">Source card token / reference<input value={sourceCardReference} onChange={e => setSourceCardReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider-issued token; never enter PAN or CVV" /></label><label className="text-xs font-bold text-indigo-900">Source card issuer (optional)<input value={sourceCardIssuer} onChange={e => setSourceCardIssuer(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Issuing bank or processor" /></label><label className="text-xs font-bold text-indigo-900">Source card last four (optional)<input value={sourceCardLast4} onChange={e => setSourceCardLast4(e.target.value.replace(/\D/g, "").slice(-4))} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Last 4 digits only" maxLength={4} /></label></>}
-                  {fundingMethod === "server-to-card" && <><label className="text-xs font-bold text-indigo-900">Source server name<input value={sourceServerName} onChange={e => setSourceServerName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Sending server or treasury system" /></label><label className="text-xs font-bold text-indigo-900">Source server / account reference<input value={sourceServerReference} onChange={e => setSourceServerReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider account reference" /></label><label className="text-xs font-bold text-indigo-900">Source account identifier<input value={sourceServerAccount} onChange={e => setSourceServerAccount(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Non-secret account or ledger identifier" /></label></>}
-                  {fundingMethod === "bank-to-card" && <><label className="text-xs font-bold text-indigo-900">Transfer type<select value={sourceTransferType} onChange={e => setSourceTransferType(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"><option>SWIFT</option><option>SEPA</option><option>DOMESTIC</option><option>ACH</option><option>RTGS</option><option>IMPS</option><option>PIX</option><option>FASTER_PAYMENTS</option><option>FEDWIRE</option></select></label><label className="text-xs font-bold text-indigo-900">Transfer network code (optional)<input value={sourceTransferNetworkCode} onChange={e => setSourceTransferNetworkCode(e.target.value.toUpperCase().replace(/[^A-Z0-9 _-]/g, ""))} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="SEPA SCT, SWIFT MT103, ACH PPD" /></label><label className="text-xs font-bold text-indigo-900">Sending bank name<input value={sourceBankName} onChange={e => setSourceBankName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Sending bank or payment institution" /></label><label className="text-xs font-bold text-indigo-900">Bank transfer reference / UETR<input value={sourceBankReference} onChange={e => setSourceBankReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="UETR, end-to-end ID, ACH trace, or rail reference" /></label><label className="text-xs font-bold text-indigo-900">Sender name<input value={sourceBankSenderName} onChange={e => setSourceBankSenderName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Name on the sending transfer" /></label><label className="text-xs font-bold text-indigo-900">Sender account reference (optional)<input value={sourceBankAccountReference} onChange={e => setSourceBankAccountReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="IBAN/account reference or last 4 only" /></label></>}
-                  {fundingMethod === "wallet-to-card" && <><label className="text-xs font-bold text-indigo-900">Source wallet ID / provider token<input value={sourceWalletId} onChange={e => setSourceWalletId(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider wallet identifier" /></label><label className="text-xs font-bold text-indigo-900">Wallet network<input value={sourceWalletNetwork} onChange={e => setSourceWalletNetwork(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider network or rail" /></label><label className="text-xs font-bold text-indigo-900">Wallet transaction ID / hash<input value={sourceWalletTransactionId} onChange={e => setSourceWalletTransactionId(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Confirmed provider transaction ID" /></label></>}
-                </div>
-                <div className="mt-3 rounded-lg border border-indigo-200 bg-white/70 p-3 text-xs text-indigo-900">
-                  <strong>{fundingMethod === "card-to-card" ? "Card to card" : fundingMethod === "server-to-card" ? "Server to card" : fundingMethod === "bank-to-card" ? "Bank to card" : "Wallet to card"} instructions:</strong>{" "}
-                  {fundingMethod === "card-to-card" ? "Provide a provider-issued source card token and transfer reference. Never provide the source PAN, CVV, or PIN."
-                    : fundingMethod === "server-to-card" ? "Provide the sending server or treasury account reference and provider transfer reference. The provider must confirm settlement."
-                    : fundingMethod === "bank-to-card" ? "Select the rail used by the sender, add its real network code when applicable, and enter the bank-generated UETR, end-to-end ID, ACH trace, or equivalent reference. A typed reference alone never credits funds."
-                    : "Provide the source wallet ID or provider token and transfer reference. The provider must confirm available real funds before loading the card."}
-                </div>
-                <button type="button" onClick={() => void handleExternalCardLoad()} disabled={loadBusy} className="mt-3 inline-flex items-center gap-2 rounded-lg bg-indigo-700 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
-                  <Send size={15} /> {loadBusy ? "Calling provider…" : "Load confirmed funds"}
-                </button>
+                <p className="mt-2 text-[11px] leading-4 text-slate-500">
+                  “Wise” and “USDT on-chain” loads are verified against the provider before crediting. “Bank wire” loads are recorded on operator confirmation only.
+                </p>
               </div>
 
-              <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-600">
-                Internal ledger transfers are disabled for Vault cards. Use only the external provider form above; a load is recorded only after the provider confirms the real funds.
-              </p>
+              {/* Channel fields */}
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                {extLoadChannel === "bank_wire" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Wire reference</span>
+                      <input value={extWireReference} onChange={e => setExtWireReference(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="e.g. FEDWIRE-829301" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Sender name</span>
+                      <input value={extSenderName} onChange={e => setExtSenderName(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="Account holder" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Sender bank</span>
+                      <input value={extSenderBank} onChange={e => setExtSenderBank(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="Bank name" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Transfer type</span>
+                      <select value={extTransferType} onChange={e => setExtTransferType(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                        {["SWIFT", "SEPA", "ACH", "FEDWIRE", "FASTER_PAYMENTS", "RTGS"].map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Operator code</span>
+                      <input type="password" value={extOperatorCode} onChange={e => setExtOperatorCode(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="••••••••" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Amount</span>
+                      <input type="number" value={extAmount} onChange={e => setExtAmount(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0.00" />
+                    </label>
+                  </div>
+                )}
 
-              {error && <p className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 font-semibold"><X size={14} className="inline mr-1" />{error}</p>}
-              {message && <p className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700 font-semibold"><Check size={14} className="inline mr-1" />{message}</p>}
+                {extLoadChannel === "wise" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Wise transfer ID</span>
+                      <input value={extWiseTransferId} onChange={e => setExtWiseTransferId(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="e.g. 1234567890" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Amount</span>
+                      <input type="number" value={extAmount} onChange={e => setExtAmount(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0.00" />
+                    </label>
+                  </div>
+                )}
+
+                {extLoadChannel === "crypto" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Transaction hash</span>
+                      <input value={extTxHash} onChange={e => setExtTxHash(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0x…" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Network</span>
+                      <select value={extNetwork} onChange={e => setExtNetwork(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                        {["tron", "bsc", "ethereum", "polygon"].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Amount</span>
+                      <input type="number" value={extAmount} onChange={e => setExtAmount(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0.00" />
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {extLoadError && (
+                <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{extLoadError}</p>
+              )}
+              {extLoadSuccess && (
+                <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{extLoadSuccess}</p>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void handleExternalLoad()}
+                disabled={extLoadBusy || !selectedLoadingCard}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+              >
+                {extLoadBusy ? "Loading…" : "Load to card"}
+              </button>
+            </div>
+          </Card>
+
+          {/* Inbound load from an external server */}
+          <Card title="Inbound load from an external server">
+            <div className="p-5 space-y-4">
+              {!selectedLoadingCard && (
+                <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                  Select a target card with “Add card” above to configure the inbound load.
+                </p>
+              )}
+
+              {/* Target card + live spendable balance */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Target card</p>
+                  {selectedCard ? (
+                    <>
+                      <p className="mt-2 text-sm font-extrabold text-slate-900">{selectedCard.currency} · {selectedCard.holderName}</p>
+                      <p className="mt-1 font-mono text-xs text-slate-600">{selectedCard.maskedPan}</p>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-sm font-semibold text-slate-500">No card selected</p>
+                  )}
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Live spendable balance</p>
+                    <button
+                      type="button"
+                      onClick={() => void loadInboundBalance()}
+                      disabled={!selectedLoadingCard || inboundBalanceBusy}
+                      className="rounded-lg p-1 text-gray-500 hover:bg-gray-200 disabled:opacity-40"
+                      aria-label="Refresh balance"
+                    >
+                      <RotateCw size={13} className={inboundBalanceBusy ? "animate-spin" : ""} />
+                    </button>
+                  </div>
+                  {!selectedLoadingCard ? (
+                    <p className="mt-2 text-sm font-semibold text-slate-500">Select a card to load its balance.</p>
+                  ) : inboundBalanceBusy ? (
+                    <p className="mt-2 text-sm font-semibold text-slate-500">Loading balance…</p>
+                  ) : inboundBalanceError ? (
+                    <p className="mt-2 text-sm font-semibold text-red-600">{inboundBalanceError}</p>
+                  ) : inboundBalance ? (
+                    <p className="mt-2 font-mono text-lg font-extrabold text-slate-900">{fmtNum(inboundBalance.balance, inboundBalance.currency)}</p>
+                  ) : (
+                    <p className="mt-2 text-sm font-semibold text-slate-500">Balance unavailable.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Inbound endpoint */}
+              <div>
+                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500">Inbound endpoint (POST)</p>
+                <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2">
+                  <span className="min-w-0 flex-1 break-all font-mono text-xs text-slate-700">{inboundWebhookUrl}</span>
+                  <button
+                    type="button"
+                    onClick={() => { void navigator.clipboard.writeText(inboundWebhookUrl); setMessage("Inbound endpoint copied"); }}
+                    className="shrink-0 rounded-lg p-1.5 text-gray-500 hover:bg-gray-100"
+                    aria-label="Copy inbound endpoint"
+                  >
+                    <Copy size={15} />
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-gray-500">Path: <span className="font-mono text-slate-600">/api/vault/card-load/webhook</span></p>
+              </div>
+
+              {/* Required headers + signing recipe + body */}
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs text-indigo-900">
+                <p className="font-black uppercase tracking-wider">Required headers</p>
+                <p className="mt-1 break-all font-mono text-[11px] text-indigo-700">x-api-key · x-timestamp (unix ms) · x-nonce · x-signature</p>
+                <p className="mt-3 font-black uppercase tracking-wider">Signature</p>
+                <p className="mt-1 break-all font-mono text-[11px] text-indigo-700">x-signature = HMAC_SHA512(secretKey, "&lt;timestamp&gt;.&lt;nonce&gt;.&lt;JSON.stringify(body)&gt;") — lowercase hex (128 chars)</p>
+                <p className="mt-1 text-[11px] text-indigo-700">The timestamp must be within 5 minutes of server time and each nonce is single-use.</p>
+                <p className="mt-3 font-black uppercase tracking-wider">Request body</p>
+                <p className="mt-1 break-all font-mono text-[11px] text-indigo-700">{`{ sourceServer, sourceReference, cardId: "usd" | "eur", currency: "USD" | "EUR", amount, senderName?, note? }`}</p>
+                <p className="mt-2 text-[11px] text-indigo-700"><strong>sourceReference</strong> must be unique per load — replaying the same value is idempotent and will not credit twice. The sending server must debit its own available balance before pushing the load.</p>
+              </div>
+
+              {/* Generate credentials for the sending server */}
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+                <p className="text-xs font-black uppercase tracking-wider text-indigo-800">Generate credentials for the sending server</p>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    type="text"
+                    value={mintLabel}
+                    onChange={e => setMintLabel(e.target.value)}
+                    placeholder="Label, e.g. Acme Treasury Server"
+                    className="flex-1 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleMintApiKey()}
+                    disabled={mintBusy || !mintLabel.trim()}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-700 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                  >
+                    <KeyRound size={15} /> {mintBusy ? "Generating…" : "Generate credentials"}
+                  </button>
+                </div>
+                {mintError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{mintError}</p>}
+                {mintResult && (
+                  <div className="mt-3 space-y-2">
+                    {mintResult.warning && (
+                      <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{mintResult.warning}</p>
+                    )}
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">API key · {mintResult.label}</p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="min-w-0 flex-1 break-all font-mono text-xs text-slate-800">{mintResult.apiKey}</span>
+                        <button type="button" onClick={() => { void navigator.clipboard.writeText(mintResult.apiKey); setMessage("API key copied"); }} className="shrink-0 rounded-lg p-1.5 text-gray-500 hover:bg-gray-100" aria-label="Copy API key"><Copy size={15} /></button>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Secret key · shown once</p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="min-w-0 flex-1 break-all font-mono text-xs text-slate-800">{mintResult.secretKey}</span>
+                        <button type="button" onClick={() => { void navigator.clipboard.writeText(mintResult.secretKey); setMessage("Secret key copied"); }} className="shrink-0 rounded-lg p-1.5 text-gray-500 hover:bg-gray-100" aria-label="Copy secret key"><Copy size={15} /></button>
+                      </div>
+                      <p className="mt-2 text-[11px] font-semibold text-red-600">Copy the secret now — it cannot be shown again.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </Card>
 

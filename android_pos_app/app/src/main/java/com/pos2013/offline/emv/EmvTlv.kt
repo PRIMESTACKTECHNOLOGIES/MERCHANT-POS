@@ -44,6 +44,27 @@ object EmvTlv {
     fun get(nodes: List<TlvNode>, tag: String): ByteArray? =
         nodes.firstOrNull { it.tag.equals(tag, ignoreCase = true) }?.value
 
+    /** Tags whose value is itself a TLV structure (record templates / FCI templates). */
+    private val CONSTRUCTED = setOf("6F", "70", "71", "72", "73", "77", "61", "A5", "BF0C", "BF0D")
+
+    /**
+     * Parses TLV and descends into constructed templates.
+     *
+     * Cards wrap their records in template 70 (and FCI in 6F/A5), so a flat parse never
+     * exposes 5A / 5F24 / 57 / 8C. Everything else keeps working because lookups are by tag.
+     */
+    fun parseDeep(data: ByteArray): List<TlvNode> {
+        val out = mutableListOf<TlvNode>()
+        fun walk(bytes: ByteArray) {
+            for (node in parse(bytes)) {
+                out.add(node)
+                if (node.tag.uppercase() in CONSTRUCTED && node.value.isNotEmpty()) walk(node.value)
+            }
+        }
+        walk(data)
+        return out
+    }
+
     fun getFromResponse(resp: ByteArray, tag: String): ByteArray? =
         get(parse(resp), tag)
 

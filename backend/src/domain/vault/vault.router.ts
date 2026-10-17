@@ -17,7 +17,7 @@ import {
 } from './absaBank.service';
 import crypto from 'crypto';
 import { custodyReserveEngine } from './custodyReserve.service';
-import { debitCard, getCardBalance } from './cardBalance.service';
+import { creditCard, debitCard, getCardBalance } from './cardBalance.service';
 import { luhnValidate } from './luhn';
 import { verifyVaultApiKey } from './gateway/middleware/verifyApiKey';
 import { verifyVaultHmac } from './gateway/middleware/verifySignature';
@@ -283,6 +283,31 @@ router.post('/security/api-key/rotate', async (req, res) => {
   }
 });
 
+// Issue an ADDITIONAL vault API key without deactivating the existing ones.
+// Used to hand credentials to an external funder server that pushes
+// server-to-card loads to /api/vault/card-load/webhook.
+router.post('/security/api-key/mint', authenticateToken, async (req, res) => {
+  try {
+    const label = String(req.body?.label || '').trim();
+    if (!label) return res.status(400).json({ error: 'label is required' });
+    const apiKey = generateVaultApiKey();
+    const secretKey = generateVaultSecretKey();
+    const createdAt = new Date().toISOString();
+    const id = uuidv4();
+    await db.query(
+      `INSERT INTO vault_api_keys (id, api_key, secret_key, label, active, created_at)
+       VALUES (?, ?, ?, ?, 1, ?)`,
+      [id, apiKey, secretKey, label, createdAt],
+    );
+    return res.status(201).json({
+      id, apiKey, secretKey, label, createdAt,
+      warning: 'Store the secret key securely. It is shown once and cannot be retrieved later.',
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: 'INTERNAL_ERROR', message: error?.message || 'Failed to mint API key' });
+  }
+});
+
 router.post('/reserve/create', vaultController.createReserve.bind(vaultController));
 router.post('/reserve/release', vaultController.releaseReserve.bind(vaultController));
 router.post('/reserve/cancel', vaultController.cancelReserve.bind(vaultController));
@@ -294,6 +319,54 @@ router.post('/beneficiaries', vaultController.createBeneficiary.bind(vaultContro
 router.post('/sepa/draft', vaultController.createSepaDraft.bind(vaultController));
 router.post('/sepa/execute', vaultController.executeSepaTransfer.bind(vaultController));
 router.get('/sepa/transfers', vaultController.listSepaTransfers.bind(vaultController));
+
+// ── vault_card_loads (shared by outbound and inbound card loads) ─────────────
+async function ensureVaultCardLoadsTable(): Promise<void> {
+  await db.query(`CREATE TABLE IF NOT EXISTS vault_card_loads (
+    id TEXT PRIMARY KEY, vault_account_id TEXT NOT NULL, currency TEXT NOT NULL,
+    amount REAL NOT NULL, card_label TEXT, note TEXT,
+    status TEXT NOT NULL DEFAULT 'LOADED', loaded_at TEXT NOT NULL,
+    funding_method TEXT, provider_name TEXT, provider_account TEXT,
+    source_reference TEXT, provider_reference TEXT, request_reference TEXT,
+    transfer_type TEXT, transfer_network_code TEXT
+  )`);
+  const columns = (await db.query(`PRAGMA table_info(vault_card_loads)`)).rows.map((row: any) => String(row.name));
+  const migrations: Array<[string, string]> = [
+    ['funding_method', 'TEXT'], ['provider_name', 'TEXT'], ['provider_account', 'TEXT'],
+    ['source_reference', 'TEXT'], ['provider_reference', 'TEXT'], ['request_reference', 'TEXT'],
+    ['transfer_type', 'TEXT'], ['transfer_network_code', 'TEXT'],
+  ];
+  for (const [name, type] of migrations) {
+    if (!columns.includes(name)) await db.query(`ALTER TABLE vault_card_loads ADD COLUMN ${name} ${type}`);
+  }
+}
+
+// Idempotency guard for inbound server-to-card loads: the same funder server
+// may only ever apply a given source reference once. Scoped to inbound rows
+// (vault_account_id = 'INBOUND_SERVER') so outbound provider loads keep their
+// own reference namespace, and per funder so two servers can reuse a reference.
+async function ensureInboundSourceRefIndex(): Promise<void> {
+  await db.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_vcl_inbound_source_ref
+       ON vault_card_loads(provider_name, source_reference)
+       WHERE vault_account_id = 'INBOUND_SERVER'`,
+  );
+}
+
+const CARD_LOAD_FUNDING_METHODS = ['card-to-card', 'server-to-card', 'bank-to-card', 'wallet-to-card'];
+const CARD_LOAD_TRANSFER_TYPES = ['SWIFT', 'SEPA', 'DOMESTIC', 'ACH', 'RTGS', 'IMPS', 'PIX', 'FASTER_PAYMENTS', 'FEDWIRE'];
+
+/** Returns an error string when the source details are incomplete for the given funding route. */
+function cardLoadRouteError(fundingMethod: string, sourceDetails: any): string | null {
+  const missing = fundingMethod === 'card-to-card'
+    ? !sourceDetails?.sourceCardReference
+    : fundingMethod === 'server-to-card'
+      ? !sourceDetails?.sourceServerReference || !sourceDetails?.sourceServerName || !sourceDetails?.sourceServerAccount
+      : fundingMethod === 'bank-to-card'
+        ? !sourceDetails?.sourceBankReference || !sourceDetails?.sourceBankName || !sourceDetails?.sourceBankSenderName
+        : !sourceDetails?.sourceWalletId || !sourceDetails?.sourceWalletNetwork || !sourceDetails?.sourceWalletTransactionId;
+  return missing ? `All required source details are required for ${fundingMethod}` : null;
+}
 
 // ── POST /api/vault/card-load ────────────────────────────────────────────────
 // Load funds from the vault onto a card (operator-controlled).
@@ -314,25 +387,17 @@ router.post('/card-load/external', async (req, res) => {
     } = req.body || {};
     const ccy = String(currency || '').toUpperCase().trim();
     const amt = Number(amount);
-    const methods = ['card-to-card', 'server-to-card', 'bank-to-card', 'wallet-to-card'];
+    const methods = CARD_LOAD_FUNDING_METHODS;
     const normalizedCardId = String(cardId).toLowerCase();
     const cardCurrency = normalizedCardId === 'usd' ? 'USD' : normalizedCardId === 'eur' ? 'EUR' : '';
     if (!methods.includes(String(fundingMethod)) || !endpoint || !apiKey || !providerName || !providerAccount || !sourceReference || !cardCurrency || !ccy || ccy !== cardCurrency || !Number.isFinite(amt) || amt <= 0) {
       return res.status(400).json({ error: 'providerName, providerAccount, endpoint, apiKey, sourceReference, cardId, currency, and positive amount are required' });
     }
-    const routeMissing = fundingMethod === 'card-to-card'
-      ? !sourceDetails?.sourceCardReference
-      : fundingMethod === 'server-to-card'
-        ? !sourceDetails?.sourceServerReference || !sourceDetails?.sourceServerName || !sourceDetails?.sourceServerAccount
-        : fundingMethod === 'bank-to-card'
-          ? !sourceDetails?.sourceBankReference || !sourceDetails?.sourceBankName || !sourceDetails?.sourceBankSenderName
-          : !sourceDetails?.sourceWalletId || !sourceDetails?.sourceWalletNetwork || !sourceDetails?.sourceWalletTransactionId;
-    if (routeMissing) {
-      return res.status(400).json({
-        error: `All required source details are required for ${fundingMethod}`,
-      });
+    const routeError = cardLoadRouteError(String(fundingMethod), sourceDetails);
+    if (routeError) {
+      return res.status(400).json({ error: routeError });
     }
-    const transferTypes = ['SWIFT', 'SEPA', 'DOMESTIC', 'ACH', 'RTGS', 'IMPS', 'PIX', 'FASTER_PAYMENTS', 'FEDWIRE'];
+    const transferTypes = CARD_LOAD_TRANSFER_TYPES;
     if (fundingMethod === 'bank-to-card' && (!transferTypes.includes(String(sourceDetails?.transferType || '').toUpperCase()) || (sourceDetails?.transferNetworkCode && !/^[A-Z0-9][A-Z0-9 _-]{1,31}$/i.test(String(sourceDetails.transferNetworkCode))))) {
       return res.status(400).json({ error: 'A supported transfer type and valid transfer network code are required for bank-to-card' });
     }
@@ -392,29 +457,13 @@ router.post('/card-load/external', async (req, res) => {
     });
     const loadId = uuidv4();
     const now = new Date().toISOString();
-    await db.query(`CREATE TABLE IF NOT EXISTS vault_card_loads (
-      id TEXT PRIMARY KEY, vault_account_id TEXT NOT NULL, currency TEXT NOT NULL,
-      amount REAL NOT NULL, card_label TEXT, note TEXT,
-      status TEXT NOT NULL DEFAULT 'LOADED', loaded_at TEXT NOT NULL,
-      funding_method TEXT, provider_name TEXT, provider_account TEXT,
-      source_reference TEXT, provider_reference TEXT, request_reference TEXT,
-      transfer_type TEXT, transfer_network_code TEXT
-    )`);
-    const columns = (await db.query(`PRAGMA table_info(vault_card_loads)`)).rows.map((row: any) => String(row.name));
-    const migrations: Array<[string, string]> = [
-      ['funding_method', 'TEXT'], ['provider_name', 'TEXT'], ['provider_account', 'TEXT'],
-      ['source_reference', 'TEXT'], ['provider_reference', 'TEXT'], ['request_reference', 'TEXT'],
-      ['transfer_type', 'TEXT'], ['transfer_network_code', 'TEXT'],
-    ];
-    for (const [name, type] of migrations) {
-      if (!columns.includes(name)) await db.query(`ALTER TABLE vault_card_loads ADD COLUMN ${name} ${type}`);
-    }
+    await ensureVaultCardLoadsTable();
     await db.query(
       `INSERT INTO vault_card_loads
         (id, vault_account_id, currency, amount, card_label, note, status, loaded_at,
          funding_method, provider_name, provider_account, source_reference, provider_reference,
          request_reference, transfer_type, transfer_network_code)
-       VALUES (?, ?, ?, ?, ?, ?, 'LOADED', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         loadId, 'EXTERNAL_PROVIDER', ccy, amt, String(cardId),
         note ? String(note) : `External reference: ${sourceReference}`, now,
@@ -424,11 +473,137 @@ router.post('/card-load/external', async (req, res) => {
         fundingMethod === 'bank-to-card' ? (sourceDetails?.transferNetworkCode ? String(sourceDetails.transferNetworkCode).toUpperCase() : null) : null,
       ],
     );
-    return res.json({ ok: true, status: 'CONFIRMED', loadId, cardId, currency: ccy, amount: amt, providerReference, reserve, provider: responseBody });
+
+    // The custody reserve alone leaves the card unspendable. The provider has
+    // confirmed the funds, so credit the card's real spendable balance too —
+    // otherwise the load reports CONFIRMED while the card still spends $0.
+    // This runs AFTER the vault_card_loads insert so a duplicate sourceReference
+    // fails the unique constraint first and can never double-credit the card.
+    let txn;
+    try {
+      txn = await creditCard(
+        normalizedCardId, ccy, amt, String(fundingMethod).replace(/-/g, '_'),
+        String(providerReference || sourceReference), String(sourceReference),
+        note ? String(note) : `${fundingMethod} load via ${providerName}`,
+      );
+    } catch (creditErr: any) {
+      await db.query(`UPDATE vault_card_loads SET status = 'FAILED' WHERE id = ?`, [loadId]).catch(() => {});
+      throw creditErr;
+    }
+    await db.query(
+      `UPDATE vault_card_loads SET status = 'LOADED', request_reference = ? WHERE id = ?`,
+      [txn.id, loadId],
+    );
+
+    const cardBal = await getCardBalance(normalizedCardId, ccy);
+    return res.json({
+      ok: true, status: 'CONFIRMED', loadId, cardTxnId: txn.id,
+      cardId: normalizedCardId, currency: ccy, amount: amt,
+      cardBalance: cardBal.balance, providerReference, reserve, provider: responseBody,
+    });
   } catch (e: any) {
     return res.status(502).json({ error: e?.message || 'External card load failed' });
   }
 });
+// ── POST /api/vault/card-load/webhook ────────────────────────────────────────
+// Inbound server-to-card load. A funder server that holds a real available
+// balance debits that balance and pushes the confirmation here; we credit the
+// target vault card's spendable balance (vault_card_balances) — the same
+// balance the card spends from.
+//
+// Auth (identical to /api/vault/credit and /api/vault/debit):
+//   x-api-key, x-timestamp (unix ms), x-nonce,
+//   x-signature = HMAC_SHA512(secretKey, `${timestamp}.${nonce}.${JSON.stringify(body)}`)
+//
+// Body: {
+//   sourceServer:    'FRIEND-SRV-01',    // funder server identity
+//   sourceReference: 'SRV-TXN-8891',     // unique transaction id on their side
+//   cardId:          'usd' | 'eur',
+//   currency:        'USD' | 'EUR',
+//   amount:          2500.00,
+//   senderName?, note?
+// }
+//
+// Replays of the same sourceReference never credit twice.
+router.post('/card-load/webhook', verifyVaultApiKey, verifyVaultHmac, vaultRateLimiter, async (req, res) => {
+  try {
+    const { sourceServer, sourceReference, cardId, currency, amount, senderName, note } = req.body || {};
+    const ccy = String(currency || '').toUpperCase().trim();
+    const amt = Number(amount);
+    const normalizedCardId = String(cardId || '').toLowerCase();
+    const cardCurrency = normalizedCardId === 'usd' ? 'USD' : normalizedCardId === 'eur' ? 'EUR' : '';
+    if (!sourceServer || !sourceReference || !cardCurrency || !ccy || ccy !== cardCurrency
+        || !Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({
+        error: 'sourceServer, sourceReference, cardId (usd|eur), matching currency, and a positive amount are required',
+      });
+    }
+
+    const server = String(sourceServer).trim();
+    const ref = String(sourceReference).trim();
+    await ensureVaultCardLoadsTable();
+    await ensureInboundSourceRefIndex();
+
+    const loadId = uuidv4();
+    try {
+      await db.query(
+        `INSERT INTO vault_card_loads
+          (id, vault_account_id, currency, amount, card_label, note, status, loaded_at,
+           funding_method, provider_name, provider_account, source_reference, provider_reference)
+         VALUES (?, 'INBOUND_SERVER', ?, ?, ?, ?, 'PENDING', ?, 'server-to-card', ?, ?, ?, ?)`,
+        [
+          loadId, ccy, amt, normalizedCardId,
+          note ? String(note) : null, new Date().toISOString(),
+          server, senderName ? String(senderName) : null, ref,
+          `INBOUND:${server}:${ref}`,
+        ],
+      );
+    } catch (insertErr: any) {
+      if (!/unique|constraint/i.test(String(insertErr?.message))) throw insertErr;
+      const existing = (await db.query(
+        `SELECT id, status, amount, currency, card_label, request_reference
+           FROM vault_card_loads
+          WHERE vault_account_id = 'INBOUND_SERVER' AND provider_name = ? AND source_reference = ?
+          LIMIT 1`,
+        [server, ref],
+      )).rows[0] as any;
+      if (existing?.status === 'LOADED') {
+        return res.json({
+          ok: true, idempotent: true, status: 'CREDITED', loadId: existing.id,
+          cardId: existing.card_label, currency: existing.currency,
+          amount: Number(existing.amount), cardTxnId: existing.request_reference,
+        });
+      }
+      return res.status(409).json({ error: 'This source reference is already being processed by another request' });
+    }
+
+    let txn;
+    try {
+      txn = await creditCard(
+        normalizedCardId, ccy, amt, 'server_to_card', ref, `INBOUND:${server}:${ref}`,
+        note ? String(note) : `Inbound server load from ${server}`,
+      );
+    } catch (creditErr: any) {
+      await db.query(`UPDATE vault_card_loads SET status = 'FAILED' WHERE id = ?`, [loadId]).catch(() => {});
+      throw creditErr;
+    }
+    await db.query(
+      `UPDATE vault_card_loads SET status = 'LOADED', request_reference = ? WHERE id = ?`,
+      [txn.id, loadId],
+    );
+
+    const bal = await getCardBalance(normalizedCardId, ccy);
+    console.log(`[Vault] ✅ Inbound server-to-card ${ccy} ${amt.toFixed(2)} from ${server} (${ref}) → card ${normalizedCardId} | balance ${bal.balance.toFixed(2)}`);
+    return res.json({
+      ok: true, status: 'CREDITED', loadId, cardTxnId: txn.id,
+      cardId: normalizedCardId, currency: ccy, amount: amt, cardBalance: bal.balance,
+    });
+  } catch (e: any) {
+    console.error('[Vault] inbound card-load webhook failed:', e?.message || e);
+    return res.status(500).json({ error: e?.message || 'Inbound card load failed' });
+  }
+});
+
 // ── GET /api/vault/card-loads ─────────────────────────────────────────────────
 // Returns history of all card loads from the vault.
 router.get('/card-loads', async (_req, res) => {

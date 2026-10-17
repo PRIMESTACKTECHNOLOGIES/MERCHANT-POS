@@ -1,4 +1,4 @@
-﻿// Load .env FIRST — db.ts constructor runs at import time, before server.ts dotenv.config()
+// Load .env FIRST — db.ts constructor runs at import time, before server.ts dotenv.config()
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -47,14 +47,37 @@ let _db: any = null;          // sql.js Database instance
 let _dirty = false;            // true when writes need flushing to disk
 let _flushTimer: any = null;   // debounce timer for disk flush
 let _flushCount = 0;           // count writes between flushes
+let _inTransaction = false;    // true between BEGIN and COMMIT/ROLLBACK
+let _txnStartedAt = 0;         // epoch ms of the open transaction
 
-/** Persist in-memory DB to disk — flush immediately on every write to prevent data loss */
-function schedulePersist() {
+/**
+ * Safety valve: if a caller opens a transaction and never ends it, we still
+ * flush after this long so writes can never be stranded in RAM forever.
+ */
+const TXN_FLUSH_CAP_MS = 15000;
+
+/**
+ * Persist in-memory DB to disk — flush immediately on every write to prevent data loss.
+ *
+ * MUST NOT be called while a transaction is open: sql.js implements export() by
+ * closing and reopening the underlying sqlite connection, which implicitly
+ * ROLLBACKs the open transaction. Any writes made after BEGIN are then silently
+ * discarded, and the later COMMIT fails with "cannot commit - no transaction is
+ * active". Verified against sql.js directly. So writes inside a transaction are
+ * held in RAM and flushed by the COMMIT/ROLLBACK handler.
+ */
+function schedulePersist(force = false) {
   _dirty = true;
   _flushCount++;
 
   // Always flush immediately — never debounce on Render where process can be killed anytime
   if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+
+  if (_inTransaction && !force) {
+    if (Date.now() - _txnStartedAt < TXN_FLUSH_CAP_MS) return;
+    console.warn(`[DB] Transaction open for >${TXN_FLUSH_CAP_MS}ms — forcing flush (atomicity lost).`);
+    _inTransaction = false;
+  }
 
   if (_db) {
     try {
@@ -890,6 +913,115 @@ async function getDb(): Promise<any> {
     ],
   );
 
+  // ── PURGE UNBACKED ("fake") FUNDS ───────────────────────────────────────────
+  // A capture that no real acquirer / card scheme actually confirmed must never
+  // leave a withdrawable balance behind. Older builds credited the merchant (or a
+  // walk-in customer) wallet with source 'pos_card_charge_ledger' — and the
+  // offline path with 'offline_pos_capture' — even though no money was received.
+  // The €10M `onl_mvb67k30` capture was exactly such an entry.
+  //
+  // This block reverses every such credit (never below zero), voids the history
+  // that produced it, deletes the settlement rows it generated, and voids any
+  // vault credit that has no recorded real-funds receipt.
+  try {
+    const UNBACKED = "('pos_card_charge_ledger','offline_pos_capture','offline_sync','internal_ledger_capture')";
+    const VOID_REASON = 'UNBACKED - no real scheme capture (voided: fake-funds purge)';
+
+    _db.run(`CREATE TEMP TABLE IF NOT EXISTS _unbacked_refs (reference TEXT PRIMARY KEY)`);
+    _db.run(`DELETE FROM _unbacked_refs`);
+    try {
+      _db.run(`INSERT OR IGNORE INTO _unbacked_refs (reference)
+               SELECT reference FROM merchant_wallet_transactions
+                WHERE reference IS NOT NULL AND source IN ${UNBACKED}`);
+      _db.run(`INSERT OR IGNORE INTO _unbacked_refs (reference)
+               SELECT reference FROM wallet_transactions
+                WHERE reference IS NOT NULL AND source IN ${UNBACKED}`);
+    } catch (_) {}
+
+    // 1) Void the online history that claimed these unbacked captures.
+    try {
+      _db.run(`UPDATE pos2013_transactions
+                  SET status = 'VOIDED', decline_reason = ?
+                WHERE id IN (SELECT reference FROM _unbacked_refs)`, [VOID_REASON]);
+    } catch (_) {}
+    try {
+      _db.run(`UPDATE ledger_entries SET status = 'VOIDED', updated_at = ?
+                WHERE source IN ${UNBACKED}
+                   OR reference_id IN (SELECT reference FROM _unbacked_refs)`, [NOW_ISO]);
+    } catch (_) {}
+
+    // 2) Remove the settlement rows they produced so they can never be settled.
+    try {
+      _db.run(`DELETE FROM merchant_pos_settlements
+                WHERE COALESCE(status, 'unsettled') <> 'settled'
+                  AND meta LIKE '%"funds_type":"INTERNAL_LEDGER"%'`);
+      _db.run(`DELETE FROM merchant_pos_settlements
+                WHERE COALESCE(status, 'unsettled') <> 'settled'
+                  AND ledger_entry_id IN (SELECT id FROM ledger_entries WHERE status = 'VOIDED')`);
+    } catch (_) {}
+
+    // 3) Record the voids for audit, then reverse the balance they raised.
+    try {
+      _db.run(`INSERT OR IGNORE INTO merchant_wallet_transaction_voids
+                 (id, transaction_id, wallet_id, amount, reason, voided_by, created_at)
+               SELECT 'purge-' || id, id, wallet_id, amount, ?, 'system:fake-funds-purge', ?
+                 FROM merchant_wallet_transactions WHERE source IN ${UNBACKED}`, [VOID_REASON, NOW_ISO]);
+      _db.run(`INSERT OR IGNORE INTO customer_wallet_transaction_voids
+                 (id, transaction_id, wallet_id, amount, reason, voided_by, created_at)
+               SELECT 'purge-' || id, id, wallet_id, amount, ?, 'system:fake-funds-purge', ?
+                 FROM wallet_transactions WHERE source IN ${UNBACKED}`, [VOID_REASON, NOW_ISO]);
+    } catch (_) {}
+    try {
+      _db.run(`UPDATE merchant_wallets
+                  SET balance = MAX(0, balance - COALESCE((
+                        SELECT SUM(t.amount) FROM merchant_wallet_transactions t
+                         WHERE t.wallet_id = merchant_wallets.id
+                           AND t.type = 'credit' AND t.source IN ${UNBACKED}), 0)),
+                      updated_at = ?`, [NOW_ISO]);
+      _db.run(`UPDATE customer_wallets
+                  SET balance = MAX(0, balance - COALESCE((
+                        SELECT SUM(t.amount) FROM wallet_transactions t
+                         WHERE t.wallet_id = customer_wallets.id
+                           AND t.type = 'credit' AND t.source IN ${UNBACKED}), 0)),
+                      updated_at = ?`, [NOW_ISO]);
+      _db.run(`DELETE FROM merchant_wallet_transactions WHERE source IN ${UNBACKED}`);
+      _db.run(`DELETE FROM wallet_transactions WHERE source IN ${UNBACKED}`);
+    } catch (_) {}
+
+    // 4) Vault: void credits with no real-funds backing, then decrement the
+    //    affected vault accounts by exactly what was voided.
+    try {
+      const hasRealFunds = (_db.exec(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='vault_real_funds'`,
+      )[0]?.values?.length || 0) > 0;
+      const voucher = hasRealFunds
+        ? `(type = 'BATCH_TO_VAULT' AND reference NOT IN (SELECT external_reference FROM vault_real_funds))
+           OR (type = 'ADJUSTMENT'
+               AND COALESCE(meta, '') IN ('', '{}')
+               AND reference NOT LIKE 'ROLLBACK-%' AND reference NOT LIKE 'rollback_%'
+               AND reference NOT IN (SELECT external_reference FROM vault_real_funds))`
+        : `(type = 'BATCH_TO_VAULT' AND COALESCE(meta, '') NOT LIKE '%pos_settlement%')`;
+      _db.run(`CREATE TEMP TABLE IF NOT EXISTS _voided_vault (currency TEXT PRIMARY KEY, total REAL)`);
+      _db.run(`DELETE FROM _voided_vault`);
+      _db.run(`INSERT INTO _voided_vault (currency, total)
+               SELECT currency, SUM(ABS(amount)) FROM vault_ledger
+                WHERE status = 'COMPLETED' AND (${voucher}) GROUP BY currency`);
+      _db.run(`UPDATE vault_ledger SET status = 'VOIDED'
+                WHERE status = 'COMPLETED' AND (${voucher})`);
+      _db.run(`UPDATE vault_accounts
+                  SET balance = MAX(0, balance - COALESCE((SELECT v.total FROM _voided_vault v WHERE v.currency = vault_accounts.currency), 0)),
+                      available_balance = MAX(0, available_balance - COALESCE((SELECT v.total FROM _voided_vault v WHERE v.currency = vault_accounts.currency), 0)),
+                      updated_at = ?`, [NOW_ISO]);
+      _db.run(`DROP TABLE IF EXISTS _voided_vault`);
+    } catch (err) {
+      console.warn('[DB] vault unbacked-funds purge skipped:', (err as Error)?.message);
+    }
+
+    _db.run(`DROP TABLE IF EXISTS _unbacked_refs`);
+  } catch (err) {
+    console.warn('[DB] unbacked-funds purge skipped:', (err as Error)?.message);
+  }
+
   const guarantees: Array<[string, string]> = [
     ['vault_payouts',             'idempotency_key TEXT'],
     ['vault_payouts',             'bank_account TEXT'],
@@ -954,6 +1086,15 @@ async function getDb(): Promise<any> {
     ['merchant_crypto_withdrawals', 'fee REAL DEFAULT 0'],
     ['merchant_crypto_withdrawals', 'provider TEXT'],
     ['merchant_crypto_withdrawals', 'provider_reference TEXT'],
+    // vault_card_txns: POSTED | VOIDED — lets an unbacked card credit be voided
+    // without deleting the audit row it left behind.
+    ['vault_card_txns',             "status TEXT NOT NULL DEFAULT 'POSTED'"],
+    // vault_wire_confirmations: DEFAULT 'CONFIRMED' is deliberate. Wires that
+    // predate the two-phase wire flow were credited under the old one-shot
+    // behaviour, so they must NOT surface as confirmable pending wires.
+    ['vault_wire_confirmations',    "status TEXT NOT NULL DEFAULT 'CONFIRMED'"],
+    ['vault_wire_confirmations',    'confirmed_by TEXT'],
+    ['vault_wire_confirmations',    'created_at TEXT'],
   ];
 
   for (const [table, def] of guarantees) {
@@ -966,6 +1107,59 @@ async function getDb(): Promise<any> {
       if (columnExists(pragmaRows, colName)) continue;
       _db.run(`ALTER TABLE "${table}" ADD COLUMN ${def}`);
     } catch (_) { /* table missing or column exists — skip */ }
+  }
+
+  // ── PURGE UNBACKED VAULT CARD CREDITS (runs once) ──────────────────────────
+  // The cash / bank-wire / test-seed card top-up channels credited the card
+  // balance from an operator code plus a free-text reference. Nothing verified
+  // that any money actually arrived, so those credits were minted, not received.
+  // Three such credits put $300,000 on the USD card with no external receipt.
+  //
+  // Void them, zero the affected cards, and record a marker so this never runs
+  // again — later operator-confirmed loads must survive a restart.
+  try {
+    _db.run(`CREATE TABLE IF NOT EXISTS db_maintenance (
+      key TEXT PRIMARY KEY, applied_at TEXT NOT NULL
+    )`);
+    const alreadyApplied = (_db.exec(
+      `SELECT key FROM db_maintenance WHERE key = 'purge_unbacked_card_credits_v1'`,
+    )[0]?.values?.length || 0) > 0;
+
+    const hasCardTables = (_db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='vault_card_txns'`,
+    )[0]?.values?.length || 0) > 0;
+
+    // Tables are created by ensureOperatorCards() after initTables(), so on a
+    // fresh DB they are absent here — leave the marker unset and retry next boot.
+    if (!alreadyApplied && hasCardTables) {
+      const UNVERIFIED_CARD_CHANNELS = "('cash','bank_wire','test_seed')";
+      const CARD_VOID_REASON = 'UNBACKED - no verified external receipt (voided: fake-funds purge)';
+      _db.run(`CREATE TEMP TABLE IF NOT EXISTS _voided_card (card_id TEXT, currency TEXT, total REAL)`);
+      _db.run(`DELETE FROM _voided_card`);
+      _db.run(`INSERT INTO _voided_card (card_id, currency, total)
+               SELECT card_id, currency, SUM(amount) FROM vault_card_txns
+                WHERE type = 'CREDIT' AND status = 'POSTED' AND channel IN ${UNVERIFIED_CARD_CHANNELS}
+                GROUP BY card_id, currency`);
+      _db.run(`UPDATE vault_card_txns
+                  SET note = COALESCE(note || ' | ', '') || ?
+                WHERE type = 'CREDIT' AND status = 'POSTED' AND channel IN ${UNVERIFIED_CARD_CHANNELS}`,
+        [CARD_VOID_REASON]);
+      _db.run(`UPDATE vault_card_txns SET status = 'VOIDED'
+                WHERE type = 'CREDIT' AND channel IN ${UNVERIFIED_CARD_CHANNELS}`);
+      _db.run(`UPDATE vault_card_balances
+                  SET balance = MAX(0, balance - COALESCE((
+                        SELECT v.total FROM _voided_card v
+                         WHERE v.card_id = vault_card_balances.card_id
+                           AND v.currency = vault_card_balances.currency), 0)),
+                      updated_at = ?`, [NOW_ISO]);
+      _db.run(`DROP TABLE IF EXISTS _voided_card`);
+      _db.run(`INSERT OR IGNORE INTO db_maintenance (key, applied_at)
+               VALUES ('purge_unbacked_card_credits_v1', ?)`, [NOW_ISO]);
+      const voided = _db.exec(`SELECT COUNT(*) FROM vault_card_txns WHERE status = 'VOIDED'`);
+      console.warn(`[DB] vault card fake-funds purge: voided ${voided[0]?.values?.[0]?.[0] ?? 0} unbacked card credit(s).`);
+    }
+  } catch (err) {
+    console.warn('[DB] vault card unbacked-credit purge skipped:', (err as Error)?.message);
   }
 
   const walletCardGuarantees: Array<[string, string]> = [
@@ -1085,18 +1279,35 @@ class DbAdapter {
         return { rows, rowCount: rows.length };
       } else {
         // Write statement — use run()
-        db.run(sqliteText, params);
-        schedulePersist();
+        const upper = sqliteText.trim().toUpperCase();
+        const isBegin = /^BEGIN\b/.test(upper) || /^START\s+TRANSACTION\b/.test(upper);
+        const isEnd   = /^COMMIT\b/.test(upper) || /^END\b/.test(upper) || /^ROLLBACK\b/.test(upper);
 
-        // For INSERT/UPDATE/DELETE return affected rows
-        // sql.js doesn't expose changes() directly but we can query it
         let changes = 0;
         try {
-          const res = db.exec('SELECT changes()');
-          if (res.length > 0 && res[0].values.length > 0) {
-            changes = Number(res[0].values[0][0]) || 0;
-          }
-        } catch (_) {}
+          db.run(sqliteText, params);
+
+          // IMPORTANT: read changes() BEFORE schedulePersist().
+          // schedulePersist() calls db.export(), and sql.js implements export() by
+          // closing and reopening the underlying sqlite connection — which resets the
+          // per-connection changes() counter back to 0. Reading it afterwards would
+          // always return 0 and make every caller's rowCount falsy (breaks guards
+          // like `UPDATE ... WHERE status='PENDING'` → check rowCount).
+          try {
+            const res = db.exec('SELECT changes()');
+            if (res.length > 0 && res[0].values.length > 0) {
+              changes = Number(res[0].values[0][0]) || 0;
+            }
+          } catch (_) {}
+        } finally {
+          // Track transaction state so schedulePersist() can defer the disk flush
+          // until COMMIT/ROLLBACK (see schedulePersist for why this is required).
+          if (isBegin) { _inTransaction = true; _txnStartedAt = Date.now(); }
+          if (isEnd)   { _inTransaction = false; }
+          // A closed transaction must be flushed immediately; it is the only write
+          // that actually makes the deferred statements durable.
+          schedulePersist(isEnd);
+        }
 
         return { rows: [], rowCount: changes };
       }

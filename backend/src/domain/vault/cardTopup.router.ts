@@ -24,6 +24,8 @@ import { Router, type Request, type Response } from 'express';
 import { authenticateToken } from '../../middleware/auth.middleware';
 import {
   topupViaBankWire,
+  confirmBankWireTopup,
+  listPendingBankWires,
   topupViaWise,
   topupViaCrypto,
   topupViaTransak,
@@ -139,6 +141,43 @@ router.post('/bank-wire', async (req: Request, res: Response) => {
     });
 
     return res.status(result.ok ? 200 : 400).json(result);
+  } catch (err: any) {
+    return handleErr(res, err);
+  }
+});
+
+/**
+ * POST /api/vault/cardtopup/bank-wire/confirm
+ * Phase 2: an operator confirms the wire actually landed in the vault bank
+ * account. Only this call credits the card.
+ * Requires authentication + the vault operator code.
+ * Body: { wireReference, operatorCode }
+ */
+router.post('/bank-wire/confirm', async (req: Request, res: Response) => {
+  try {
+    const { wireReference, operatorCode } = req.body || {};
+    if (!wireReference || !operatorCode) {
+      return res.status(400).json({ ok: false, error: 'wireReference and operatorCode are required' });
+    }
+    const result = await confirmBankWireTopup({
+      wireReference: String(wireReference),
+      operatorCode: String(operatorCode),
+      confirmedBy: (req as any).user?.username ? String((req as any).user.username) : undefined,
+    });
+    return res.status(result.ok ? 200 : 400).json(result);
+  } catch (err: any) {
+    return handleErr(res, err);
+  }
+});
+
+/**
+ * GET /api/vault/cardtopup/bank-wire/pending
+ * Wires awaiting operator confirmation. Nothing here has been credited yet.
+ */
+router.get('/bank-wire/pending', async (_req: Request, res: Response) => {
+  try {
+    const wires = await listPendingBankWires();
+    return res.json({ ok: true, count: wires.length, wires });
   } catch (err: any) {
     return handleErr(res, err);
   }

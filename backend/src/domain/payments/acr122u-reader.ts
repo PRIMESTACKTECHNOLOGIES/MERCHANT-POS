@@ -52,7 +52,12 @@ export class ACR122UReaderService {
   // (module not built yet, smart-card service restarting), so a failed scan must
   // never latch the reader off permanently — every status poll retries, and the
   // watchdog rebuilds a scanner that went stale.
-  private static readonly INIT_RETRY_COOLDOWN_MS = 2000;
+  private static readonly INIT_RETRY_COOLDOWN_MS = 3000;
+  // Rebuilding tears down the whole PC/SC context (which stops hot-plug
+  // notifications for a moment), so it is throttled much harder than a plain
+  // module retry — otherwise the 3s status poll would destroy the context
+  // before it could enumerate a reader that was just plugged in.
+  private static readonly SCANNER_REBUILD_COOLDOWN_MS = 15000;
   private static readonly READER_ENUMERATION_WAIT_MS = 1500;
   private static readonly WATCHDOG_INTERVAL_MS = 4000;
   private static readonly SCANNER_STALE_MS = 30000;
@@ -82,20 +87,31 @@ export class ACR122UReaderService {
    */
   async connect(): Promise<void> {
     // A live scanner already receives PC/SC hot-plug notifications, so nothing
-    // needs rebuilding — unless it went stale (no reader seen for a long time),
-    // which usually means the PC/SC context died when the USB device was removed.
-    if (this.nfc && !this.scannerFailed) {
-      const stale = !this.reader &&
-        Date.now() - this.lastScannerHealthyAt > ACR122UReaderService.SCANNER_STALE_MS;
-      if (!stale) return;
-      console.warn('[ACR122U] No reader for a while — rebuilding the PC/SC scanner.');
+    // needs rebuilding — unless it reported an error or went stale (no reader
+    // seen for a long time), which usually means the PC/SC context died when the
+    // USB device was removed.
+    const mustRebuild = Boolean(this.nfc) && (this.scannerFailed || (
+      !this.reader &&
+      Date.now() - this.lastScannerHealthyAt > ACR122UReaderService.SCANNER_STALE_MS
+    ));
+
+    if (this.nfc && !mustRebuild) {
+      return;
+    }
+
+    if (mustRebuild) {
+      console.warn('[ACR122U] Rebuilding the PC/SC scanner — hot-plug detection resumes after this.');
     }
 
     if (this.initializing) {
       return this.initializing;
     }
 
-    if (Date.now() - this.lastInitAttempt < ACR122UReaderService.INIT_RETRY_COOLDOWN_MS) {
+    const cooldown = mustRebuild
+      ? ACR122UReaderService.SCANNER_REBUILD_COOLDOWN_MS
+      : ACR122UReaderService.INIT_RETRY_COOLDOWN_MS;
+
+    if (Date.now() - this.lastInitAttempt < cooldown) {
       return;
     }
     this.lastInitAttempt = Date.now();
@@ -104,7 +120,8 @@ export class ACR122UReaderService {
       .catch((error: any) => {
         const message = error?.message || String(error);
         this.scannerFailed = true;
-        this.enabled = false;
+        // `enabled` deliberately stays true: the host is not administratively
+        // disabled, the scanner is simply retried until PC/SC becomes available.
         // Retries are frequent, so only log when the failure actually changes.
         if (message !== this.lastInitError) {
           console.warn('[ACR122U] NFC initialization failed (will retry): ' + message);
@@ -143,6 +160,10 @@ export class ACR122UReaderService {
     nfc.on('error', (err: any) => {
       this.lastInitError = err?.message || String(err);
       this.scannerFailed = true;
+      // A context-level PC/SC error invalidates any reader handle we were
+      // holding, so report the reader as gone until the scanner is rebuilt.
+      this.reader = null;
+      this.readerName = null;
       console.warn('[ACR122U] NFC scanner error:', this.lastInitError);
     });
 
@@ -229,11 +250,17 @@ export class ACR122UReaderService {
       await this.waitForReader(ACR122UReaderService.READER_ENUMERATION_WAIT_MS);
     }
 
+    const scannerReady = Boolean(this.nfc) && !this.scannerFailed;
+
     return {
-      enabled: this.enabled,
+      // `enabled` answers "can this host process a tap?". A healthy scanner with
+      // no reader still counts as enabled (the POS header shows "plug in reader"
+      // instead of a hard "disabled"), and a detected reader keeps NFC enabled
+      // even while the scanner is being rebuilt.
+      enabled: this.enabled && (scannerReady || Boolean(this.reader)),
       connected: Boolean(this.reader),
       readerName: this.readerName,
-      scannerReady: Boolean(this.nfc) && !this.scannerFailed,
+      scannerReady,
       error: this.lastInitError,
     };
   }
@@ -720,15 +747,10 @@ export class ACR122UReaderService {
   }
 
   async readCard(amountMinor = 0, currency = 'USD'): Promise<ACR122UCardData | null> {
-    // A previously failed scan must not block a fresh attempt — the reader may
-    // have been plugged in or out since the last read.
-    await this.connect();
-
-    if (!this.enabled) {
-      return null;
-    }
-
     try {
+      // ensureReader() re-enumerates a failed/absent scanner and throws a clear
+      // message when none is found, so a tap always gets a fresh attempt — a
+      // previously failed status poll must never block a card capture.
       const reader = await this.ensureReader();
 
       if (this.latestCard) {

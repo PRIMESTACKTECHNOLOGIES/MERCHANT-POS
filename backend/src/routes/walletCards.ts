@@ -10,7 +10,7 @@ import {
   buildAuthorizationRequest,
   buildAuthorizationResponse,
   buildField55,
-  generateDemoArqc,
+  generateIssuerArqc,
   parseField55,
   validateArqc,
 } from "../services/emv/issuerEmv";
@@ -82,7 +82,7 @@ walletCardsRouter.post("/emv/field55", async (req: Request, res: Response) => {
       aid: body.aid || "A0000000031010",
       appVersion: body.appVersion || "0101",
       sequenceCounter: body.sequenceCounter || "00000123",
-      arqc: body.arqc || generateDemoArqc({
+      arqc: body.arqc || generateIssuerArqc({
         ...body,
         pan: body.pan || "4111111111111111",
         amountMinor: Number(body.amountMinor || 1000),
@@ -115,7 +115,7 @@ walletCardsRouter.post("/emv/authorize", async (req: Request, res: Response) => 
     const terminalId = String(body.terminalId || "TID00001");
     const merchantId = String(body.merchantId || "MID000123");
     const unpredictable = String(body.unpredictableNumber || "AABBCCDD");
-    const arqc = String(body.arqc || generateDemoArqc({ pan, amountMinor, currency, atc, unpredictableNumber: unpredictable, terminalId, merchantId }));
+    const arqc = String(body.arqc || generateIssuerArqc({ pan, amountMinor, currency, atc, unpredictableNumber: unpredictable, terminalId, merchantId }));
 
     const authRequest = buildAuthorizationRequest({
       pan,

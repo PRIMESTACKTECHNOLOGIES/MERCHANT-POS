@@ -39,6 +39,51 @@ function ledgerType(value: unknown, fallback: VaultLedgerType): VaultLedgerType 
   return candidate as VaultLedgerType;
 }
 
+/**
+ * ── LOCKED TO REAL RAILS ────────────────────────────────────────────────────
+ * Every route that raises `vault_accounts.balance` must be backed by money that
+ * actually arrived. A credit is only accepted when it is backed by EITHER:
+ *
+ *   (a) a recorded real-funds receipt in `vault_real_funds` (the row the signed
+ *       bank/settlement rail writes), or
+ *   (b) a compensating reversal of a debit that was really taken before
+ *       (meta.originalDebit points at a COMPLETED ledger entry).
+ *
+ * Anything else is an unbacked mint and is rejected. This is what prevents an
+ * authenticated caller (or a self-referencing acquirer) from creating
+ * withdrawable balance out of thin air.
+ */
+async function assertCreditIsBacked(input: {
+  reference: string;
+  currency: string;
+  meta?: any;
+}) {
+  const reference = String(input.reference || '').trim();
+  const currency = String(input.currency || '').toUpperCase();
+  if (!reference) {
+    throw Object.assign(new Error('Vault credit blocked: a reference is required'), { code: 'UNBACKED_CREDIT_BLOCKED' });
+  }
+  const realFunds = await db.query(
+    `SELECT id FROM vault_real_funds WHERE external_reference = ? LIMIT 1`,
+    [reference],
+  );
+  if (realFunds.rows?.length) return;
+  const originalDebit = input.meta?.originalDebit || input.meta?.original_debit;
+  if (originalDebit) {
+    const prior = await db.query(
+      `SELECT id FROM vault_ledger WHERE reference = ? AND status = 'COMPLETED' LIMIT 1`,
+      [String(originalDebit)],
+    );
+    if (prior.rows?.length) return;
+  }
+  throw Object.assign(
+    new Error(
+      'Vault credit blocked: no real funds received for reference ' + reference + ' (' + currency + '). Unbacked vault minting is disabled — vault balance may only increase via a confirmed settlement/bank receipt.',
+    ),
+    { code: 'UNBACKED_CREDIT_BLOCKED' },
+  );
+}
+
 router.get('/balance', async (req, res) => {
   try {
     const currency = String(req.query.currency || 'USD').toUpperCase();
@@ -175,6 +220,13 @@ router.post('/settlement', async (req, res) => {
         created.push(existing.rows[0]);
         continue;
       }
+      // Real-rails lock: a settlement batch entry may only raise vault balance
+      // when the funds were actually received (recorded in vault_real_funds).
+      await assertCreditIsBacked({
+        reference,
+        currency,
+        meta: entry?.meta,
+      });
       created.push(await vaultEngine.creditVault({
         amount, currency, reference,
         merchantId: entry?.merchantId || entry?.merchant_id || null,
@@ -207,17 +259,21 @@ router.post('/debit', async (req, res) => {
 
 router.post('/credit', async (req, res) => {
   try {
+    const currency = String(req.body?.currency || '').toUpperCase();
+    const reference = String(req.body?.reference || '');
+    // Real-rails lock: no credit may raise vault balance without backing funds.
+    await assertCreditIsBacked({ reference, currency, meta: req.body?.meta });
     const entry = await vaultEngine.creditVault({
       amount: Number(req.body?.amount),
-      currency: String(req.body?.currency || '').toUpperCase(),
-      reference: String(req.body?.reference || ''),
+      currency,
+      reference,
       merchantId: req.body?.merchantId,
       type: ledgerType(req.body?.type, 'ADJUSTMENT'),
       meta: req.body?.meta || {},
     });
     return res.status(201).json({ success: true, entry });
   } catch (error: any) {
-    return fail(res, 400, error?.message || 'Vault credit failed');
+    return fail(res, error?.code === 'UNBACKED_CREDIT_BLOCKED' ? 403 : 400, error?.message || 'Vault credit failed');
   }
 });
 

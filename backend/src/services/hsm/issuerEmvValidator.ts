@@ -5,6 +5,7 @@
 
 import { parseEmvField55 } from './emvField55Parser';
 import { HsmClient } from './hsmClient';
+import { cdol1FromField55 } from '../../issuer/emvCdol';
 
 export class IssuerEmvValidator {
   constructor(private readonly hsm: HsmClient) {}
@@ -23,6 +24,13 @@ export class IssuerEmvValidator {
     if (!emv.iad)  throw new Error('EMV_MISSING_TAGS: 9F10 IAD required');
     if (!emv.tvr)  throw new Error('EMV_MISSING_TAGS: 95 TVR required');
 
+    // The HSM has to MAC the same bytes the card signed, so rebuild CDOL1 from
+    // the presented Field 55 rather than letting each provider guess it.
+    const { cdol1Hex, missing } = cdol1FromField55(emv);
+    if (missing.length) {
+      throw new Error(`EMV_MISSING_TAGS: ${missing.join(',')} required for CDOL1`);
+    }
+
     const atcBuf = emv.atc || Buffer.from([0x00, 0x01]);
     const atc    = (atcBuf[0] << 8) | atcBuf[1];
     const un     = emv.unpredictableNumber || Buffer.from('00000000', 'hex');
@@ -36,6 +44,7 @@ export class IssuerEmvValidator {
       unpredictableNumber: un,
       arqc:                emv.arqc,
       iad:                 emv.iad,
+      cdol1Hex,
     });
 
     if (!res.valid) {

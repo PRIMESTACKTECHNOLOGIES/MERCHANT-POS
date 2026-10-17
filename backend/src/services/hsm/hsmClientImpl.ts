@@ -1,33 +1,43 @@
 /**
- * Dummy HSM Client — replace internals with your vendor's SDK.
+ * HSM adapters.
+ *
+ * `SoftwareHsmClient` performs the real EMV key schedule in process
+ * (IMK → UDK → session key → ISO 9797-1 Alg 3 retail MAC) via
+ * issuer/issuerCrypto.ts. It is the default provider so that no deployment can
+ * silently accept a forged cryptogram, and it fails closed when the issuer
+ * master key is absent or the CDOL1 data is not supplied.
+ *
+ * Production deployments should still move the key into hardware:
  * Thales: use payShield 9000/10000 command set
  * Utimaco: use CryptoServer SDK
- * Atalla: use AT900 command set
  */
 
 import { HsmClient, ArqcValidationRequest, ArqcValidationResponse } from './hsmClient';
-import crypto from 'crypto';
+import { SoftwareEmvIssuerCrypto } from '../../issuer/issuerCrypto';
 
-export class DummyHsmClient implements HsmClient {
+export class SoftwareHsmClient implements HsmClient {
   async validateArqc(req: ArqcValidationRequest): Promise<ArqcValidationResponse> {
-    // Software ARQC validation using HMAC-SHA256 as a stand-in for real HSM
-    // In production: send req to HSM over TCP/IP or PKCS#11 and receive ARC
-    const key    = Buffer.from(process.env.ISSUER_SECRET_KEY || 'PRIMESTACK-ISSUER-KEY-9f3a2b1c8d4e5f6a', 'utf8');
-    const data   = Buffer.concat([
-      Buffer.from(req.pan),
-      Buffer.from(req.expiry),
-      req.arqc,
-      Buffer.from(req.atc.toString(16).padStart(4, '0'), 'hex'),
-      req.unpredictableNumber,
-    ]);
-    const expected = crypto.createHmac('sha256', key).update(data).digest().slice(0, 8);
-    // Accept if ARQC is non-zero (real HSM would do full 3DES/AES derivation)
-    const valid  = req.arqc.length === 8 && req.arqc.some(b => b !== 0);
-    return {
-      valid,
-      arc:     valid ? '00' : '05',
-      scripts: [],
-    };
+    // Fail closed: an 8-byte ARQC is only meaningful if it can be recomputed
+    // from the card's UDK over the exact bytes the card MAC'd. Anything else
+    // would be "accept whatever the terminal says".
+    if (!process.env.EMV_ISSUER_MASTER_KEY_HEX) {
+      return { valid: false, arc: '05', scripts: [] };
+    }
+    if (req.arqc.length !== 8 || !req.cdol1Hex) {
+      return { valid: false, arc: '05', scripts: [] };
+    }
+    const atcHex = Number(req.atc).toString(16).padStart(4, '0').toUpperCase();
+    try {
+      SoftwareEmvIssuerCrypto.fromEnvironment().validate({
+        pan: req.pan,
+        atc: atcHex,
+        cdol1Hex: req.cdol1Hex,
+        arqc: req.arqc.toString('hex').toUpperCase(),
+      });
+    } catch {
+      return { valid: false, arc: '05', scripts: [] };
+    }
+    return { valid: true, arc: '00', scripts: [] };
   }
 }
 
@@ -46,10 +56,10 @@ export class UtimacoHsmClient implements HsmClient {
 }
 
 export function getHsmClient(): HsmClient {
-  const vendor = (process.env.HSM_VENDOR || 'dummy').toLowerCase();
+  const vendor = (process.env.HSM_VENDOR || 'software').toLowerCase();
   switch (vendor) {
     case 'thales':   return new ThalesHsmClient();
     case 'utimaco':  return new UtimacoHsmClient();
-    default:         return new DummyHsmClient();
+    default:         return new SoftwareHsmClient();
   }
 }

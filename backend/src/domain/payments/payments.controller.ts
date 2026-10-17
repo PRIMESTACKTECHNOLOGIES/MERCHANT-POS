@@ -41,7 +41,10 @@ export class PaymentsController {
       const explicitProtocol = String(protocol || '').trim().toUpperCase();
       const rawMode = String(entryMode || '').toUpperCase();
       const isProtocol101_1 = explicitProtocol === '101.1' || rawMode === 'VOICE_AUTH' || rawMode === '101.1';
-      const isProtocol101_6 = explicitProtocol === '101.6' || rawMode === '101.6' || rawMode === 'EMV' || rawMode === 'CHIP';
+      // Contactless/NFC taps are card-present EMV (the reader supplies the ARQC),
+      // so they share the 101.6 EMV profile rather than falling back to NORMAL.
+      const isProtocol101_6 = explicitProtocol === '101.6' || rawMode === '101.6' || rawMode === 'EMV'
+        || rawMode === 'CHIP' || rawMode === 'NFC' || rawMode === 'CONTACTLESS' || rawMode === 'CHIP_NFC';
       const isProtocol201_3 = explicitProtocol === '201.3' || rawMode === '201.3' || rawMode === 'MOTO';
       const effectiveProtocolStr = isProtocol101_1 ? '101.1' : isProtocol101_6 ? '101.6' : isProtocol201_3 ? '201.3' : 'NORMAL';
       const effectiveAuthCode = authCode ? String(authCode).trim() : '';

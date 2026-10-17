@@ -429,6 +429,15 @@ function getPanKey(): Buffer {
   return hash.slice(0, 32);
 }
 
+/**
+ * AAD is bound to the key id only. It must be reproducible at decryption time —
+ * AAD containing a timestamp (as an earlier revision had) can never be rebuilt,
+ * so GCM authentication always failed and every stored PAN was unreadable.
+ */
+function panAad(keyId: string): Buffer {
+  return Buffer.from(`kid=${keyId}`);
+}
+
 export function encryptPan(plainPan: string, keyId: string = PAN_ENCRYPTION_KEY_ID): {
   encrypted: string;
   kid: string;
@@ -436,8 +445,7 @@ export function encryptPan(plainPan: string, keyId: string = PAN_ENCRYPTION_KEY_
   const key = getPanKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const aad = Buffer.from(`kid=${keyId};ts=${Date.now()}`);
-  cipher.setAAD(aad);
+  cipher.setAAD(panAad(keyId));
   const enc = Buffer.concat([
     cipher.update(Buffer.from(plainPan, "utf8")),
     cipher.final(),
@@ -460,10 +468,7 @@ export function decryptPan(encryptedBlob: string): string {
   const key = getPanKey();
   try {
     const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    const aad = Buffer.from(`kid=${kidPart}`);
-    try {
-      decipher.setAAD(aad);
-    } catch (_) { /* older blobs may not support exact AAD; continue with best-effort */ }
+    decipher.setAAD(panAad(kidPart));
     decipher.setAuthTag(tag);
     const plain = Buffer.concat([decipher.update(enc), decipher.final()]);
     return plain.toString("utf8");
@@ -471,6 +476,36 @@ export function decryptPan(encryptedBlob: string): string {
     console.error('[virtualCard] decryptPan failed (key mismatch or corrupt blob):', err.message);
     return '****-****-****-0000';
   }
+}
+
+/**
+ * Keyed, deterministic PAN fingerprint.
+ *
+ * Storing the PAN in the clear is what PCI-DSS forbids, but uniqueness checks
+ * and issuer lookups still need to find a card from its PAN. An HMAC over the
+ * PAN gives both: the value is stable for a given PAN, cannot be reversed, and
+ * cannot be brute-forced without the key.
+ */
+export function hashPan(pan: string): string {
+  const clean = String(pan || "").replace(/\D/g, "");
+  if (clean.length < 13 || clean.length > 19) throw new Error("PAN_LENGTH_INVALID");
+  const key = crypto.createHash("sha256").update(`pan-fingerprint:${PAN_ENCRYPTION_SECRET}`).digest();
+  return crypto.createHmac("sha256", key).update(clean, "utf8").digest("hex");
+}
+
+/**
+ * Recompute the card's CVV from the PAN and expiry year.
+ *
+ * The CVV is sensitive authentication data: PCI-DSS forbids storing it after
+ * authorisation, in any form. Because `generateCVV` derives it deterministically
+ * from PAN + expiry, verification recomputes the expected value instead of
+ * comparing against a stored copy, so nothing has to be persisted.
+ */
+export function verifyCvv(pan: string, expiryYY: string, candidate: string): boolean {
+  const expected = generateCVV(String(pan).replace(/\D/g, ""), String(expiryYY).padStart(2, "0"));
+  const supplied = String(candidate || "").trim();
+  if (supplied.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(supplied));
 }
 
 export function detectSchemeFromPan(pan: string): CardScheme | null {

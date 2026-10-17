@@ -20,8 +20,10 @@ import androidx.lifecycle.lifecycleScope
 import com.pos2013.offline.PosApplication
 import com.pos2013.offline.card.AndroidBuiltInNfcReaderManager
 import com.pos2013.offline.data.api.*
+import com.pos2013.offline.data.model.EmvCardData
 import com.pos2013.offline.data.model.TransactionEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,7 +33,7 @@ import java.util.UUID
  * LIVE PAYMENT TERMINAL
  * ─────────────────────────────────────────────────────────────────────────
  * Full POS terminal with:
- *  • NFC card tap (auto-fills PAN + expiry)
+ *  • NFC tap = instant capture (real PAN + Field 55 / ARQC, no CVV)
  *  • Protocol selector: Normal / 101.1 / 101.6 / 201.3
  *  • Real charge via POST /merchant/v1/payments/charge
  *  • Offline queue → syncs to dashboard
@@ -59,6 +61,13 @@ class LivePaymentActivity : AppCompatActivity() {
     private var jwtToken     = ""
     private var nfcCardPan   = ""
     private var nfcCardExp   = ""
+    private var nfcFullCard: EmvCardData? = null   // full tap payload (PAN + Field 55)
+    private var lastProcessedTapId = 0L            // de-dupes repeated StateFlow emissions
+    private var autoCapturing = false
+    private var nfcStatusJob: Job? = null
+    private var nfcCardJob:   Job? = null
+    private var pingJob:      Job? = null
+    private var approvalJob:  Runnable? = null
 
     // ── Views ─────────────────────────────────────────────────────────────────
     private lateinit var tvAmount:  TextView
@@ -88,7 +97,21 @@ class LivePaymentActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (nfcMgr.isAvailable()) nfcMgr.enableReaderMode()
+        syncTapContext()
+        // Always call — the manager reports "no hardware" / "NFC is turned OFF" instead of
+        // silently doing nothing when the radio is unavailable.
+        nfcMgr.enableReaderMode()
+    }
+
+    /**
+     * Keeps the EMV kernel supplied with the live amount/currency. Must be refreshed whenever
+     * the amount changes — the cryptogram (Field 55) is bound to the amount it was generated for.
+     */
+    private fun syncTapContext() {
+        val amountMinor = ((amountBuf.toString().toDoubleOrNull() ?: 0.0) * 100).toLong()
+        nfcMgr.setTapContext(amountMinor, selCcy)
+        // A previously captured tap no longer matches this amount — drop it.
+        nfcFullCard = null
     }
 
     override fun attachBaseContext(newBase: Context) {
@@ -97,7 +120,7 @@ class LivePaymentActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (nfcMgr.isAvailable()) nfcMgr.disableReaderMode()
+        nfcMgr.disableReaderMode()
     }
 
     override fun onNewIntent(intent: android.content.Intent?) {
@@ -109,23 +132,83 @@ class LivePaymentActivity : AppCompatActivity() {
     // OBSERVE NFC
     // ─────────────────────────────────────────────────────────────────────────
     private fun observeNfc() {
-        lifecycleScope.launch {
+        // Re-registered after every screen rebuild — cancel the previous collectors so a tap
+        // can never be captured twice.
+        nfcStatusJob?.cancel()
+        nfcCardJob?.cancel()
+
+        nfcStatusJob = lifecycleScope.launch {
             nfcMgr.readerStatus.collectLatest { status ->
                 tvNfc.text = "📡  $status"
             }
         }
-        lifecycleScope.launch {
+        nfcCardJob = lifecycleScope.launch {
             nfcMgr.cardData.collectLatest { card ->
                 card ?: return@collectLatest
+                if (card.tapId != 0L && card.tapId == lastProcessedTapId) return@collectLatest
+                lastProcessedTapId = card.tapId
+
                 val rawPan = card.pan.replace(Regex("\\s"), "")
-                if (rawPan.length >= 4) {
-                    nfcCardPan = rawPan
-                    nfcCardExp = card.expiryDate.ifBlank { "" }
-                    val masked = "****${rawPan.takeLast(4)}"
-                    tvNfc.text = "✅  Card read: $masked  Exp: ${nfcCardExp.ifBlank { "?" }}"
-                    tvNfc.setTextColor(Color.parseColor("#4ADE80"))
-                    toast("Card detected — tap PAY NOW to charge")
-                }
+                if (rawPan.length < 12) return@collectLatest
+
+                nfcCardPan = rawPan
+                nfcCardExp = card.expiryDate.ifBlank { "" }
+                nfcFullCard = card
+                tvNfc.text = "✅  Card read: ****${rawPan.takeLast(4)}"
+                tvNfc.setTextColor(Color.parseColor("#4ADE80"))
+
+                onAutoCapture(card)
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // AUTO-CAPTURE ON TAP
+    // ─────────────────────────────────────────────────────────────────────────
+    /**
+     * Tap = immediate charge. Uses the real PAN + Field 55 (ARQC) from the EMV kernel and sends
+     * it to POST /merchant/v1/payments/charge with entryMode CHIP_NFC. No CVV is asked for —
+     * contactless carries no CVV and the cryptogram is the card's proof.
+     * Falls back to the offline queue when the network is unavailable.
+     */
+    private fun onAutoCapture(card: EmvCardData) {
+        val amount = amountBuf.toString().toDoubleOrNull() ?: 0.0
+        if (amount <= 0.009) { toast("Card read — enter an amount, then tap again"); return }
+        if (selCustId.isBlank()) { toast("Card read — select a customer, then tap again"); return }
+
+        // Modes that need a human-entered auth code can't be auto-captured — use the dialog.
+        if (MODES[modeIdx].needsAuth) { showCardEntryDialog(amount); return }
+
+        if (autoCapturing) return
+        autoCapturing = true
+
+        val mode = MODES[modeIdx]
+        toast("⏳ Capturing $selCcy ${"%.2f".format(amount)} …")
+        tvNfc.text = "⏳ Authorising ${"%.2f".format(amount)} $selCcy …"
+        tvNfc.setTextColor(Color.parseColor("#FCD34D"))
+
+        lifecycleScope.launch {
+            val res = performCharge(
+                amount     = amount,
+                pan        = card.pan.replace(" ", ""),
+                expiry     = card.expiryDate,
+                cvv        = "",
+                authCode   = "",
+                mode       = mode,
+                emvData    = card.emvData,
+                entryMode  = card.entryMode ?: "CHIP_NFC"
+            )
+            autoCapturing = false
+            if (res.ok) {
+                clearNfcCard()
+                showApproval(amount, res.approvalCode, res.txnId, res.offline)
+                resetAmount()
+                triggerSync()
+            } else {
+                nfcFullCard = null
+                tvNfc.text = "❌ Capture failed — tap again or use PAY NOW"
+                tvNfc.setTextColor(Color.parseColor("#F87171"))
+                toast("❌ ${res.error}")
             }
         }
     }
@@ -159,13 +242,18 @@ class LivePaymentActivity : AppCompatActivity() {
         body.addView(buildKeypad())
         body.addView(sp(12))
 
-        // NFC status bar
+        // NFC status bar — tap it to open the system NFC settings when the radio is off.
         tvNfc = TextView(this).apply {
-            text = if (nfcMgr.isAvailable()) "📡  NFC ready — tap card to auto-fill" else "⚠  NFC not available on this device"
+            text = if (nfcMgr.isAvailable()) "📡  NFC ready — tap a card to charge" else "⚠  NFC not available on this device"
             textSize = 11f
             setTextColor(Color.parseColor("#94A3B8"))
             setBackgroundColor(Color.parseColor("#0D1929"))
             setPadding(dp(14), dp(10), dp(14), dp(10))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                if (!nfcMgr.isAvailable()) nfcMgr.openNfcSettings()
+            }
         }
         body.addView(tvNfc)
         body.addView(sp(10))
@@ -265,7 +353,10 @@ class LivePaymentActivity : AppCompatActivity() {
             .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
         spinnerCcy.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(p: AdapterView<*>?) {}
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) { selCcy = ccyList[pos] }
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                selCcy = ccyList[pos]
+                syncTapContext()
+            }
         }
         c.addView(spinnerCcy)
         return c
@@ -355,9 +446,10 @@ class LivePaymentActivity : AppCompatActivity() {
             }
         }
         tvAmount.text = amountBuf.toString()
+        syncTapContext()
     }
 
-    private fun resetAmount() { amountBuf = StringBuilder("0"); tvAmount.text = "0.00" }
+    private fun resetAmount() { amountBuf = StringBuilder("0"); tvAmount.text = "0.00"; syncTapContext() }
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     private fun sp(dp: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(dp)) }
 
@@ -426,9 +518,9 @@ class LivePaymentActivity : AppCompatActivity() {
         })
 
         // NFC badge if card already read
-        if (nfcCardPan.isNotBlank()) {
+        if (nfcFullCard != null && nfcCardPan.isNotBlank()) {
             layout.addView(TextView(this).apply {
-                text = "📡  NFC card: ****${nfcCardPan.takeLast(4)}  — fields pre-filled"
+                text = "📡  NFC tap card: ****${nfcCardPan.takeLast(4)}  — CVV not required"
                 textSize = 10f; setTextColor(Color.parseColor("#4ADE80")); gravity = Gravity.CENTER
                 setBackgroundColor(Color.parseColor("#0F2E1A"))
                 setPadding(dp(8), dp(6), dp(8), dp(6))
@@ -438,13 +530,16 @@ class LivePaymentActivity : AppCompatActivity() {
             })
         }
 
-        // Pre-fill from NFC
+        // Pre-fill from NFC (last 4 only — the tap path charges with the full PAN automatically)
         val panValue = if (nfcCardPan.isNotBlank()) nfcCardPan.chunked(4).joinToString(" ") else ""
         val expValue = nfcCardExp
 
         val etPan = fld("Card Number  •••• •••• •••• ••••", panValue, InputType.TYPE_CLASS_NUMBER, 23)
         val etExp = fld("Expiry  MM/YY", expValue, InputType.TYPE_CLASS_NUMBER, 5)
-        val etCvv = fld("CVV${if (mode.protocol == "101.1") " (not required for Voice Auth)" else ""}", "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD, 4)
+        val etCvv = fld(
+            if (nfcFullCard != null) "CVV  (not required for tap)" else "CVV",
+            "", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD, 4
+        )
         val etAuth = fld(
             if (mode.needsAuth) "Auth Code  (required for ${mode.protocol})" else "Auth Code  (optional)",
             "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS, 20
@@ -516,11 +611,12 @@ class LivePaymentActivity : AppCompatActivity() {
                     val exp  = etExp.text.toString().trim()
                     val cvv  = etCvv.text.toString().trim()
                     val auth = etAuth.text.toString().trim()
+                    val usingTapCard = nfcFullCard != null && nfcCardPan == pan
 
                     if (pan.length < 13) { tvErr.text = "❌ Enter a valid card number"; return@setOnClickListener }
                     if (exp.length < 4)  { tvErr.text = "❌ Enter expiry MM/YY"; return@setOnClickListener }
-                    // CVV required for all protocols EXCEPT 101.1 (voice auth — bank already verified)
-                    if (cvv.isBlank() && mode.protocol != "101.1") {
+                    // CVV is not required for voice auth, nor for a card read by contactless tap.
+                    if (cvv.isBlank() && mode.protocol != "101.1" && !usingTapCard) {
                         tvErr.text = "❌ Enter CVV"; return@setOnClickListener
                     }
                     if (mode.needsAuth && auth.isBlank()) { tvErr.text = "❌ ${mode.label} requires an auth code"; return@setOnClickListener }
@@ -541,97 +637,129 @@ class LivePaymentActivity : AppCompatActivity() {
     // ─────────────────────────────────────────────────────────────────────────
     // SUBMIT PAYMENT — calls real backend, saves offline on failure
     // ─────────────────────────────────────────────────────────────────────────
+    private data class ChargeOutcome(
+        val ok: Boolean,
+        val txnId: String = "",
+        val approvalCode: String = "",
+        val offline: Boolean = false,
+        val error: String = ""
+    )
+
     private fun submitPayment(
         amount: Double, pan: String, expiry: String, cvv: String,
         authCode: String, mode: PayMode,
         dialog: AlertDialog, submitBtn: android.widget.Button, tvErr: TextView
     ) {
-        val serverUrl  = PosApplication.getServerUrl(this)
-        val merchantId = PosApplication.getMerchantId(this)
-        val terminalId = PosApplication.getTerminalId(this)
+        val usingTapCard = nfcFullCard != null && nfcCardPan == pan
+        val entryMode = if (usingTapCard) "CHIP_NFC" else "MANUAL"
+        val emvData   = if (usingTapCard) nfcFullCard?.emvData else null
+
+        lifecycleScope.launch {
+            val res = performCharge(amount, pan, expiry, cvv, authCode, mode, emvData, entryMode)
+            if (res.ok) {
+                clearNfcCard()
+                dialog.dismiss()
+                showApproval(amount, res.approvalCode, res.txnId, res.offline)
+                resetAmount()
+                triggerSync()
+            } else {
+                submitBtn.isEnabled = true
+                tvErr.text = "❌ ${res.error}"
+                tvErr.setTextColor(Color.parseColor("#F87171"))
+            }
+        }
+    }
+
+    /**
+     * Single charge path for every flow (tap auto-capture and manual dialog).
+     * On a network failure the transaction is persisted to the Room offline queue instead.
+     */
+    private suspend fun performCharge(
+        amount: Double, pan: String, expiry: String, cvv: String, authCode: String,
+        mode: PayMode, emvData: String?, entryMode: String
+    ): ChargeOutcome {
+        val serverUrl   = PosApplication.getServerUrl(this)
+        val merchantId  = PosApplication.getMerchantId(this)
+        val terminalId  = PosApplication.getTerminalId(this)
         val amountMinor = (amount * 100).toLong()
         val stan        = "STA${System.currentTimeMillis() % 1000000}"
 
-        lifecycleScope.launch {
-            var ok = false; var txnId = ""; var approvalCode = authCode; var errMsg = ""
-            val entryMode = if (nfcCardPan.isNotBlank() && pan == nfcCardPan) "CHIP_NFC" else "MANUAL"
+        var ok = false; var txnId = ""; var approvalCode = authCode; var errMsg = ""
 
-            try {
-                val api  = ApiClient.createPayment2013Api(serverUrl, jwtToken.ifBlank { null })
-                val resp = withContext(Dispatchers.IO) {
-                    api.chargeOnline(PosChargeRequest(
-                        amountMinor    = amountMinor,
-                        currency       = selCcy,
-                        merchantId     = merchantId,
-                        terminalId     = terminalId,
-                        pan            = pan,
-                        expiry         = expiry,
-                        cvv            = cvv,
-                        authCode       = authCode.ifBlank { null },
-                        stan           = stan,
-                        customerId     = selCustId.ifBlank { null },
-                        protocol       = mode.protocol,
-                        cardholderName = selCustName.ifBlank { null }
-                    ))
-                }
-                val body = resp.body()
-                if (resp.isSuccessful && body?.success == true) {
-                    ok = true
-                    txnId        = body.paymentIntentId ?: UUID.randomUUID().toString()
-                    approvalCode = body.authCode ?: authCode
-                } else {
-                    val eb = resp.errorBody()?.string() ?: ""
-                    errMsg = body?.error ?: body?.reason
-                        ?: if (eb.contains("\"error\"")) eb.substringAfter("\"error\":\"").substringBefore("\"")
-                           else "HTTP ${resp.code()}: $eb"
-                }
-            } catch (e: Exception) {
-                // Network unavailable — save offline for later sync
-                try {
-                    val db  = (application as com.pos2013.offline.PosApplication).database
-                    val tid = UUID.randomUUID().toString()
-                    db.transactionDao().insert(TransactionEntity(
-                        id = tid, merchantId = merchantId, terminalId = terminalId,
-                        localTxnId = tid, stan = stan, amountMinor = amountMinor,
-                        currency = selCcy, panMasked = "****${pan.takeLast(4)}",
-                        expiry = expiry, txnType = "SALE",
-                        authMode  = if (authCode.isNotBlank()) "PRE_AUTHORIZED" else "OFFLINE_APPROVED",
-                        entryMode = entryMode, authCode = authCode.ifBlank { null },
-                        txnTimestamp = System.currentTimeMillis(), status = "PENDING"
-                    ))
-                    ok = true; txnId = tid; approvalCode = authCode
-                    errMsg = "Saved offline (no network)"
-                } catch (e2: Exception) { errMsg = "Error: ${e2.localizedMessage}" }
+        try {
+            val api  = ApiClient.createPayment2013Api(serverUrl, jwtToken.ifBlank { null })
+            val resp = withContext(Dispatchers.IO) {
+                api.chargeOnline(PosChargeRequest(
+                    amountMinor    = amountMinor,
+                    currency       = selCcy,
+                    merchantId     = merchantId,
+                    terminalId     = terminalId,
+                    pan            = pan,
+                    expiry         = expiry,
+                    cvv            = cvv.ifBlank { null },
+                    authCode       = authCode.ifBlank { null },
+                    tlvRaw         = emvData,          // Field 55 (DE55) TLV hex from the EMV kernel
+                    stan           = stan,
+                    customerId     = selCustId.ifBlank { null },
+                    protocol       = mode.protocol,
+                    entryMode      = entryMode,
+                    cardholderName = selCustName.ifBlank { null }
+                ))
             }
-
-            // Clear NFC card after use
-            nfcCardPan = ""; nfcCardExp = ""
-            tvNfc.text = if (nfcMgr.isAvailable()) "📡  NFC ready — tap card to auto-fill" else "⚠  NFC not available"
-            tvNfc.setTextColor(Color.parseColor("#94A3B8"))
-
-            if (ok) {
-                dialog.dismiss()
-                showApproval(amount, approvalCode, txnId, errMsg.contains("offline"))
-                resetAmount()
-                // Trigger background sync if online
-                lifecycleScope.launch {
-                    try {
-                        val repo = com.pos2013.offline.data.TransactionRepository(
-                            dao = (application as com.pos2013.offline.PosApplication).database.transactionDao(),
-                            walletTopupDao = (application as com.pos2013.offline.PosApplication).database.walletTopupDao(),
-                            api = ApiClient.createPayment2013Api(PosApplication.getServerUrl(this@LivePaymentActivity), jwtToken.ifBlank { null }),
-                            walletsApi = ApiClient.createWalletsApi(PosApplication.getServerUrl(this@LivePaymentActivity), jwtToken.ifBlank { null }),
-                            merchantId = PosApplication.getMerchantId(this@LivePaymentActivity),
-                            terminalId = PosApplication.getTerminalId(this@LivePaymentActivity)
-                        )
-                        repo.syncPendingTransactions()
-                    } catch (_: Exception) {}
-                }
+            val body = resp.body()
+            if (resp.isSuccessful && body?.success == true) {
+                ok = true
+                txnId        = body.paymentIntentId ?: UUID.randomUUID().toString()
+                approvalCode = body.authCode ?: authCode
             } else {
-                submitBtn.isEnabled = true
-                tvErr.text = "❌ $errMsg"
-                tvErr.setTextColor(Color.parseColor("#F87171"))
+                val eb = resp.errorBody()?.string() ?: ""
+                errMsg = body?.error ?: body?.reason
+                    ?: if (eb.contains("\"error\"")) eb.substringAfter("\"error\":\"").substringBefore("\"")
+                       else "HTTP ${resp.code()}: $eb"
             }
+        } catch (e: Exception) {
+            // Network unavailable — save offline for later sync
+            try {
+                val db  = (application as com.pos2013.offline.PosApplication).database
+                val tid = UUID.randomUUID().toString()
+                db.transactionDao().insert(TransactionEntity(
+                    id = tid, merchantId = merchantId, terminalId = terminalId,
+                    localTxnId = tid, stan = stan, amountMinor = amountMinor,
+                    currency = selCcy, panMasked = "****${pan.takeLast(4)}",
+                    expiry = expiry, txnType = "SALE",
+                    authMode  = if (authCode.isNotBlank()) "PRE_AUTHORIZED" else "OFFLINE_APPROVED",
+                    entryMode = entryMode, authCode = authCode.ifBlank { null },
+                    txnTimestamp = System.currentTimeMillis(), status = "PENDING"
+                ))
+                return ChargeOutcome(true, tid, authCode, offline = true, error = "Saved offline (no network)")
+            } catch (e2: Exception) { errMsg = "Error: ${e2.localizedMessage}" }
+        }
+
+        return ChargeOutcome(ok, txnId, approvalCode, offline = false, error = errMsg)
+    }
+
+    /** Clears the captured tap and restores the NFC status line. */
+    private fun clearNfcCard() {
+        nfcCardPan = ""; nfcCardExp = ""; nfcFullCard = null
+        tvNfc.text = if (nfcMgr.isAvailable()) "📡  NFC reader active — tap a card to charge"
+                     else "⚠  NFC not available"
+        tvNfc.setTextColor(Color.parseColor("#94A3B8"))
+    }
+
+    /** Pushes any queued offline transactions to the dashboard. */
+    private fun triggerSync() {
+        lifecycleScope.launch {
+            try {
+                val repo = com.pos2013.offline.data.TransactionRepository(
+                    dao = (application as com.pos2013.offline.PosApplication).database.transactionDao(),
+                    walletTopupDao = (application as com.pos2013.offline.PosApplication).database.walletTopupDao(),
+                    api = ApiClient.createPayment2013Api(PosApplication.getServerUrl(this@LivePaymentActivity), jwtToken.ifBlank { null }),
+                    walletsApi = ApiClient.createWalletsApi(PosApplication.getServerUrl(this@LivePaymentActivity), jwtToken.ifBlank { null }),
+                    merchantId = PosApplication.getMerchantId(this@LivePaymentActivity),
+                    terminalId = PosApplication.getTerminalId(this@LivePaymentActivity)
+                )
+                repo.syncPendingTransactions()
+            } catch (_: Exception) {}
         }
     }
 
@@ -681,12 +809,22 @@ class LivePaymentActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(32) }
-            setOnClickListener { setContentView(buildScreen()); loadCustomers(); pingServer(); observeNfc() }
+            setOnClickListener { returnToTerminal() }
         })
         setContentView(overlay)
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (!isFinishing) { setContentView(buildScreen()); loadCustomers(); pingServer(); observeNfc() }
-        }, 8000)
+        val r = Runnable { if (!isFinishing) returnToTerminal() }
+        approvalJob = r
+        Handler(Looper.getMainLooper()).postDelayed(r, 8000)
+    }
+
+    /** Rebuilds the payment screen after an approval (single pending auto-return at a time). */
+    private fun returnToTerminal() {
+        approvalJob?.let { Handler(Looper.getMainLooper()).removeCallbacks(it) }
+        approvalJob = null
+        if (isFinishing) return
+        setContentView(buildScreen())
+        loadCustomers()
+        observeNfc()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -920,8 +1058,9 @@ class LivePaymentActivity : AppCompatActivity() {
     }
 
     private fun pingServer() {
+        if (pingJob?.isActive == true) return
         val serverUrl = PosApplication.getServerUrl(this)
-        lifecycleScope.launch {
+        pingJob = lifecycleScope.launch {
             while (true) {
                 try {
                     val r = withContext(Dispatchers.IO) { ApiClient.createPayment2013Api(serverUrl).health() }

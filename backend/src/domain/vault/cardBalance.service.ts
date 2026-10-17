@@ -48,6 +48,7 @@ async function ensureTables() {
       provider_ref     TEXT,            -- external transaction ID from real fund source
       external_ref     TEXT,            -- our reference (wire ref, tx hash, etc.)
       note             TEXT,
+      status           TEXT NOT NULL DEFAULT 'POSTED',  -- POSTED | VOIDED
       created_at       TEXT NOT NULL
     )
   `);
@@ -73,6 +74,7 @@ export interface CardTxn {
   providerRef?: string;
   externalRef?: string;
   note?:        string;
+  status?:      'POSTED' | 'VOIDED';
   createdAt:    string;
 }
 
@@ -268,6 +270,7 @@ export async function getCardHistory(
     providerRef:  r.provider_ref ?? undefined,
     externalRef:  r.external_ref ?? undefined,
     note:         r.note ?? undefined,
+    status:       r.status ?? 'POSTED',
     createdAt:    r.created_at,
   }));
 }

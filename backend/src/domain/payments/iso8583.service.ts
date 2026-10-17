@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ISO 8583 Service — Full EMV-compliant implementation
  * ─────────────────────────────────────────────────────────────────────────────
  * MTI support:
@@ -37,11 +37,10 @@ import crypto from 'crypto';
 import { generateApprovalCode, generateSTAN, getIssuerSecret } from './approvalCode.service';
 import {
   buildField55,
-  generateDemoArqc,
-  generateArpc,
+  generateIssuerArqc,
   validateArqc,
   normalizeHex,
-  ensureIsoCurrency,
+  encodeHexTlv,
 } from '../../services/emv/issuerEmv';
 import { db } from '../../config/db';
 
@@ -251,7 +250,7 @@ export async function packAuthRequest(fields: AuthRequestFields): Promise<string
   const atcHex   = await getAndIncrementATC(panLast4);
   const un       = crypto.randomBytes(4).toString('hex').toUpperCase();
 
-  const arqcHex = generateDemoArqc({
+  const arqcHex = generateIssuerArqc({
     pan,
     amountMinor:         fields.amountMinor,
     currency:            fields.currencyCode,
@@ -477,7 +476,7 @@ export async function buildVoiceAuthRequest(params: {
   const approvalCode  = generateApprovalCode({ panLast4, amountMinor, stan, datetimeIso, issuerSecret });
 
   // ARQC for EMV Field 55
-  const arqcHex = generateDemoArqc({
+  const arqcHex = generateIssuerArqc({
     pan: cleanPan, amountMinor, currency: currencyCode,
     atc: atcHex, unpredictableNumber: un,
     terminalId, merchantId,
@@ -529,32 +528,42 @@ export async function buildAuthorizationResponse(params: {
   const currencyCode = getCurrencyCode(params.currency);
   const un           = crypto.randomBytes(4).toString('hex').toUpperCase();
 
-  // Extract ARQC from incoming field55 if present
-  let arqcHex = '';
-  if (params.field55) {
-    const tags = parseField55Tags(params.field55);
-    arqcHex = tags['9F26'] ?? '';
-  }
+  // ── Issuer-side ARQC validation ───────────────────────────────────────────
+  // The retail MAC is recomputed over exactly the bytes the card MAC'd, so the
+  // CDOL1 inputs come from the presented DE55 instead of being regenerated —
+  // and the presented ATC, not a locally incremented one, is what the session
+  // key is derived from.
+  const presented    = params.field55 ? parseField55Tags(params.field55) : {};
+  const presentedAtc = presented['9F36'] || atcHex;
+  const arqcHex      = presented['9F26'] ?? '';
 
-  const arpc = generateArpc({
-    pan: cleanPan, amountMinor: params.amountMinor,
-    currency: currencyCode, atc: atcHex,
-    arqc: arqcHex || generateDemoArqc({ pan: cleanPan, amountMinor: params.amountMinor, currency: currencyCode, atc: atcHex, unpredictableNumber: un }),
+  const validation = validateArqc({
+    pan:                 cleanPan,
+    panSequence:         presented['5F34'] || '00',
+    atc:                 presentedAtc,
+    amountMinor:         params.amountMinor,
+    currency:            currencyCode,
+    unpredictableNumber: presented['9F37'] || un,
+    tvr:                 presented['95'],
+    txnDate:             presented['9A'],
+    txnType:             presented['9C'],
+    iad:                 presented['9F10'],
+    terminalCountry:     presented['9F1A'],
+    arqc:                arqcHex,
   });
 
-  const approved     = true; // issuer-side approval
-  const responseCode = '00';
-  const approvalCode = params.approvalCode ?? generateSTAN().slice(0, 6);
+  const approved     = validation.valid;
+  const responseCode = validation.responseCode;
+  const arpc         = validation.arpc;
+  const approvalCode = approved ? (params.approvalCode ?? generateSTAN().slice(0, 6)) : '';
 
-  // Build response field55 with ARPC embedded in IAD
-  const respField55 = buildField55({
-    pan: cleanPan, amountMinor: params.amountMinor,
-    currency: currencyCode, atc: atcHex,
-    unpredictableNumber: un,
-    arqc: arqcHex || generateDemoArqc({ pan: cleanPan, amountMinor: params.amountMinor, currency: currencyCode, atc: atcHex, unpredictableNumber: un }),
-    cid: '40', // TC — Transaction Certificate (approved)
-    iad: `0710${arpc}A00000`,
-  });
+  // DE55 in the 0210 carries tag 91 (Issuer Authentication Data) = ARPC ‖ ARC,
+  // which is what the card verifies on the second GENERATE AC. When the
+  // cryptogram could not be proven there is no ARPC, so the response carries no
+  // issuer authentication data at all.
+  const respField55 = arpc
+    ? encodeHexTlv('91', `${arpc}${Buffer.from(responseCode, 'ascii').toString('hex')}`)
+    : '';
 
   const now      = new Date();
   const txDateTime = [
@@ -572,13 +581,14 @@ export async function buildAuthorizationResponse(params: {
     7:  txDateTime,
     11: params.stan,
     37: params.rrn,
-    38: approvalCode.padEnd(8, ' ').slice(0, 8),
     39: responseCode,
     41: params.terminalId.padEnd(8, ' ').slice(0, 8),
     42: params.merchantId.padEnd(15, ' ').slice(0, 15),
     49: currencyCode,
-    55: respField55,
   };
+  // A decline carries no approval code and no issuer authentication data.
+  if (approved) fieldMap[38] = approvalCode.padEnd(8, ' ').slice(0, 8);
+  if (respField55) fieldMap[55] = respField55;
 
   const mti        = '0210';
   const presentDEs = Object.keys(fieldMap).map(Number).sort((a, b) => a - b);
