@@ -250,9 +250,7 @@ echo   Remote DB       : /data/database.sqlite (Render persistent disk)
 echo.
 echo ================================================================
 echo   Keep all console windows open while using the system.
-echo   Press any key to minimize this launcher window.
+echo   This window can be closed - services keep running.
 echo ================================================================
 echo.
-pause >nul
-
-echo Launcher minimized. System is still running.
+timeout /t 10 /nobreak >nul
