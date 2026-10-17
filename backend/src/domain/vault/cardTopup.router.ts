@@ -171,7 +171,9 @@ export function listFundingMethods(): FundingMethod[] {
     id, title, subtitle, group: 'bank', badge: 'Operator-confirmed',
     endpoint: '/api/vault/cardtopup/bank-wire',
     verifiedAgainst: 'Recorded as PENDING, then credited only when an operator confirms the funds landed in the vault bank account.',
-    available: true, fixed, fields: WIRE_FIELDS(),
+    available: envSet('VAULT_CASH_OPERATOR_CODE'),
+    unavailableReason: envSet('VAULT_CASH_OPERATOR_CODE') ? undefined : 'Requires VAULT_CASH_OPERATOR_CODE to be set on this server.',
+    fixed, fields: WIRE_FIELDS(),
   });
 
   const crypto = (id: string, title: string, subtitle: string, network: string, envKey: string, scanner: string): FundingMethod => {

@@ -335,10 +335,10 @@ export async function exportCardAccountsForSettlement(): Promise<Record<string, 
  * Does NOT credit any money — only creates zero-balance rows so that
  * debitCard() throws NO_CARD_BALANCE instead of working on phantom data.
  *
- * Controlled test seeding: if SEED_OPERATOR_CARD_BALANCE=true is set,
- * credits each operator card with SEED_OPERATOR_CARD_AMOUNT (default 10,000)
- * in its native currency. This is for local/test/demo environments only and
- * is disabled by default in production.
+ * There is deliberately no seeding path here. An operator card can only hold
+ * real money, and real money only arrives through a verified funding rail
+ * (bank wire, Wise, USDT on-chain, on-ramp, gateway checkout). Nothing is ever
+ * created at startup.
  */
 export async function ensureOperatorCards(): Promise<void> {
   await ensureTables();
@@ -362,25 +362,6 @@ export async function ensureOperatorCards(): Promise<void> {
         [uuidv4(), cardId, currency, now, now]
       );
       console.log(`[CardBalance] Created empty balance row for operator card: ${cardId} (${currency})`);
-    }
-  }
-
-  // ── Controlled test seeding (disabled by default) ───────────────────────
-  const shouldSeed = String(process.env.SEED_OPERATOR_CARD_BALANCE || '').toLowerCase() === 'true';
-  if (shouldSeed) {
-    const seedAmount = Number(process.env.SEED_OPERATOR_CARD_AMOUNT || 10000);
-    if (Number.isFinite(seedAmount) && seedAmount > 0) {
-      for (const { cardId, currency } of operatorCards) {
-        const bal = await getCardBalance(cardId, currency);
-        if (bal.total === 0) {
-          await creditCard(
-            cardId, currency, seedAmount,
-            'test_seed', `SEED-${Date.now()}`, 'STARTUP_TEST_SEED',
-            'Startup test seed (controlled by SEED_OPERATOR_CARD_BALANCE env var)'
-          );
-          console.warn(`[CardBalance] ⚠️ TEST SEED: credited ${currency} ${seedAmount.toFixed(2)} to operator card ${cardId}. Set SEED_OPERATOR_CARD_BALANCE=false to disable.`);
-        }
-      }
     }
   }
 }

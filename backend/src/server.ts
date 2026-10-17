@@ -30,8 +30,8 @@ console.log('[server] DB path:', dbPath);
 
 const start = async () => {
   await initTables();
-  // Ensure operator card balance rows exist (zero-balance by default;
-  // SEED_OPERATOR_CARD_BALANCE=true enables controlled test funding).
+  // Ensure operator card balance rows exist as ZERO-balance rows only.
+  // Nothing is ever seeded — real money arrives only via a verified rail.
   try {
     await ensureOperatorCards();
   } catch (e: any) {

@@ -94,10 +94,15 @@ export interface BankWireTopupInput {
 
 export async function topupViaBankWire(input: BankWireTopupInput): Promise<TopupResult> {
   const expectedCode = (process.env.VAULT_CASH_OPERATOR_CODE || '').trim();
-  if (expectedCode && input.operatorCode.trim() !== expectedCode) {
+  // Fails CLOSED: with no operator code configured on the server this rail is
+  // unavailable, never open. Otherwise anyone could record a wire claim.
+  if (!expectedCode || input.operatorCode.trim() !== expectedCode) {
     return { ok: false, channel: 'bank_wire', cardId: input.cardId, currency: input.currency,
       amount: input.amount, providerRef: input.wireReference, balanceAfter: 0,
-      message: 'Operator code invalid', error: 'INVALID_OPERATOR_CODE' };
+      message: !expectedCode
+        ? 'Operator-confirmed rail is disabled: VAULT_CASH_OPERATOR_CODE is not set on this server'
+        : 'Operator code invalid',
+      error: !expectedCode ? 'CHANNEL_UNAVAILABLE' : 'INVALID_OPERATOR_CODE' };
   }
   if (!input.wireReference?.trim() || !input.senderName?.trim() || input.amount <= 0) {
     return { ok: false, channel: 'bank_wire', cardId: input.cardId, currency: input.currency,
@@ -141,10 +146,15 @@ export interface BankWireConfirmInput {
 
 export async function confirmBankWireTopup(input: BankWireConfirmInput): Promise<TopupResult> {
   const expectedCode = (process.env.VAULT_CASH_OPERATOR_CODE || '').trim();
-  if (expectedCode && String(input.operatorCode || '').trim() !== expectedCode) {
+  // Fails CLOSED: this is the phase-2 call that actually credits the card, so a
+  // missing server-side operator code must disable it rather than skip the check.
+  if (!expectedCode || String(input.operatorCode || '').trim() !== expectedCode) {
     return { ok: false, channel: 'bank_wire', cardId: '', currency: '', amount: 0,
       providerRef: input.wireReference, balanceAfter: 0,
-      message: 'Operator code invalid', error: 'INVALID_OPERATOR_CODE' };
+      message: !expectedCode
+        ? 'Operator-confirmed rail is disabled: VAULT_CASH_OPERATOR_CODE is not set on this server'
+        : 'Operator code invalid',
+      error: !expectedCode ? 'CHANNEL_UNAVAILABLE' : 'INVALID_OPERATOR_CODE' };
   }
   await ensureWireConfirmationsTable();
   const ref = String(input.wireReference || '').trim();
@@ -518,10 +528,15 @@ export interface CashTopupInput {
 
 export async function topupViaCash(input: CashTopupInput): Promise<TopupResult> {
   const expectedCode = (process.env.VAULT_CASH_OPERATOR_CODE || '').trim();
-  if (expectedCode && input.operatorCode.trim() !== expectedCode) {
+  // Fails CLOSED: cash is credited with no external debit to verify against, so
+  // the operator code is the only control. Without it the rail is unavailable.
+  if (!expectedCode || input.operatorCode.trim() !== expectedCode) {
     return { ok: false, channel: 'cash', cardId: input.cardId, currency: input.currency,
       amount: input.amount, providerRef: input.depositRef, balanceAfter: 0,
-      message: 'Operator code invalid', error: 'INVALID_OPERATOR_CODE' };
+      message: !expectedCode
+        ? 'Cash deposits are disabled: VAULT_CASH_OPERATOR_CODE is not set on this server'
+        : 'Operator code invalid',
+      error: !expectedCode ? 'CHANNEL_UNAVAILABLE' : 'INVALID_OPERATOR_CODE' };
   }
   if (!input.depositRef?.trim() || !input.operatorId?.trim() || input.amount <= 0) {
     return { ok: false, channel: 'cash', cardId: input.cardId, currency: input.currency,
@@ -589,10 +604,15 @@ export async function topupViaCardToCard(input: CardToCardTopupInput): Promise<T
   // External card load: require operator code
   if (String(input.sourceCardId).toUpperCase() === 'EXTERNAL') {
     const expectedCode = (process.env.VAULT_CASH_OPERATOR_CODE || '').trim();
-    if (expectedCode && (input.operatorCode || '').trim() !== expectedCode) {
+    // Fails CLOSED: an EXTERNAL source debits nothing inside the system, so the
+    // operator code is the only control keeping unbacked money out of the ledger.
+    if (!expectedCode || (input.operatorCode || '').trim() !== expectedCode) {
       return { ok: false, channel: 'card_to_card', cardId: input.destCardId, currency: input.currency,
         amount: input.amount, providerRef: input.sourceRef, balanceAfter: 0,
-        message: 'Operator code invalid for external card load', error: 'INVALID_OPERATOR_CODE' };
+        message: !expectedCode
+          ? 'External card loads are disabled: VAULT_CASH_OPERATOR_CODE is not set on this server'
+          : 'Operator code invalid for external card load',
+        error: !expectedCode ? 'CHANNEL_UNAVAILABLE' : 'INVALID_OPERATOR_CODE' };
     }
   } else {
     // Vault-to-vault: debit the source card first
