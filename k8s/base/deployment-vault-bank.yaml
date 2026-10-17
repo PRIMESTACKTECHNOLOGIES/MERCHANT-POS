@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: primestack-vault-bank
+  namespace: primestack
+  labels:
+    app: primestack-vault-bank
+    component: vault
+spec:
+  replicas: 1              # Vault bank is stateful — single instance
+  selector:
+    matchLabels:
+      app: primestack-vault-bank
+  strategy:
+    type: Recreate         # Recreate (not RollingUpdate) for stateful single instance
+  template:
+    metadata:
+      labels:
+        app: primestack-vault-bank
+        component: vault
+    spec:
+      serviceAccountName: primestack-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: vault-bank
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/primestack-vault-bank:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 9001
+              protocol: TCP
+
+          env:
+            - name: PORT
+              value: "9001"
+            - name: VAULT_SETTLEMENT_PORT
+              value: "9001"
+            - name: VAULT_BANK_BIND_HOST
+              value: "0.0.0.0"
+            - name: VAULT_BANK_MODE
+              value: "LIVE"
+            - name: VAULT_SQLITE_PATH
+              value: "/data/vault.sqlite"
+
+          envFrom:
+            - secretRef:
+                name: primestack-secrets
+
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: 9001
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 9001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: primestack-data-pvc

@@ -1,0 +1,11 @@
+# Ensure at least 1 API pod is always available during node maintenance
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: primestack-api-pdb
+  namespace: primestack
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: primestack-api

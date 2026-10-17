@@ -1,0 +1,55 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AWS ALB Ingress Controller
+# Requires: AWS Load Balancer Controller installed in EKS.
+#   helm repo add eks https://aws.github.io/eks-charts
+#   helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     -n kube-system --set clusterName=primestack-eks
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: primestack-ingress
+  namespace: primestack
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+    # Redirect all HTTP to HTTPS
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # ACM Certificate ARN — replace with your cert
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
+    # Security headers
+    alb.ingress.kubernetes.io/load-balancer-attributes: >-
+      routing.http.drop_invalid_header_fields.enabled=true,
+      routing.http2.enabled=true,
+      deletion_protection.enabled=true
+    # Health check
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+    # WAF (optional — replace with your WAF ARN)
+    # alb.ingress.kubernetes.io/wafv2-acl-arn: "arn:aws:wafv2:us-east-1:ACCOUNT_ID:regional/webacl/NAME/ID"
+spec:
+  rules:
+    - host: api.primestack-tech.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: primestack-api-svc
+                port:
+                  number: 10000
+    - host: vault.primestack-tech.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: primestack-vault-svc
+                port:
+                  number: 9001

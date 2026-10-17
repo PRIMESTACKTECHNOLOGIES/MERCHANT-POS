@@ -1,0 +1,77 @@
+# ── API pod — allow inbound from ALB, outbound to internet ───────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: primestack-api-netpol
+  namespace: primestack
+spec:
+  podSelector:
+    matchLabels:
+      app: primestack-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0    # ALB forwards from AWS-managed IPs
+      ports:
+        - protocol: TCP
+          port: 10000
+  egress:
+    - {}                        # Allow all outbound (Tron, Wise, Binance, etc.)
+---
+# ── Vault Bank — only reachable from within cluster ──────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: primestack-vault-netpol
+  namespace: primestack
+spec:
+  podSelector:
+    matchLabels:
+      app: primestack-vault-bank
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: primestack-api   # Only API pods can call vault
+      ports:
+        - protocol: TCP
+          port: 9001
+  egress:
+    - {}
+---
+# ── Tron Listener — NO inbound traffic, outbound to TronGrid only ────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: primestack-tron-netpol
+  namespace: primestack
+spec:
+  podSelector:
+    matchLabels:
+      app: primestack-tron-listener
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []                   # No inbound traffic at all
+  egress:
+    # TronGrid API
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    # Internal API callback
+    - to:
+        - podSelector:
+            matchLabels:
+              app: primestack-api
+      ports:
+        - protocol: TCP
+          port: 10000

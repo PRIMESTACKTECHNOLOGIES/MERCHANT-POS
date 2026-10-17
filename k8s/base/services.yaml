@@ -1,0 +1,35 @@
+# ── Main API Service ─────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: primestack-api-svc
+  namespace: primestack
+  labels:
+    app: primestack-api
+spec:
+  type: ClusterIP
+  selector:
+    app: primestack-api
+  ports:
+    - name: http
+      port: 10000
+      targetPort: 10000
+      protocol: TCP
+---
+# ── Vault Bank Service ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: primestack-vault-svc
+  namespace: primestack
+  labels:
+    app: primestack-vault-bank
+spec:
+  type: ClusterIP
+  selector:
+    app: primestack-vault-bank
+  ports:
+    - name: http
+      port: 9001
+      targetPort: 9001
+      protocol: TCP
