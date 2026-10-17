@@ -64,6 +64,33 @@ const FUNDING_GROUPS: Array<{ id: string; label: string }> = [
   { id: "card",   label: "Card-to-card" },
 ];
 
+/** Shape returned by GET /api/vault/gateways/options. */
+interface GatewayOption {
+  id: string;
+  title: string;
+  subtitle: string;
+  /** Currencies the gateway can collect. A card in any other currency cannot be loaded by it. */
+  currencies: string[];
+  available: boolean;
+  unavailableReason?: string;
+}
+
+/** Shape of a charge returned by POST/GET /api/vault/gateways/charges. */
+interface GatewayCharge {
+  id: string;
+  gateway: string;
+  cardId: string;
+  currency: string;
+  amount: number;
+  reference: string;
+  providerRef?: string;
+  checkoutUrl?: string;
+  status: string;
+  lastStatus?: string;
+  lastError?: string;
+  createdAt: string;
+}
+
 const API = resolveApiBaseUrl({ envValue: import.meta.env.VITE_API_URL, currentOrigin: window.location.origin });
 const CARD_ASSET_BASE = `${API}/coins/cards`;
 const tabs: Array<{ id: Tab; label: string; icon: typeof Wallet }> = [
@@ -458,6 +485,20 @@ export function VaultDashboardPage() {
   const [extLoadBusy, setExtLoadBusy] = useState(false);
   const [extLoadError, setExtLoadError] = useState("");
   const [extLoadSuccess, setExtLoadSuccess] = useState("");
+  // ── Payment-gateway load panel state ───────────────────────────────────────
+  // A checkout link is generated per card; the card is credited only after the
+  // server re-checks the payment with the gateway's own API.
+  const [gwOptions, setGwOptions] = useState<GatewayOption[]>([]);
+  const [gwOptionsBusy, setGwOptionsBusy] = useState(false);
+  const [gwId, setGwId] = useState<string>("");
+  const [gwAmount, setGwAmount] = useState<string>("");
+  const [gwEmail, setGwEmail] = useState<string>("");
+  const [gwBusy, setGwBusy] = useState(false);
+  const [gwError, setGwError] = useState("");
+  const [gwMsg, setGwMsg] = useState("");
+  const [gwCharge, setGwCharge] = useState<GatewayCharge | null>(null);
+  const [gwCharges, setGwCharges] = useState<GatewayCharge[]>([]);
+  const [gwSettleBusy, setGwSettleBusy] = useState<string>("");
   const [mintLabel, setMintLabel] = useState("");
   const [mintBusy, setMintBusy] = useState(false);
   const [mintError, setMintError] = useState("");
@@ -945,6 +986,89 @@ export function VaultDashboardPage() {
   };
 
   useEffect(() => { void loadFundingMethods(); }, []);
+
+  // ── Payment-gateway handlers ───────────────────────────────────────────────
+  const loadGatewayOptions = async () => {
+    setGwOptionsBusy(true);
+    try {
+      const result = await api("/api/vault/gateways/options");
+      setGwOptions(Array.isArray(result.options) ? result.options : []);
+    } catch {
+      setGwOptions([]);
+    } finally {
+      setGwOptionsBusy(false);
+    }
+  };
+
+  const loadGatewayCharges = async (cardId: string) => {
+    if (!cardId) { setGwCharges([]); return; }
+    try {
+      const result = await api(`/api/vault/gateways/charges?cardId=${encodeURIComponent(cardId)}`);
+      setGwCharges(Array.isArray(result.charges) ? result.charges : []);
+    } catch {
+      setGwCharges([]);
+    }
+  };
+
+  useEffect(() => { void loadGatewayOptions(); }, []);
+  useEffect(() => { void loadGatewayCharges(selectedLoadingCard); }, [selectedLoadingCard]);
+
+  // A gateway can only collect the card's own currency (currency-match-only rule).
+  const gwSelected = gwOptions.find(o => o.id === gwId) || null;
+  const gwCardCurrency = (selectedLoadingCard || "").toUpperCase();
+  const gwCurrencyOk = !!gwSelected && gwSelected.currencies.includes(gwCardCurrency);
+
+  const handleCreateGatewayCharge = async () => {
+    if (!selectedLoadingCard) { setGwError("Select a target card first"); return; }
+    if (!gwSelected) { setGwError("Select a gateway"); return; }
+    if (!gwCurrencyOk) { setGwError(`${gwSelected.title} cannot collect ${gwCardCurrency}`); return; }
+    const amountValue = Number(gwAmount);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) { setGwError("Enter a valid amount"); return; }
+
+    setGwBusy(true); setGwError(""); setGwMsg(""); setGwCharge(null);
+    try {
+      const result = await api("/api/vault/gateways/charges", {
+        method: "POST",
+        body: JSON.stringify({
+          gatewayId: gwSelected.id,
+          cardId: selectedLoadingCard,
+          currency: gwCardCurrency,
+          amount: amountValue,
+          email: gwEmail.trim() || undefined,
+        }),
+      });
+      if (!result.ok) throw new Error(result.error || "Could not create the checkout link");
+      const charge: GatewayCharge = result.charge;
+      setGwCharge(charge);
+      setGwMsg(`Checkout link ready for ${fmtNum(charge.amount, charge.currency)} — send it to the loader.`);
+      setGwAmount("");
+      void loadGatewayCharges(selectedLoadingCard);
+    } catch (e) {
+      setGwError(e instanceof Error ? e.message : "Could not create the checkout link");
+    } finally {
+      setGwBusy(false);
+    }
+  };
+
+  const handleSettleGatewayCharge = async (chargeId: string) => {
+    setGwSettleBusy(chargeId); setGwError(""); setGwMsg("");
+    try {
+      const result = await api(`/api/vault/gateways/charges/${encodeURIComponent(chargeId)}/settle`, { method: "POST" });
+      if (result.ok) {
+        const bal = result.cardBalance != null ? ` — new balance ${fmtNum(Number(result.cardBalance), "")}` : "";
+        setGwMsg(`✅ ${String(result.message || "Payment verified and credited")}${bal}`);
+        if (gwCharge?.id === chargeId) setGwCharge(result.charge);
+        void loadGatewayCharges(selectedLoadingCard);
+        void loadInboundBalance();
+      } else {
+        setGwError(String(result.message || result.error || "Payment not verified yet"));
+      }
+    } catch (e) {
+      setGwError(e instanceof Error ? e.message : "Could not check the payment");
+    } finally {
+      setGwSettleBusy("");
+    }
+  };
 
   const selectedMethod = fundingMethods.find(m => m.id === extMethodId) || null;
 
@@ -2092,6 +2216,214 @@ export function VaultDashboardPage() {
                 </>
               ) : (
                 <p className="text-sm text-slate-500">Select a funding method to continue.</p>
+              )}
+            </div>
+          </Card>
+
+          {/* Load by paying on a payment gateway */}
+          <Card title="Load by paying on a payment gateway">
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-slate-600">
+                Generate a checkout link for this card. The loader pays on the gateway's own page;
+                the card is credited only after our server confirms the payment with the gateway's API.
+              </p>
+
+              {!selectedLoadingCard ? (
+                <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                  Select a target card with “Add card” above.
+                </p>
+              ) : (
+                <>
+                  <div>
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Gateway
+                      {gwOptions.length > 0 && (
+                        <span className="ml-2 font-semibold normal-case tracking-normal text-gray-400">
+                          {gwOptions.filter(o => o.available && o.currencies.includes(gwCardCurrency)).length} can collect {gwCardCurrency}
+                        </span>
+                      )}
+                    </p>
+
+                    {gwOptionsBusy && gwOptions.length === 0 ? (
+                      <p className="text-sm text-slate-500">Loading available gateways…</p>
+                    ) : gwOptions.length === 0 ? (
+                      <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+                        Could not load the gateway catalog from the server.
+                      </p>
+                    ) : (
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {gwOptions.map(g => {
+                          const supportsCard = g.currencies.includes(gwCardCurrency);
+                          const enabled = g.available && supportsCard;
+                          const active = g.id === gwId;
+                          const reason = !g.available
+                            ? (g.unavailableReason || "Not configured on this server")
+                            : !supportsCard
+                              ? `Cannot collect ${gwCardCurrency} — supports ${g.currencies.join(", ")}`
+                              : undefined;
+                          return (
+                            <button
+                              key={g.id}
+                              type="button"
+                              disabled={!enabled}
+                              title={reason || g.subtitle}
+                              onClick={() => { setGwId(g.id); setGwError(""); setGwMsg(""); setGwCharge(null); }}
+                              className={`rounded-xl border p-4 text-left transition-colors ${
+                                active
+                                  ? "border-slate-900 bg-slate-50 ring-1 ring-inset ring-slate-900"
+                                  : enabled
+                                    ? "border-slate-200 bg-white hover:bg-slate-50"
+                                    : "cursor-not-allowed border-dashed border-slate-200 bg-slate-100 opacity-60"
+                              }`}
+                            >
+                              <span className="flex items-start justify-between gap-2">
+                                <span className="text-sm font-extrabold text-slate-900">{g.title}</span>
+                                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
+                                }`}>{enabled ? "Ready" : "Unavailable"}</span>
+                              </span>
+                              {g.subtitle && <span className="mt-1 block text-[11px] text-slate-500">{g.subtitle}</span>}
+                              {reason && <span className="mt-1 block text-[11px] font-semibold text-slate-500">{reason}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">
+                          Amount ({gwCardCurrency})<span className="text-red-500"> *</span>
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={gwAmount}
+                          onChange={e => setGwAmount(e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                          placeholder="100.00"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">
+                          Payer email (optional)
+                        </span>
+                        <input
+                          type="email"
+                          value={gwEmail}
+                          onChange={e => setGwEmail(e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                          placeholder="payer@example.com"
+                        />
+                      </label>
+                    </div>
+                    <p className="text-[11px] leading-4 text-slate-500">
+                      <span className="font-bold text-slate-600">Credit rule: </span>
+                      the card is credited only when the gateway's API confirms this payment with the same amount and currency. A webhook alone never credits.
+                    </p>
+                  </div>
+
+                  {gwError && (
+                    <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{gwError}</p>
+                  )}
+                  {gwMsg && (
+                    <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{gwMsg}</p>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateGatewayCharge()}
+                    disabled={gwBusy || !gwSelected || !gwCurrencyOk}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                  >
+                    {gwBusy ? "Creating…" : "Generate checkout link"}
+                  </button>
+
+                  {gwCharge?.checkoutUrl && (
+                    <div className="space-y-3 rounded-xl border border-slate-900 bg-slate-900 p-4 text-white">
+                      <p className="text-sm font-bold">
+                        {gwCharge.amount.toFixed(2)} {gwCharge.currency} · {gwCharge.gateway.toUpperCase()} · {gwCharge.status}
+                      </p>
+                      <p className="text-[11px] text-slate-300">Reference {gwCharge.reference}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <a
+                          href={gwCharge.checkoutUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-900"
+                        >
+                          Open checkout page
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => void navigator.clipboard?.writeText(gwCharge.checkoutUrl || "")}
+                          className="rounded-lg border border-white/30 px-3 py-2 text-xs font-bold text-white"
+                        >
+                          Copy link
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleSettleGatewayCharge(gwCharge.id)}
+                          disabled={gwSettleBusy === gwCharge.id}
+                          className="rounded-lg border border-emerald-400 bg-emerald-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                        >
+                          {gwSettleBusy === gwCharge.id ? "Checking…" : "Check payment / Credit card"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {gwCharges.length > 0 && (
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                          <tr>
+                            <th className="px-4 py-2">Gateway</th>
+                            <th className="px-4 py-2">Amount</th>
+                            <th className="px-4 py-2">Reference</th>
+                            <th className="px-4 py-2">Status</th>
+                            <th className="px-4 py-2">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gwCharges.map(c => (
+                            <tr key={c.id} className="border-t border-slate-100">
+                              <td className="px-4 py-2 font-semibold text-slate-800">{c.gateway.toUpperCase()}</td>
+                              <td className="px-4 py-2">{c.amount.toFixed(2)} {c.currency}</td>
+                              <td className="px-4 py-2 font-mono text-[11px] text-slate-500">{c.reference}</td>
+                              <td className="px-4 py-2">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  c.status === "CREDITED"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : c.status === "PENDING"
+                                      ? "bg-amber-100 text-amber-700"
+                                      : "bg-slate-200 text-slate-500"
+                                }`}>{c.status}</span>
+                              </td>
+                              <td className="px-4 py-2">
+                                {c.status === "CREDITED" ? (
+                                  <span className="text-[11px] text-slate-400">Credited</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSettleGatewayCharge(c.id)}
+                                    disabled={gwSettleBusy === c.id}
+                                    className="rounded-lg border border-slate-300 px-3 py-1 text-[11px] font-bold text-slate-700 disabled:opacity-50"
+                                  >
+                                    {gwSettleBusy === c.id ? "Checking…" : "Check / Credit"}
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </Card>

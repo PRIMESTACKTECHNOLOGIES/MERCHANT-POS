@@ -53,6 +53,7 @@ import { prismaLaposRouter } from './domain/payments/prisma-lapos/prisma-lapos.r
 import { cardTopupRouter } from './domain/vault/cardTopup.router';
 import { transakVbaRouter } from './domain/wallets/transakVba.router';
 import { securityEventRouter } from './domain/security/security.router';
+import { gatewayWebhookRouter, gatewayRouter, gatewayRawBodyParser } from './domain/vault/gateways/gateway.router';
 
 export const app = express();
 
@@ -69,6 +70,11 @@ const vaultWebhookJsonParser = express.json({
     }
   },
 });
+
+// ── Payment-gateway rail: webhooks need the untouched raw body for signature checks.
+// Must be mounted before the /api/vault JSON parser below, which would otherwise
+// consume the request stream and destroy the bytes the signature is computed over.
+app.use('/api/vault/gateways', gatewayRawBodyParser, gatewayWebhookRouter);
 
 // Internal vault-bank gateway: authenticates with its own API key/HMAC contract.
 // Mount before the application JWT middleware below.
@@ -100,6 +106,7 @@ function loginRateLimiter(req: Request, res: Response, next: NextFunction) {
 // â”€â”€ Body parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Payment webhook and processor endpoints may require raw body handling for specific routes
 app.use("/merchant/v1/payments/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json({ limit: "10mb" }));
 
 // â”€â”€ Public routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -354,6 +361,7 @@ app.use('/api/wallets/vba', transakVbaRouter);
 app.use('/api', apiRouter);
 app.use('/api/vault', vaultRouter);
 app.use('/api/vault/cardtopup', cardTopupRouter);
+app.use('/api/vault/gateways', gatewayRouter);
 app.use('/api/settlements', settlementsRouter);
 app.use('/api/acquirer', acquirerSettlementRouter);
 app.use('/api/transactions', transactionsRouter);
