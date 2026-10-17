@@ -51,6 +51,8 @@ interface ExtFundingMethod {
   available: boolean;
   unavailableReason?: string;
   fixed?: Record<string, string>;
+  /** Plain-language checklist of exactly what to hand to whoever is loading the money. */
+  provideToLoader?: string[];
   fields: ExtFundingField[];
 }
 
@@ -2196,6 +2198,16 @@ export function VaultDashboardPage() {
                     <p className="text-[11px] leading-4 text-slate-500">
                       <span className="font-bold text-slate-600">Verification: </span>{selectedMethod.verifiedAgainst}
                     </p>
+                    {selectedMethod.provideToLoader && selectedMethod.provideToLoader.length > 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                        <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-700">
+                          What to give the loader
+                        </p>
+                        <ul className="list-disc space-y-0.5 pl-4 text-[11px] leading-4 text-amber-900">
+                          {selectedMethod.provideToLoader.map((line, i) => <li key={i}>{line}</li>)}
+                        </ul>
+                      </div>
+                    )}
                   </div>
 
                   {extLoadError && (
@@ -2227,6 +2239,18 @@ export function VaultDashboardPage() {
                 Generate a checkout link for this card. The loader pays on the gateway's own page;
                 the card is credited only after our server confirms the payment with the gateway's API.
               </p>
+
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-700">
+                  What to give the loader
+                </p>
+                <ul className="list-disc space-y-0.5 pl-4 text-[11px] leading-4 text-amber-900">
+                  <li>Nothing in advance — the checkout link below is the whole instruction.</li>
+                  <li>The exact amount and currency they must pay on the gateway page.</li>
+                  <li>The checkout link, for them to open and pay on their own device.</li>
+                  <li>No receipt is needed back from them: the payment is confirmed server-side with the gateway API before the card is credited.</li>
+                </ul>
+              </div>
 
               {!selectedLoadingCard ? (
                 <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">

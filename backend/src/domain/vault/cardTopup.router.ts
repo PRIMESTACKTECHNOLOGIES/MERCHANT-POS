@@ -140,6 +140,8 @@ export interface FundingMethod {
   available:  boolean;
   unavailableReason?: string;
   fixed?:     Record<string, string>;
+  /** Plain-language checklist of exactly what to hand to whoever is loading the money. */
+  provideToLoader: string[];
   fields:     FundingField[];
 }
 
@@ -147,6 +149,14 @@ const envSet = (k: string) => Boolean((process.env[k] || '').trim());
 
 /** EVM networks that can be verified without a scanner key (public RPC fallback). */
 const EVM_NETWORKS = new Set(Object.keys(EVM_PUBLIC_RPC));
+
+/** Human-readable network names for the loader checklist. */
+const NETWORK_LABEL: Record<string, string> = {
+  tron: 'TRON (TRC-20)',
+  ethereum: 'Ethereum (ERC-20)',
+  bsc: 'BNB Chain (BEP-20)',
+  polygon: 'Polygon',
+};
 
 const CRYPTO_FIELDS = (network: string): FundingField[] => [
   { name: 'txHash', label: 'Transaction hash', type: 'text', required: true, placeholder: network === 'tron' ? 'TRON tx id' : '0x…' },
@@ -167,14 +177,34 @@ const WIRE_FIELDS = (): FundingField[] => [
  * method that would silently fail verification.
  */
 export function listFundingMethods(): FundingMethod[] {
-  const wire = (id: string, title: string, subtitle: string, fixed: Record<string, string>): FundingMethod => ({
-    id, title, subtitle, group: 'bank', badge: 'Operator-confirmed',
-    endpoint: '/api/vault/cardtopup/bank-wire',
-    verifiedAgainst: 'Recorded as PENDING, then credited only when an operator confirms the funds landed in the vault bank account.',
-    available: envSet('VAULT_CASH_OPERATOR_CODE'),
-    unavailableReason: envSet('VAULT_CASH_OPERATOR_CODE') ? undefined : 'Requires VAULT_CASH_OPERATOR_CODE to be set on this server.',
-    fixed, fields: WIRE_FIELDS(),
-  });
+  // The vault-side detail that has to appear on the payment instruction so the
+  // money lands in the right account, per rail.
+  const WIRE_ACCOUNT_DETAIL: Record<string, string> = {
+    SWIFT:           'the vault account number or IBAN, the receiving bank name and its country',
+    SEPA:            'the vault account IBAN and the account holder name',
+    ACH:             'the vault account number and ABA routing number',
+    FEDWIRE:         'the vault account number and ABA routing number',
+    FASTER_PAYMENTS: 'the vault account number and the UK sort code',
+  };
+
+  const wire = (id: string, title: string, subtitle: string, fixed: Record<string, string>): FundingMethod => {
+    const transferType = fixed.transferType;
+    return {
+      id, title, subtitle, group: 'bank', badge: 'Operator-confirmed',
+      endpoint: '/api/vault/cardtopup/bank-wire',
+      verifiedAgainst: 'Recorded as PENDING, then credited only when an operator confirms the funds landed in the vault bank account.',
+      available: envSet('VAULT_CASH_OPERATOR_CODE'),
+      unavailableReason: envSet('VAULT_CASH_OPERATOR_CODE') ? undefined : 'Requires VAULT_CASH_OPERATOR_CODE to be set on this server.',
+      provideToLoader: [
+        `Where the money must land: ${WIRE_ACCOUNT_DETAIL[transferType] || 'the vault account number or IBAN'}.`,
+        `Which rail to send on: ${transferType}.`,
+        'The exact amount and currency. A different amount is refused when the wire is confirmed.',
+        'A unique payment reference you invent and hand over, so the wire can be matched to this card.',
+        'The warning that the card stays uncredited until an operator confirms the funds actually arrived.',
+      ],
+      fixed, fields: WIRE_FIELDS(),
+    };
+  };
 
   const crypto = (id: string, title: string, subtitle: string, network: string, envKey: string, scanner: string): FundingMethod => {
     // A scanner key is optional for EVM networks — verification falls back to a
@@ -189,6 +219,12 @@ export function listFundingMethods(): FundingMethod[] {
         : `Transaction looked up on ${scanner} and the on-chain USDT amount must match the amount you enter.`,
       available: hasKey || keyless,
       unavailableReason: hasKey || keyless ? undefined : `Requires ${envKey} to be set on this server.`,
+      provideToLoader: [
+        `The vault USDT deposit address on ${NETWORK_LABEL[network] || network} — they must send on this exact network.`,
+        'The exact USDT amount to send. A mismatched amount is refused.',
+        'The warning to send USDT only — another token, or a transfer that reverts on-chain, is refused.',
+        'The request to send you the transaction hash once the transfer confirms.',
+      ],
       fixed: { network }, fields: CRYPTO_FIELDS(network),
     };
   };
@@ -206,6 +242,12 @@ export function listFundingMethods(): FundingMethod[] {
       verifiedAgainst: 'Transfer fetched live from the Wise API; a transfer that is not completed is rejected.',
       available: envSet('WISE_API_KEY'),
       unavailableReason: envSet('WISE_API_KEY') ? undefined : 'Requires WISE_API_KEY to be set on this server.',
+      provideToLoader: [
+        'The vault Wise account details (account holder, account number or IBAN, and the currency) so they can send from their own Wise balance.',
+        'The exact amount and currency to send.',
+        'A reference you invent and hand over, so the transfer can be matched to this card.',
+        'The request to send you the Wise transfer ID once it is marked completed — a transfer still pending is rejected.',
+      ],
       fields: [
         { name: 'transferId', label: 'Wise transfer ID', type: 'text', required: true, placeholder: 'e.g. 1234567890' },
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
@@ -223,6 +265,11 @@ export function listFundingMethods(): FundingMethod[] {
       verifiedAgainst: 'Order status fetched live from the Transak API; only COMPLETED orders are credited.',
       available: envSet('TRANSAK_API_KEY'),
       unavailableReason: envSet('TRANSAK_API_KEY') ? undefined : 'Requires TRANSAK_API_KEY to be set on this server.',
+      provideToLoader: [
+        'The destination wallet address for the on-ramp order — that is where Transak delivers the crypto.',
+        'The exact amount and currency they are to pay.',
+        'The request to send you the Transak order ID. The card is credited only when the Transak API reports that order COMPLETED.',
+      ],
       fields: [
         { name: 'orderId', label: 'Transak order ID', type: 'text', required: true, placeholder: 'e.g. 6a1f…' },
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
@@ -235,6 +282,12 @@ export function listFundingMethods(): FundingMethod[] {
       verifiedAgainst: 'Credited only when an operator holding the vault operator code confirms the cash was received.',
       available: envSet('VAULT_CASH_OPERATOR_CODE'),
       unavailableReason: envSet('VAULT_CASH_OPERATOR_CODE') ? undefined : 'Requires VAULT_CASH_OPERATOR_CODE to be set on this server.',
+      provideToLoader: [
+        'The branch or desk where they hand the cash over.',
+        'The exact amount and currency to hand over.',
+        'The instruction to keep the receipt — its number becomes the deposit reference you record here.',
+        'Nothing else is required: the operator who takes the cash credits the card with the vault operator code.',
+      ],
       fields: [
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
         { name: 'depositRef', label: 'Deposit reference', type: 'text', required: true, placeholder: 'e.g. CASH-0417' },
@@ -249,6 +302,10 @@ export function listFundingMethods(): FundingMethod[] {
       endpoint: '/api/vault/cardtopup/card-to-card',
       verifiedAgainst: 'Debits the source vault card first, so the credit is always backed by a real balance already on the card.',
       available: true,
+      provideToLoader: [
+        'Nothing — both cards live inside this system. The source card is debited and the destination card credited in one atomic step, so no external party is involved.',
+        'Nothing outside this system can fund a card here: an outside card must be captured through one of the verified rails above.',
+      ],
       fields: [
         { name: 'sourceCardId', label: 'Source card', type: 'text', required: true, placeholder: 'e.g. eur' },
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
