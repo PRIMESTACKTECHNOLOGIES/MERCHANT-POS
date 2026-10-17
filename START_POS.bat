@@ -1,71 +1,83 @@
 @echo off
 REM ============================================================
-REM  POS SYSTEM - QUICK START
-REM ============================================================
-REM  This will start both backend and frontend servers.
-REM  The browser is intentionally not opened automatically.
+REM  PRIMESTACK POS — QUICK START
+REM  Starts backend + frontend + enables ACR122U NFC reader
 REM ============================================================
 
-title Starting POS System...
+title PRIMESTACK POS — Quick Start
 
 cd /d "%~dp0"
 
 echo.
-echo  Starting POS System...
-echo  Please wait...
+echo  PRIMESTACK POS — Starting...
 echo.
 
-REM Start backend
-start "Backend" cmd /k "cd /d ""%~dp0backend"" && title Backend Server (Port 7000) && npm run dev"
+REM ── Enable PC/SC for ACR122U ─────────────────────────────────────────────
+echo  [NFC] Enabling PC/SC service for ACR122U card reader...
+sc query SCardSvr | findstr "RUNNING" >nul 2>&1
+if errorlevel 1 (
+    net start SCardSvr >nul 2>&1
+    if errorlevel 1 (
+        echo  [NFC] WARNING: Run as Administrator to enable ACR122U support.
+    ) else (
+        echo  [NFC] PC/SC started. ACR122U will be detected automatically.
+    )
+) else (
+    echo  [NFC] PC/SC already running. ACR122U ready.
+)
+echo.
 
-REM Start frontend
-start "Frontend" cmd /k "cd /d ""%~dp0client"" && title Frontend Client (Port 7001) && npm run dev"
+REM ── Start backend ────────────────────────────────────────────────────────
+echo  [1/2] Starting backend on port 7000...
+start "Backend :7000" cmd /k "cd /d ""%~dp0backend"" && title Backend :7000 && echo Backend: http://localhost:7000 && echo ACR122U: http://localhost:7000/merchant/v1/payments/read-acr122u/status && npm run dev"
 
-REM Wait for the backend health endpoint instead of assuming a fixed startup time
-echo  Waiting for backend health check...
-set "BACKEND_READY="
+REM ── Start frontend ───────────────────────────────────────────────────────
+echo  [2/2] Starting POS dashboard on port 7001...
+start "POS Dashboard :7001" cmd /k "cd /d ""%~dp0client"" && title POS Dashboard :7001 && set VITE_API_URL=http://127.0.0.1:7000 && npm run dev -- --port 7001"
+
+REM ── Wait for backend ─────────────────────────────────────────────────────
+echo.
+echo  Waiting for backend...
+set "READY="
 for /l %%I in (1,1,60) do (
-  curl.exe --silent --show-error --fail http://localhost:7000/health >nul 2>&1
-  if not errorlevel 1 (
-    set "BACKEND_READY=1"
-    goto :backend_ready
-  )
-  timeout /t 1 /nobreak >nul
+    curl.exe --silent --fail http://localhost:7000/health >nul 2>&1
+    if not errorlevel 1 ( set "READY=1" & goto :ok )
+    timeout /t 1 /nobreak >nul
+)
+:ok
+if not defined READY (
+    echo  [WARNING] Backend not ready. Check Backend window for errors.
+) else (
+    echo  [OK] Backend live.
 )
 
-:backend_ready
-if not defined BACKEND_READY (
-  echo  Backend did not become ready within 60 seconds.
-  echo  Check the Backend console window for errors.
-  exit /b 1
-)
-
-REM Wait for the frontend HTTP server before opening the browser
-echo  Waiting for frontend health check...
-set "FRONTEND_READY="
+REM ── Wait for frontend ────────────────────────────────────────────────────
+echo  Waiting for dashboard...
+set "FREADY="
 for /l %%I in (1,1,60) do (
-  curl.exe --silent --show-error --fail http://localhost:7001 >nul 2>&1
-  if not errorlevel 1 (
-    set "FRONTEND_READY=1"
-    goto :frontend_ready
-  )
-  timeout /t 1 /nobreak >nul
+    curl.exe --silent --fail http://localhost:7001 >nul 2>&1
+    if not errorlevel 1 ( set "FREADY=1" & goto :fok )
+    timeout /t 1 /nobreak >nul
+)
+:fok
+if not defined FREADY (
+    echo  [WARNING] Dashboard not ready. Check Dashboard window for errors.
+) else (
+    echo  [OK] Dashboard live.
 )
 
-:frontend_ready
-if not defined FRONTEND_READY (
-  echo  Frontend did not become ready within 60 seconds.
-  echo  Check the Frontend console window for errors.
-  exit /b 1
-)
-
-REM Browser launch is intentionally disabled; open the frontend URL manually.
 echo.
-echo  System started!
-echo  - Backend: http://localhost:7000
-echo  - Frontend: http://localhost:7001
+echo ============================================================
+echo   SYSTEM READY
+echo ============================================================
 echo.
-echo  Keep both console windows open.
+echo   POS Dashboard  : http://localhost:7001/overview
+echo   Backend API    : http://localhost:7000
+echo   ACR122U NFC    : http://localhost:7000/merchant/v1/payments/read-acr122u/status
+echo   Android NFC    : Tap card on phone (uses Render backend)
+echo   Live Site      : https://merchantpos.netlify.app
 echo.
-
-exit
+echo   Keep both console windows open.
+echo ============================================================
+echo.
+pause
