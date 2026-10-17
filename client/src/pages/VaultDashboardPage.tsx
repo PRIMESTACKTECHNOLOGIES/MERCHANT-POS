@@ -30,6 +30,40 @@ import {
 type Tab = "overview" | "cardload" | "settlements" | "payouts" | "beneficiaries" | "withdrawals" | "fxfees" | "reconciliation" | "onramp" | "credentials";
 type AnyRecord = Record<string, any>;
 
+/** Shape returned by GET /api/vault/cardtopup/methods. */
+interface ExtFundingField {
+  name: string;
+  label: string;
+  type: "text" | "number" | "password" | "select";
+  required?: boolean;
+  placeholder?: string;
+  options?: string[];
+  defaultValue?: string;
+}
+interface ExtFundingMethod {
+  id: string;
+  title: string;
+  subtitle: string;
+  group: string;
+  badge: string;
+  endpoint: string;
+  verifiedAgainst: string;
+  available: boolean;
+  unavailableReason?: string;
+  fixed?: Record<string, string>;
+  fields: ExtFundingField[];
+}
+
+/** Display order + labels for the funding-method groups returned by the server. */
+const FUNDING_GROUPS: Array<{ id: string; label: string }> = [
+  { id: "bank",   label: "Bank transfer" },
+  { id: "wallet", label: "Wallet transfer" },
+  { id: "crypto", label: "Crypto on-chain (USDT)" },
+  { id: "ramp",   label: "On-ramp" },
+  { id: "cash",   label: "Cash" },
+  { id: "card",   label: "Card-to-card" },
+];
+
 const API = resolveApiBaseUrl({ envValue: import.meta.env.VITE_API_URL, currentOrigin: window.location.origin });
 const CARD_ASSET_BASE = `${API}/coins/cards`;
 const tabs: Array<{ id: Tab; label: string; icon: typeof Wallet }> = [
@@ -415,19 +449,15 @@ export function VaultDashboardPage() {
   const [inboundBalanceBusy, setInboundBalanceBusy] = useState(false);
   const [inboundBalanceError, setInboundBalanceError] = useState("");
   // ── External source load panel state ───────────────────────────────────────
-  const [extLoadChannel, setExtLoadChannel] = useState<"bank_wire" | "wise" | "crypto">("bank_wire");
+  // Driven entirely by the server's funding-method catalog so the panel never
+  // offers a rail this server cannot actually verify.
+  const [extMethodId, setExtMethodId] = useState<string>("wire_swift");
+  const [extMethodValues, setExtMethodValues] = useState<Record<string, string>>({});
+  const [fundingMethods, setFundingMethods] = useState<ExtFundingMethod[]>([]);
+  const [fundingMethodsBusy, setFundingMethodsBusy] = useState(false);
   const [extLoadBusy, setExtLoadBusy] = useState(false);
   const [extLoadError, setExtLoadError] = useState("");
   const [extLoadSuccess, setExtLoadSuccess] = useState("");
-  const [extWireReference, setExtWireReference] = useState("");
-  const [extSenderName, setExtSenderName] = useState("");
-  const [extSenderBank, setExtSenderBank] = useState("");
-  const [extTransferType, setExtTransferType] = useState("SWIFT");
-  const [extOperatorCode, setExtOperatorCode] = useState("");
-  const [extWiseTransferId, setExtWiseTransferId] = useState("");
-  const [extTxHash, setExtTxHash] = useState("");
-  const [extNetwork, setExtNetwork] = useState("tron");
-  const [extAmount, setExtAmount] = useState("");
   const [mintLabel, setMintLabel] = useState("");
   const [mintBusy, setMintBusy] = useState(false);
   const [mintError, setMintError] = useState("");
@@ -895,37 +925,61 @@ export function VaultDashboardPage() {
     }
   };
 
-  // ── Load from an external source (bank wire / wise / usdt on-chain) ─────────
+  // ── Load from an external source — driven by the funding-method catalog ─────
+  const loadFundingMethods = async () => {
+    setFundingMethodsBusy(true);
+    try {
+      const result = await api("/api/vault/cardtopup/methods");
+      const methods: ExtFundingMethod[] = Array.isArray(result.methods) ? result.methods : [];
+      setFundingMethods(methods);
+      // Keep the current selection if it still exists, else the first usable rail.
+      setExtMethodId(prev => {
+        if (methods.some(m => m.id === prev)) return prev;
+        return (methods.find(m => m.available) || methods[0])?.id || prev;
+      });
+    } catch {
+      setFundingMethods([]);
+    } finally {
+      setFundingMethodsBusy(false);
+    }
+  };
+
+  useEffect(() => { void loadFundingMethods(); }, []);
+
+  const selectedMethod = fundingMethods.find(m => m.id === extMethodId) || null;
+
   const handleExternalLoad = async () => {
     if (!selectedLoadingCard) { setExtLoadError("Select a target card first"); return; }
-    const amountValue = Number(extAmount);
+    if (!selectedMethod) { setExtLoadError("Select a funding method"); return; }
+
+    const method = selectedMethod;
+    const rawValues = { ...(method.fixed || {}), ...extMethodValues };
+    const amountValue = Number(rawValues.amount);
     if (!Number.isFinite(amountValue) || amountValue <= 0) { setExtLoadError("Enter a valid amount"); return; }
 
-    const base = {
-      cardId: selectedLoadingCard,
-      currency: selectedLoadingCard === "usd" ? "USD" : "EUR",
-      amount: amountValue,
-    };
+    const missing = method.fields.filter(f => f.required && !String(extMethodValues[f.name] ?? "").trim());
+    if (missing.length) { setExtLoadError(`Required: ${missing.map(f => f.label).join(", ")}`); return; }
 
     setExtLoadBusy(true); setExtLoadError(""); setExtLoadSuccess("");
     try {
-      let path: string;
-      let payload: Record<string, unknown>;
-      if (extLoadChannel === "bank_wire") {
-        path = "/api/vault/cardtopup/bank-wire";
-        payload = { ...base, wireReference: extWireReference, senderName: extSenderName, senderBank: extSenderBank, transferType: extTransferType, operatorCode: extOperatorCode };
-      } else if (extLoadChannel === "wise") {
-        path = "/api/vault/cardtopup/wise";
-        payload = { ...base, transferId: extWiseTransferId };
-      } else {
-        path = "/api/vault/cardtopup/crypto";
-        payload = { ...base, txHash: extTxHash, network: extNetwork };
-      }
-
-      const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
-      setExtLoadSuccess(`✅ ${String(result.message || "Load recorded")} — new balance ${fmtNum(Number(result.balanceAfter || 0), String(result.currency || base.currency))}`);
-      setExtWireReference(""); setExtSenderName(""); setExtSenderBank(""); setExtOperatorCode("");
-      setExtWiseTransferId(""); setExtTxHash("");
+      const result = await api(method.endpoint, {
+        method: "POST",
+        body: JSON.stringify({
+          cardId: selectedLoadingCard,
+          // card-to-card debits the source card and credits the destination; the
+          // destination is always the card selected above.
+          destCardId: selectedLoadingCard,
+          currency: selectedLoadingCard.toUpperCase(),
+          ...rawValues,
+          amount: amountValue,
+        }),
+      });
+      const isPending = String(result.status || "").toUpperCase() === "PENDING";
+      const balanceNote = isPending
+        ? " Not credited yet — an operator must confirm the funds landed."
+        : ` — new balance ${fmtNum(Number(result.balanceAfter || 0), String(result.currency || selectedLoadingCard.toUpperCase()))}.`;
+      setExtLoadSuccess(`✅ ${String(result.message || "Load recorded")}${balanceNote}`);
+      setExtMethodValues({});
       void loadInboundBalance();
     } catch (e) {
       setExtLoadError(e instanceof Error ? e.message : "Failed to load from external source");
@@ -1917,115 +1971,128 @@ export function VaultDashboardPage() {
                 </p>
               )}
 
-              {/* Channel selector */}
+              {/* Funding-method picker — driven by /api/vault/cardtopup/methods */}
               <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500">Channel</p>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {([
-                    { id: "bank_wire", title: "Bank wire", subtitle: "SWIFT / SEPA / ACH", badge: "Operator-confirmed" },
-                    { id: "wise", title: "Wise", subtitle: "", badge: "Verified" },
-                    { id: "crypto", title: "USDT on-chain", subtitle: "", badge: "Verified" },
-                  ] as const).map(ch => (
-                    <button
-                      key={ch.id}
-                      type="button"
-                      onClick={() => { setExtLoadChannel(ch.id); setExtLoadError(""); setExtLoadSuccess(""); }}
-                      className={`rounded-xl border p-4 text-left transition-colors ${extLoadChannel === ch.id ? "border-slate-900 bg-slate-50 ring-1 ring-inset ring-slate-900" : "border-slate-200 bg-white hover:bg-slate-50"}`}
-                    >
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-extrabold text-slate-900">{ch.title}</span>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${ch.id === "bank_wire" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{ch.badge}</span>
-                      </span>
-                      {ch.subtitle && <span className="mt-1 block text-[11px] text-slate-500">{ch.subtitle}</span>}
-                    </button>
-                  ))}
-                </div>
-                <p className="mt-2 text-[11px] leading-4 text-slate-500">
-                  “Wise” and “USDT on-chain” loads are verified against the provider before crediting. “Bank wire” loads are recorded on operator confirmation only.
+                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+                  Funding method
+                  {fundingMethods.length > 0 && (
+                    <span className="ml-2 font-semibold normal-case tracking-normal text-gray-400">
+                      {fundingMethods.filter(m => m.available).length} of {fundingMethods.length} usable on this server
+                    </span>
+                  )}
                 </p>
-              </div>
 
-              {/* Channel fields */}
-              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                {extLoadChannel === "bank_wire" && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Wire reference</span>
-                      <input value={extWireReference} onChange={e => setExtWireReference(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="e.g. FEDWIRE-829301" />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Sender name</span>
-                      <input value={extSenderName} onChange={e => setExtSenderName(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="Account holder" />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Sender bank</span>
-                      <input value={extSenderBank} onChange={e => setExtSenderBank(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="Bank name" />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Transfer type</span>
-                      <select value={extTransferType} onChange={e => setExtTransferType(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-                        {["SWIFT", "SEPA", "ACH", "FEDWIRE", "FASTER_PAYMENTS", "RTGS"].map(t => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Operator code</span>
-                      <input type="password" value={extOperatorCode} onChange={e => setExtOperatorCode(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="••••••••" />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Amount</span>
-                      <input type="number" value={extAmount} onChange={e => setExtAmount(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0.00" />
-                    </label>
-                  </div>
-                )}
-
-                {extLoadChannel === "wise" && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Wise transfer ID</span>
-                      <input value={extWiseTransferId} onChange={e => setExtWiseTransferId(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="e.g. 1234567890" />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Amount</span>
-                      <input type="number" value={extAmount} onChange={e => setExtAmount(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0.00" />
-                    </label>
-                  </div>
-                )}
-
-                {extLoadChannel === "crypto" && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Transaction hash</span>
-                      <input value={extTxHash} onChange={e => setExtTxHash(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0x…" />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Network</span>
-                      <select value={extNetwork} onChange={e => setExtNetwork(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-                        {["tron", "bsc", "ethereum", "polygon"].map(n => <option key={n} value={n}>{n}</option>)}
-                      </select>
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">Amount</span>
-                      <input type="number" value={extAmount} onChange={e => setExtAmount(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="0.00" />
-                    </label>
-                  </div>
+                {fundingMethodsBusy && fundingMethods.length === 0 ? (
+                  <p className="text-sm text-slate-500">Loading available funding methods…</p>
+                ) : fundingMethods.length === 0 ? (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+                    Could not load the funding-method catalog from the server.
+                  </p>
+                ) : (
+                  FUNDING_GROUPS.map(group => {
+                    const items = fundingMethods.filter(m => m.group === group.id);
+                    if (!items.length) return null;
+                    return (
+                      <div key={group.id} className="mb-3 last:mb-0">
+                        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">{group.label}</p>
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          {items.map(m => {
+                            const active = m.id === extMethodId;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                disabled={!m.available}
+                                title={m.available ? m.verifiedAgainst : m.unavailableReason}
+                                onClick={() => { setExtMethodId(m.id); setExtMethodValues({}); setExtLoadError(""); setExtLoadSuccess(""); }}
+                                className={`rounded-xl border p-4 text-left transition-colors ${
+                                  active
+                                    ? "border-slate-900 bg-slate-50 ring-1 ring-inset ring-slate-900"
+                                    : m.available
+                                      ? "border-slate-200 bg-white hover:bg-slate-50"
+                                      : "cursor-not-allowed border-dashed border-slate-200 bg-slate-100 opacity-60"
+                                }`}
+                              >
+                                <span className="flex items-start justify-between gap-2">
+                                  <span className="text-sm font-extrabold text-slate-900">{m.title}</span>
+                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    !m.available
+                                      ? "bg-slate-200 text-slate-500"
+                                      : m.badge === "Verified"
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : m.badge === "Internal"
+                                          ? "bg-sky-100 text-sky-700"
+                                          : "bg-amber-100 text-amber-700"
+                                  }`}>{m.available ? m.badge : "Unavailable"}</span>
+                                </span>
+                                {m.subtitle && <span className="mt-1 block text-[11px] text-slate-500">{m.subtitle}</span>}
+                                {!m.available && m.unavailableReason && (
+                                  <span className="mt-1 block text-[11px] font-semibold text-slate-500">{m.unavailableReason}</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
-              {extLoadError && (
-                <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{extLoadError}</p>
-              )}
-              {extLoadSuccess && (
-                <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{extLoadSuccess}</p>
-              )}
+              {selectedMethod ? (
+                <>
+                  {/* Dynamic fields for the selected rail */}
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {selectedMethod.fields.map(f => (
+                        <label key={f.name} className="block">
+                          <span className="mb-1 block text-xs font-bold uppercase tracking-wider text-gray-500">
+                            {f.label}{f.required && <span className="text-red-500"> *</span>}
+                          </span>
+                          {f.type === "select" ? (
+                            <select
+                              value={extMethodValues[f.name] ?? f.defaultValue ?? ""}
+                              onChange={e => setExtMethodValues(v => ({ ...v, [f.name]: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                            >
+                              {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                          ) : (
+                            <input
+                              type={f.type}
+                              value={extMethodValues[f.name] ?? f.defaultValue ?? ""}
+                              onChange={e => setExtMethodValues(v => ({ ...v, [f.name]: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                              placeholder={f.placeholder}
+                            />
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[11px] leading-4 text-slate-500">
+                      <span className="font-bold text-slate-600">Verification: </span>{selectedMethod.verifiedAgainst}
+                    </p>
+                  </div>
 
-              <button
-                type="button"
-                onClick={() => void handleExternalLoad()}
-                disabled={extLoadBusy || !selectedLoadingCard}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
-              >
-                {extLoadBusy ? "Loading…" : "Load to card"}
-              </button>
+                  {extLoadError && (
+                    <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{extLoadError}</p>
+                  )}
+                  {extLoadSuccess && (
+                    <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{extLoadSuccess}</p>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => void handleExternalLoad()}
+                    disabled={extLoadBusy || !selectedLoadingCard || !selectedMethod.available}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                  >
+                    {extLoadBusy ? "Loading…" : "Load to card"}
+                  </button>
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">Select a funding method to continue.</p>
+              )}
             </div>
           </Card>
 

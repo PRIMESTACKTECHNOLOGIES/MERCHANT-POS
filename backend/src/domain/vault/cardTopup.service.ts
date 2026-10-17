@@ -296,6 +296,29 @@ const BSC_USDT_CONTRACT   = '0x55d398326f99059fF775485246999027B3197955';
 const ETH_USDT_CONTRACT   = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
 const POLY_USDT_CONTRACT  = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
 
+/**
+ * Keyless public JSON-RPC nodes, used for EVM networks when no scanner API key
+ * is configured. They serve the same two calls the scanner proxy module does
+ * (eth_getTransactionByHash + eth_getTransactionReceipt), so the verification
+ * is identical. A node that cannot be reached fails closed — the load is
+ * rejected rather than credited.
+ */
+export const EVM_PUBLIC_RPC: Record<string, string[]> = {
+  ethereum: ['https://ethereum-rpc.publicnode.com', 'https://cloudflare-eth.com'],
+  bsc:      ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.binance.org'],
+  polygon:  ['https://polygon-bor-rpc.publicnode.com', 'https://polygon-rpc.com'],
+};
+
+/** True when the EVM rail has a working verifier: a scanner key or a public node. */
+export function evmRailIsAvailable(network: string): boolean {
+  const keyFor: Record<string, string> = {
+    ethereum: 'ETHERSCAN_API_KEY',
+    bsc:      'BSCSCAN_API_KEY',
+    polygon:  'POLYGONSCAN_API_KEY',
+  };
+  return Boolean((process.env[keyFor[network]] || '').trim()) || Boolean(EVM_PUBLIC_RPC[network]?.length);
+}
+
 export async function topupViaCrypto(input: CryptoTopupInput): Promise<TopupResult> {
   if (!input.txHash?.trim() || input.amount <= 0) {
     return { ok: false, channel: 'crypto', cardId: input.cardId, currency: input.currency,
@@ -324,26 +347,57 @@ export async function topupViaCrypto(input: CryptoTopupInput): Promise<TopupResu
         }
       }
     } else if (input.network === 'bsc' || input.network === 'ethereum' || input.network === 'polygon') {
-      // Verify via BscScan / Etherscan / PolygonScan
-      const apiKey = input.network === 'bsc'
-        ? (process.env.BSCSCAN_API_KEY || 'YourBscScanAPIKey')
-        : input.network === 'polygon'
-          ? (process.env.POLYGONSCAN_API_KEY || 'YourPolygonScanAPIKey')
-          : (process.env.ETHERSCAN_API_KEY  || 'YourEtherscanAPIKey');
-      const baseUrl = input.network === 'bsc'
-        ? 'https://api.bscscan.com/api'
-        : input.network === 'polygon'
-          ? 'https://api.polygonscan.com/api'
-          : 'https://api.etherscan.io/api';
       const contract = input.network === 'bsc' ? BSC_USDT_CONTRACT
         : input.network === 'polygon' ? POLY_USDT_CONTRACT : ETH_USDT_CONTRACT;
-      const resp = await axios.get(baseUrl, {
-        params: { module: 'proxy', action: 'eth_getTransactionByHash', txhash: input.txHash, apikey: apiKey },
-        timeout: 10000,
-      });
-      const tx = resp.data?.result;
-      if (tx && String(tx.to).toLowerCase() === contract.toLowerCase()) {
-        // Decode ERC-20 transfer amount from input data
+
+      // Prefer the scanner API when a key is configured; otherwise use a keyless
+      // public JSON-RPC node. Both return the same raw tx + receipt, so the
+      // verification below is identical either way.
+      const scannerApiKey = input.network === 'bsc'
+        ? (process.env.BSCSCAN_API_KEY || '')
+        : input.network === 'polygon'
+          ? (process.env.POLYGONSCAN_API_KEY || '')
+          : (process.env.ETHERSCAN_API_KEY  || '');
+
+      let tx: any = null;
+      let receipt: any = null;
+
+      if (scannerApiKey) {
+        const baseUrl = input.network === 'bsc'
+          ? 'https://api.bscscan.com/api'
+          : input.network === 'polygon'
+            ? 'https://api.polygonscan.com/api'
+            : 'https://api.etherscan.io/api';
+        const txResp = await axios.get(baseUrl, {
+          params: { module: 'proxy', action: 'eth_getTransactionByHash', txhash: input.txHash, apikey: scannerApiKey },
+          timeout: 10000,
+        });
+        tx = txResp.data?.result;
+        const rcResp = await axios.get(baseUrl, {
+          params: { module: 'proxy', action: 'eth_getTransactionReceipt', txhash: input.txHash, apikey: scannerApiKey },
+          timeout: 10000,
+        });
+        receipt = rcResp.data?.result;
+      } else {
+        const rpcCall = async (method: string, params: unknown[]) => {
+          let lastErr: any = null;
+          for (const rpc of EVM_PUBLIC_RPC[input.network] || []) {
+            try {
+              const resp = await axios.post(rpc, { jsonrpc: '2.0', id: 1, method, params }, { timeout: 10000 });
+              if (resp.data?.result) return resp.data.result;
+            } catch (e: any) { lastErr = e; }
+          }
+          if (lastErr) throw lastErr;
+          return null;
+        };
+        tx = await rpcCall('eth_getTransactionByHash', [input.txHash]);
+        receipt = await rpcCall('eth_getTransactionReceipt', [input.txHash]);
+      }
+
+      // The tx must have executed successfully — a reverted transfer moves no funds.
+      const succeeded = receipt && String(receipt.status).toLowerCase() === '0x1';
+      if (tx && succeeded && String(tx.to).toLowerCase() === contract.toLowerCase()) {
+        // Decode the ERC-20 transfer(address,uint256) amount from the input data
         const data = String(tx.input || '');
         if (data.startsWith('0xa9059cbb')) {
           const amountHex = data.slice(74, 138);

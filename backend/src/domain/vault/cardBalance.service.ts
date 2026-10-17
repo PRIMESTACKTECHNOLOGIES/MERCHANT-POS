@@ -78,6 +78,24 @@ export interface CardTxn {
   createdAt:    string;
 }
 
+/** Map a vault_card_txns row to the API shape. */
+function mapCardTxn(r: any): CardTxn {
+  return {
+    id:           r.id,
+    cardId:       r.card_id,
+    currency:     r.currency,
+    type:         r.type,
+    amount:       Number(r.amount),
+    balanceAfter: Number(r.balance_after),
+    channel:      r.channel ?? undefined,
+    providerRef:  r.provider_ref ?? undefined,
+    externalRef:  r.external_ref ?? undefined,
+    note:         r.note ?? undefined,
+    status:       r.status ?? 'POSTED',
+    createdAt:    r.created_at,
+  };
+}
+
 // ── Core operations ───────────────────────────────────────────────────────────
 
 /**
@@ -129,6 +147,22 @@ export async function creditCard(
 
   const ccy = currency.toUpperCase();
   const now = new Date().toISOString();
+
+  // Idempotency: a credit is keyed on the provider's own reference. Replaying the
+  // same Wise transfer, on-chain tx hash or wire reference must never credit twice.
+  if (providerRef) {
+    const dup = (await db.query(
+      `SELECT * FROM vault_card_txns
+        WHERE card_id = ? AND type = 'CREDIT' AND channel = ? AND provider_ref = ?
+          AND COALESCE(status,'POSTED') <> 'VOIDED'
+        LIMIT 1`,
+      [cardId, channel, providerRef]
+    )).rows[0] as any;
+    if (dup) {
+      console.warn(`[CardBalance] ⏭ duplicate credit ignored: channel=${channel} ref=${providerRef} (already credited ${Number(dup.amount).toFixed(2)} ${dup.currency})`);
+      return mapCardTxn(dup);
+    }
+  }
 
   await db.query('BEGIN IMMEDIATE');
   try {
@@ -259,20 +293,7 @@ export async function getCardHistory(
         [cardId, limit]
       )).rows;
 
-  return (rows as any[]).map(r => ({
-    id:           r.id,
-    cardId:       r.card_id,
-    currency:     r.currency,
-    type:         r.type,
-    amount:       Number(r.amount),
-    balanceAfter: Number(r.balance_after),
-    channel:      r.channel ?? undefined,
-    providerRef:  r.provider_ref ?? undefined,
-    externalRef:  r.external_ref ?? undefined,
-    note:         r.note ?? undefined,
-    status:       r.status ?? 'POSTED',
-    createdAt:    r.created_at,
-  }));
+  return (rows as any[]).map(mapCardTxn);
 }
 
 /**
