@@ -53,6 +53,10 @@ interface ExtFundingMethod {
   fixed?: Record<string, string>;
   /** Plain-language checklist of exactly what to hand to whoever is loading the money. */
   provideToLoader?: string[];
+  /** Where the money must be sent — one entry per receiving account. */
+  receiving?: Array<{ title: string; rows: Array<{ label: string; value: string; mono?: boolean }> }>;
+  /** Why there is nothing to hand over, or what to configure to get it. */
+  receivingNote?: string;
   fields: ExtFundingField[];
 }
 
@@ -482,6 +486,7 @@ export function VaultDashboardPage() {
   // offers a rail this server cannot actually verify.
   const [extMethodId, setExtMethodId] = useState<string>("wire_swift");
   const [extMethodValues, setExtMethodValues] = useState<Record<string, string>>({});
+  const [extGuideId, setExtGuideId] = useState<string | null>(null);
   const [fundingMethods, setFundingMethods] = useState<ExtFundingMethod[]>([]);
   const [fundingMethodsBusy, setFundingMethodsBusy] = useState(false);
   const [extLoadBusy, setExtLoadBusy] = useState(false);
@@ -1073,6 +1078,49 @@ export function VaultDashboardPage() {
   };
 
   const selectedMethod = fundingMethods.find(m => m.id === extMethodId) || null;
+
+  // Rail whose "details to hand the loader" window is open.
+  const guideMethod = fundingMethods.find(m => m.id === extGuideId) || null;
+  // Wires are matched by the reference the sender quotes, so it is generated
+  // here and shown in the instruction window as well as the recording form.
+  const guideRef = guideMethod && guideMethod.fields.some(f => f.name === "wireReference")
+    ? String(extMethodValues.wireReference || "").trim() || null
+    : null;
+
+  const makePaymentRef = (methodId: string) =>
+    `${methodId.replace(/^wire_/, "").toUpperCase()}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+
+  const openMethodGuide = (method: ExtFundingMethod) => {
+    setExtMethodId(method.id);
+    const needsRef = method.fields.some(f => f.name === "wireReference");
+    setExtMethodValues(needsRef ? { wireReference: makePaymentRef(method.id) } : {});
+    setExtLoadError("");
+    setExtLoadSuccess("");
+    setExtGuideId(method.id);
+  };
+
+  // Amount/currency to state on the instruction sheet handed to the loader.
+  const guideAmount = String(extMethodValues.amount || "").trim();
+  const guideCurrency = selectedLoadingCard ? selectedLoadingCard.toUpperCase() : "";
+
+  /** The whole sheet as plain text, so it can be pasted into an email or chat. */
+  const guideAsText = (m: ExtFundingMethod): string => {
+    const lines: string[] = [`${m.title} — ${m.subtitle}`, ""];
+    lines.push("SENDING DETAILS");
+    lines.push(`  Amount: ${guideAmount || "the agreed amount"}${guideCurrency ? ` ${guideCurrency}` : ""}`);
+    if (guideRef) lines.push(`  Payment reference: ${guideRef}`);
+    (m.provideToLoader || []).forEach(l => lines.push(`  - ${l}`));
+    lines.push("", "RECEIVING DETAILS");
+    if (m.receiving && m.receiving.length) {
+      m.receiving.forEach(acct => {
+        lines.push(`  ${acct.title}`);
+        acct.rows.forEach(r => lines.push(`    ${r.label}: ${r.value}`));
+      });
+    } else {
+      lines.push(`  ${m.receivingNote || "No receiving details are configured."}`);
+    }
+    return lines.join("\n");
+  };
 
   const handleExternalLoad = async () => {
     if (!selectedLoadingCard) { setExtLoadError("Select a target card first"); return; }
@@ -2004,6 +2052,155 @@ export function VaultDashboardPage() {
           </div>
         )}
 
+        {/* Instruction window — the full sending + receiving sheet for the picked rail */}
+        {guideMethod && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${guideMethod.title} — sending and receiving details`}
+            onClick={() => setExtGuideId(null)}
+          >
+            <div
+              className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <h3 className="text-lg font-extrabold text-slate-900">{guideMethod.title}</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {guideMethod.subtitle}
+                    <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{guideMethod.badge}</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExtGuideId(null)}
+                  className="shrink-0 rounded-lg px-3 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="space-y-4 overflow-y-auto px-5 py-4">
+                <p className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
+                  selectedLoadingCard
+                    ? "border-slate-200 bg-slate-50 text-slate-600"
+                    : "border-amber-200 bg-amber-50 text-amber-700"
+                }`}>
+                  {selectedLoadingCard
+                    ? `This load lands on the ${selectedLoadingCard.toUpperCase()} vault card.`
+                    : "No target card selected yet — pick one with “Add card” before you record this load."}
+                </p>
+
+                {/* SENDING — what the payer must have and do */}
+                <section className="overflow-hidden rounded-xl border border-slate-200">
+                  <header className="border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Sending details — what the payer needs</h4>
+                  </header>
+                  <div className="divide-y divide-slate-100">
+                    <div className="flex items-baseline justify-between gap-4 px-4 py-2.5">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Amount</span>
+                      <span className="text-sm font-semibold text-slate-900">
+                        {guideAmount || "the amount you agree with them"}{guideAmount && guideCurrency ? ` ${guideCurrency}` : ""}
+                      </span>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-4 px-4 py-2.5">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Currency</span>
+                      <span className="text-sm font-semibold text-slate-900">{guideCurrency || "the card's currency"}</span>
+                    </div>
+                    {guideRef && (
+                      <div className="flex items-baseline justify-between gap-4 px-4 py-2.5">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Payment reference</span>
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-bold text-slate-900">{guideRef}</span>
+                          <button
+                            type="button"
+                            onClick={() => { void navigator.clipboard.writeText(guideRef); setMessage("Payment reference copied"); }}
+                            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                            aria-label="Copy payment reference"
+                          >
+                            <Copy size={14} />
+                          </button>
+                        </span>
+                      </div>
+                    )}
+                    <div className="px-4 py-3">
+                      <p className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-400">What to give the loader</p>
+                      <ul className="list-disc space-y-0.5 pl-4 text-[11px] leading-4 text-slate-600">
+                        {(guideMethod.provideToLoader || []).map((line, i) => <li key={i}>{line}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                </section>
+
+                {/* RECEIVING — where the money must actually land */}
+                <section className="overflow-hidden rounded-xl border border-slate-200">
+                  <header className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Receiving details — where the money lands</h4>
+                    {guideMethod.receiving && guideMethod.receiving.length > 0 && (
+                      <span className="text-[11px] font-semibold text-slate-400">{guideMethod.receiving.length} account{guideMethod.receiving.length > 1 ? "s" : ""}</span>
+                    )}
+                  </header>
+                  {guideMethod.receiving && guideMethod.receiving.length > 0 ? (
+                    <div className="divide-y divide-slate-100">
+                      {guideMethod.receiving.map((acct, ai) => (
+                        <div key={ai} className="px-4 py-3">
+                          <p className="mb-2 text-sm font-extrabold text-slate-900">{acct.title}</p>
+                          <div className="space-y-1.5">
+                            {acct.rows.map((row, ri) => (
+                              <div key={ri} className="flex items-baseline justify-between gap-4">
+                                <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-slate-400">{row.label}</span>
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span className={`truncate text-sm text-slate-900 ${row.mono ? "font-mono font-bold" : "font-semibold"}`}>{row.value}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => { void navigator.clipboard.writeText(row.value); setMessage(`${row.label} copied`); }}
+                                    className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                    aria-label={`Copy ${row.label}`}
+                                  >
+                                    <Copy size={14} />
+                                  </button>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="px-4 py-3 text-sm font-semibold text-amber-700">
+                      {guideMethod.receivingNote || "No receiving details are configured for this rail yet."}
+                    </p>
+                  )}
+                </section>
+
+                <p className="text-[11px] leading-4 text-slate-500">
+                  <span className="font-bold text-slate-600">What is verified before the card is credited: </span>
+                  {guideMethod.verifiedAgainst}
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => { void navigator.clipboard.writeText(guideAsText(guideMethod)); setMessage("Full instructions copied"); }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"
+                >
+                  <Copy size={15} /> Copy all details
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExtGuideId(null)}
+                  className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800"
+                >
+                  Record this load
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {selectedCard && (
           <div className="xl:col-span-2">
             <Card title={`Selected card · ${selectedCard.currency}`}>
@@ -2130,7 +2327,7 @@ export function VaultDashboardPage() {
                                 type="button"
                                 disabled={!m.available}
                                 title={m.available ? m.verifiedAgainst : m.unavailableReason}
-                                onClick={() => { setExtMethodId(m.id); setExtMethodValues({}); setExtLoadError(""); setExtLoadSuccess(""); }}
+                                onClick={() => openMethodGuide(m)}
                                 className={`rounded-xl border p-4 text-left transition-colors ${
                                   active
                                     ? "border-slate-900 bg-slate-50 ring-1 ring-inset ring-slate-900"
@@ -2208,6 +2405,13 @@ export function VaultDashboardPage() {
                         </ul>
                       </div>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setExtGuideId(selectedMethod.id)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                    >
+                      <FileText size={14} /> Sending &amp; receiving details
+                    </button>
                   </div>
 
                   {extLoadError && (

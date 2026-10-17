@@ -39,6 +39,7 @@ import {
   getCardHistory,
   listAllCardBalances,
 } from './cardBalance.service';
+import { db } from '../../config/db';
 
 const router = Router();
 
@@ -142,7 +143,32 @@ export interface FundingMethod {
   fixed?:     Record<string, string>;
   /** Plain-language checklist of exactly what to hand to whoever is loading the money. */
   provideToLoader: string[];
+  /** Where the money must be sent — ready to hand over, one entry per receiving account. */
+  receiving?: LoaderAccount[];
+  /** Why there is nothing to hand over, or what to configure to get it. */
+  receivingNote?: string;
   fields:     FundingField[];
+}
+
+/** One copyable line of the receiving instruction handed to the loader. */
+export interface LoaderDetail {
+  label: string;
+  value: string;
+  /** Render monospaced — account numbers, IBANs, wallet addresses, hashes. */
+  mono?: boolean;
+}
+
+/** Where the money must be sent. A rail can offer several (one per currency/network). */
+export interface LoaderAccount {
+  title: string;
+  rows: LoaderDetail[];
+}
+
+/** A row of the `bank_accounts` table owned by the merchant. */
+export interface BankAccountRow {
+  bank_name?: string | null;      account_holder?: string | null; account_number?: string | null;
+  routing_number?: string | null; iban?: string | null;           swift_code?: string | null;
+  bank_address?: string | null;   currency?: string | null;       is_default?: number | null;
 }
 
 const envSet = (k: string) => Boolean((process.env[k] || '').trim());
@@ -157,6 +183,43 @@ const NETWORK_LABEL: Record<string, string> = {
   bsc: 'BNB Chain (BEP-20)',
   polygon: 'Polygon',
 };
+
+/** The vault's USDT deposit address per network — shown to the loader verbatim. */
+const USDT_DEPOSIT_ADDRESS: Record<string, string> = {
+  tron:     (process.env.VAULT_USDT_TRON_ADDRESS || '').trim(),
+  ethereum: (process.env.VAULT_USDT_ETHEREUM_ADDRESS || '').trim(),
+  bsc:      (process.env.VAULT_USDT_BSC_ADDRESS || '').trim(),
+  polygon:  (process.env.VAULT_USDT_POLYGON_ADDRESS || '').trim(),
+};
+
+/** Which currency a wire rail can receive into. null = any currency. */
+const WIRE_CURRENCY: Record<string, string | null> = {
+  SWIFT: null, SEPA: 'EUR', ACH: 'USD', FEDWIRE: 'USD', RTGS: 'USD', FASTER_PAYMENTS: 'GBP',
+};
+
+/** Turn a merchant bank account row into the copyable lines the loader needs. */
+function accountDetailRows(a: BankAccountRow): LoaderDetail[] {
+  const rows: LoaderDetail[] = [];
+  const push = (label: string, value: unknown, mono = false) => {
+    const v = value === null || value === undefined ? '' : String(value).trim();
+    if (v) rows.push({ label, value: v, mono });
+  };
+  push('Account holder', a.account_holder);
+  push('Bank name', a.bank_name);
+  push('IBAN', a.iban, true);
+  push('Account number', a.account_number, true);
+  push('SWIFT / BIC', a.swift_code, true);
+  push('Routing / ABA', a.routing_number, true);
+  push('Bank address', a.bank_address);
+  push('Currency', a.currency);
+  return rows;
+}
+
+const accountTitle = (a: BankAccountRow): string =>
+  `${a.bank_name || 'Vault account'} · ${String(a.currency || '').toUpperCase() || '—'}${a.is_default ? ' · default' : ''}`;
+
+const toLoaderAccounts = (rows: BankAccountRow[]): LoaderAccount[] =>
+  rows.map((a) => ({ title: accountTitle(a), rows: accountDetailRows(a) })).filter((acct) => acct.rows.length > 0);
 
 const CRYPTO_FIELDS = (network: string): FundingField[] => [
   { name: 'txHash', label: 'Transaction hash', type: 'text', required: true, placeholder: network === 'tron' ? 'TRON tx id' : '0x…' },
@@ -176,7 +239,7 @@ const WIRE_FIELDS = (): FundingField[] => [
  * `available` is computed from live configuration so the UI can never offer a
  * method that would silently fail verification.
  */
-export function listFundingMethods(): FundingMethod[] {
+export function listFundingMethods(bankAccounts: BankAccountRow[] = []): FundingMethod[] {
   // The vault-side detail that has to appear on the payment instruction so the
   // money lands in the right account, per rail.
   const WIRE_ACCOUNT_DETAIL: Record<string, string> = {
@@ -189,6 +252,10 @@ export function listFundingMethods(): FundingMethod[] {
 
   const wire = (id: string, title: string, subtitle: string, fixed: Record<string, string>): FundingMethod => {
     const transferType = fixed.transferType;
+    const wanted = WIRE_CURRENCY[transferType] ?? null;
+    const receiving = toLoaderAccounts(
+      bankAccounts.filter((a) => !wanted || String(a.currency || '').toUpperCase() === wanted),
+    );
     return {
       id, title, subtitle, group: 'bank', badge: 'Operator-confirmed',
       endpoint: '/api/vault/cardtopup/bank-wire',
@@ -202,6 +269,10 @@ export function listFundingMethods(): FundingMethod[] {
         'A unique payment reference you invent and hand over, so the wire can be matched to this card.',
         'The warning that the card stays uncredited until an operator confirms the funds actually arrived.',
       ],
+      receiving,
+      receivingNote: receiving.length
+        ? undefined
+        : `No ${wanted ? `${wanted} ` : ''}receiving account is registered for this merchant yet — add it under Bank accounts so the loader has somewhere to send.`,
       fixed, fields: WIRE_FIELDS(),
     };
   };
@@ -211,6 +282,7 @@ export function listFundingMethods(): FundingMethod[] {
     // keyless public JSON-RPC node (see EVM_PUBLIC_RPC in cardTopup.service).
     const hasKey = envSet(envKey);
     const keyless = EVM_NETWORKS.has(network);
+    const depositAddress = USDT_DEPOSIT_ADDRESS[network] || '';
     return {
       id, title, subtitle, group: 'crypto', badge: 'Verified',
       endpoint: '/api/vault/cardtopup/crypto',
@@ -225,9 +297,28 @@ export function listFundingMethods(): FundingMethod[] {
         'The warning to send USDT only — another token, or a transfer that reverts on-chain, is refused.',
         'The request to send you the transaction hash once the transfer confirms.',
       ],
+      receiving: depositAddress
+        ? [{
+            title: `${NETWORK_LABEL[network] || network} deposit address`,
+            rows: [
+              { label: 'Network', value: NETWORK_LABEL[network] || network },
+              { label: 'Token', value: 'USDT', mono: true },
+              { label: 'Deposit address', value: depositAddress, mono: true },
+            ],
+          }]
+        : [],
+      receivingNote: depositAddress
+        ? undefined
+        : `Set VAULT_USDT_${network.toUpperCase()}_ADDRESS to show the deposit address here.`,
       fixed: { network }, fields: CRYPTO_FIELDS(network),
     };
   };
+
+  const wiseReceiving = toLoaderAccounts(
+    bankAccounts.filter((a) => /wise|transferwise/i.test(String(a.bank_name || ''))),
+  );
+  const transakAddress = (process.env.VAULT_TRANSAK_WALLET_ADDRESS || '').trim();
+  const cashBranch = (process.env.VAULT_CASH_BRANCH || '').trim();
 
   return [
     wire('wire_swift', 'SWIFT international wire', 'Cross-border, any currency', { transferType: 'SWIFT' }),
@@ -248,6 +339,10 @@ export function listFundingMethods(): FundingMethod[] {
         'A reference you invent and hand over, so the transfer can be matched to this card.',
         'The request to send you the Wise transfer ID once it is marked completed — a transfer still pending is rejected.',
       ],
+      receiving: wiseReceiving,
+      receivingNote: wiseReceiving.length
+        ? undefined
+        : 'No Wise account is registered for this merchant yet — add it under Bank accounts so the loader has somewhere to send.',
       fields: [
         { name: 'transferId', label: 'Wise transfer ID', type: 'text', required: true, placeholder: 'e.g. 1234567890' },
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
@@ -270,6 +365,12 @@ export function listFundingMethods(): FundingMethod[] {
         'The exact amount and currency they are to pay.',
         'The request to send you the Transak order ID. The card is credited only when the Transak API reports that order COMPLETED.',
       ],
+      receiving: transakAddress
+        ? [{ title: 'On-ramp destination', rows: [{ label: 'Destination wallet address', value: transakAddress, mono: true }] }]
+        : [],
+      receivingNote: transakAddress
+        ? undefined
+        : 'Set VAULT_TRANSAK_WALLET_ADDRESS to show the destination address here.',
       fields: [
         { name: 'orderId', label: 'Transak order ID', type: 'text', required: true, placeholder: 'e.g. 6a1f…' },
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
@@ -288,6 +389,12 @@ export function listFundingMethods(): FundingMethod[] {
         'The instruction to keep the receipt — its number becomes the deposit reference you record here.',
         'Nothing else is required: the operator who takes the cash credits the card with the vault operator code.',
       ],
+      receiving: cashBranch
+        ? [{ title: 'Cash deposit point', rows: [{ label: 'Branch / desk', value: cashBranch }] }]
+        : [],
+      receivingNote: cashBranch
+        ? undefined
+        : 'Set VAULT_CASH_BRANCH to show the deposit location here.',
       fields: [
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
         { name: 'depositRef', label: 'Deposit reference', type: 'text', required: true, placeholder: 'e.g. CASH-0417' },
@@ -306,6 +413,8 @@ export function listFundingMethods(): FundingMethod[] {
         'Nothing — both cards live inside this system. The source card is debited and the destination card credited in one atomic step, so no external party is involved.',
         'Nothing outside this system can fund a card here: an outside card must be captured through one of the verified rails above.',
       ],
+      receiving: [],
+      receivingNote: 'Nothing external — both cards are inside this system, so there is no account to send to.',
       fields: [
         { name: 'sourceCardId', label: 'Source card', type: 'text', required: true, placeholder: 'e.g. eur' },
         { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
@@ -321,8 +430,26 @@ export function listFundingMethods(): FundingMethod[] {
  * actually usable on this server, so the UI never offers a method that would
  * fail verification.
  */
-router.get('/methods', (_req: Request, res: Response) => {
-  const methods = listFundingMethods();
+router.get('/methods', async (_req: Request, res: Response) => {
+  // The receiving details handed to a loader are this merchant's own bank
+  // accounts, so the catalog is built from live configuration + real rows.
+  let bankAccounts: BankAccountRow[] = [];
+  try {
+    const merchantId = process.env.PROCESSOR_MERCHANT_ID?.trim() || 'MRC-1001';
+    const result = await db.query(
+      `SELECT bank_name, account_holder, account_number, routing_number, iban,
+              swift_code, bank_address, currency, is_default
+         FROM bank_accounts
+        WHERE merchant_id = ?
+        ORDER BY is_default DESC, currency ASC`,
+      [merchantId],
+    );
+    bankAccounts = result.rows as unknown as BankAccountRow[];
+  } catch {
+    // The catalog is still useful without receiving details.
+  }
+
+  const methods = listFundingMethods(bankAccounts);
   return res.json({
     ok: true,
     count: methods.length,
