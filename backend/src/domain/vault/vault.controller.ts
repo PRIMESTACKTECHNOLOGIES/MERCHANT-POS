@@ -2,7 +2,8 @@ import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../config/db';
 import { generateUetr } from '../../utils/uetr.generator';
-import { buildPain001Xml } from '../../utils/pain001.builder';
+import { buildPain001Xml } from '../iso20022/pain001.builder';
+import { IsoAccountParty } from '../iso20022/xml.util';
 import path from 'path';
 import fs from 'fs';
 import { vaultEngine } from './vault.service';
@@ -747,24 +748,54 @@ export class VaultController {
       const downloadFilename = `PAIN001_ISO20022_SEPA_${transfer.currency}${Math.round(Number(transfer.amount))}_${msgId}_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xml`;
 
       const debtorName = debtor.bank_name || 'Vault Settlement Account';
-      const debtorBic = debtor.bic || 'PROCESSOR_BIC_PLACEHOLDER';
-      const debtorIban = debtor.iban || 'PROCESSOR_IBAN_PLACEHOLDER';
+      const debtorIban = String(debtor.iban || '').trim();
+      const debtorBic = String(debtor.bic || '').trim();
+      if (!debtorIban || !debtorBic) {
+        return res.status(400).json({
+          error: 'Vault account needs both an IBAN and a BIC to originate a SEPA pain.001',
+          code: 'SRC_ACCOUNT_IDENTIFIERS_REQUIRED',
+          iban_present: Boolean(debtorIban),
+          bic_present: Boolean(debtorBic),
+        });
+      }
+      const creditorName = creditor.name || creditor.account_holder || 'Creditor';
+      const creditorIban = String(creditor.iban || '').trim();
+      const creditorBic = String(creditor.swift || creditor.bic || '').trim();
+
+      const debtorParty: IsoAccountParty = { name: debtorName, iban: debtorIban, bic: debtorBic };
+      const creditorParty: IsoAccountParty = {
+        name: creditorName,
+        iban: creditorIban,
+        bic: creditorBic,
+      };
+      const creditorAgent: IsoAccountParty = {
+        bic: creditorBic,
+        agentName: creditor.bank_name || creditorName,
+      };
 
       const xml = buildPain001Xml({
-        msgId,
-        createdAt: now,
-        debtor: { name: debtorName, bic: debtorBic, iban: debtorIban },
-        transactions: [{
-          instrId: `INSTR-${transfer.id.slice(0, 16).toUpperCase()}`,
-          endToEndId: transfer.reference,
-          amount: Number(transfer.amount),
-          currency: transfer.currency,
-          creditorName: creditor.name || creditor.account_holder || 'Creditor',
-          creditorIban: creditor.iban,
-          creditorBic: creditor.swift || creditor.bic || 'UNKNOWNBIC',
-          remittanceInfo: `SEPA Transfer ${transfer.reference} | Amount ${transfer.currency} ${Number(transfer.amount).toFixed(2)} | Internal note: ${transfer.internal_note || 'n/a'} | Vault Protocol 201.3`,
+        messageId: msgId,
+        initiatingParty: debtorParty,
+        debtor: debtorParty,
+        paymentInstructions: [{
+          batchBooking: true,
+          chargeBearer: 'SLEV',
+          serviceLevelCode: 'SEPA',
+          requestedExecutionDate: now.slice(0, 10),
+          transactions: [{
+            instructionId: `INSTR-${transfer.id.slice(0, 16).toUpperCase()}`,
+            endToEndId: transfer.reference,
+            uetr: String(uetr).toLowerCase(),
+            amount: Number(transfer.amount),
+            currency: transfer.currency,
+            creditor: creditorParty,
+            creditorAgent,
+            remittance: {
+              unstructured: [`SEPA Transfer ${transfer.reference} | Amount ${transfer.currency} ${Number(transfer.amount).toFixed(2)} | Internal note: ${transfer.internal_note || 'n/a'} | Vault Protocol 201.3`],
+            },
+          }],
         }],
-      });
+      }).xml;
 
       const settleDirName = `SETTLEMENT_VAULT_SEPA_${transfer.currency}${Math.round(Number(transfer.amount))}_${transfer.reference}_${transfer.id.slice(0, 8)}`;
       const settleDir = path.join(BACKEND_ROOT, settleDirName);

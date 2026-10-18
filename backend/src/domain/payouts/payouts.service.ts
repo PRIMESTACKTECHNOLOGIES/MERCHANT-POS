@@ -2,7 +2,8 @@ import { db } from '../../config/db';
 import { v4 as uuidv4 } from 'uuid';
 import { generateMt103, Mt103Payout, buildMt103FromPayout } from './mt103.service';
 import { generateRtgs } from './rtgs.service';
-import { buildPain001Xml } from '../../utils/pain001.builder';
+import { buildPain001Xml } from '../iso20022/pain001.builder';
+import { IsoAccountParty } from '../iso20022/xml.util';
 import { generateUetr } from '../../utils/uetr.generator';
 import {
   balancedLedgerEngine,
@@ -205,26 +206,54 @@ export class PayoutsService {
       }
       case 'SEPA': {
         const msgId = `PAYOUT${payout.id.replace(/-/g, '').slice(0, 24).toUpperCase()}`;
-        const xml = buildPain001Xml({
-          msgId,
-          createdAt: new Date().toISOString(),
-          debtor: {
-            name: source_acc?.bank_name || 'Protocol 201.3 Settlement Bank',
-            bic: source_acc?.bic || 'PROCESSOR_BIC_PLACEHOLDER',
-            iban: source_acc?.iban || 'PROCESSOR_IBAN_PLACEHOLDER',
-          },
-          transactions: [{
-            instrId: `INSTR-${payout.id.slice(0, 16).toUpperCase()}`,
-            endToEndId: payout.internal_reference,
-            amount: amt,
-            currency: ccy,
-            creditorName: dest.account_name || dest.account_holder || 'Creditor',
-            creditorIban: dest.iban || dest.account_number || '',
-            creditorBic: dest.swift_bic || 'UNKNOWNBIC',
-            remittanceInfo: payout.purpose || `SEPA Payout ${payout.internal_reference}`,
+        // A conformant pain.001 must identify both the debtor account (DbtrAcct)
+        // and the debtor agent (DbtrAgt/BICFI); refusing here is preferable to
+        // writing a settlement file the bank will reject.
+        const debtorIban = String(source_acc?.iban || '').trim();
+        const debtorBic = String(source_acc?.bic || '').trim();
+        if (!debtorIban || !debtorBic) {
+          throw Object.assign(new Error('SEPA payout requires source account IBAN and BIC'),
+            buildStandardError('SRC_ACCOUNT_IDENTIFIERS_REQUIRED',
+              `Vault account ${payout.source_account_id} needs both an IBAN and a BIC to originate a SEPA pain.001`,
+              { field: 'source_account_id', iban_present: Boolean(debtorIban), bic_present: Boolean(debtorBic) }));
+        }
+        const debtor: IsoAccountParty = {
+          name: source_acc?.bank_name || 'Protocol 201.3 Settlement Bank',
+          iban: debtorIban,
+          bic: debtorBic,
+        };
+        const creditor: IsoAccountParty = {
+          name: dest.account_name || dest.account_holder || 'Creditor',
+          iban: dest.iban || '',
+          otherAccountId: dest.iban ? undefined : (dest.account_number || undefined),
+          bic: dest.swift_bic || '',
+        };
+        const creditorAgent: IsoAccountParty = {
+          bic: dest.swift_bic || '',
+          agentName: dest.bank_name || creditor.name,
+        };
+        const built = buildPain001Xml({
+          messageId: msgId,
+          initiatingParty: debtor,
+          debtor,
+          paymentInstructions: [{
+            batchBooking: true,
+            chargeBearer: 'SLEV',
+            serviceLevelCode: 'SEPA',
+            requestedExecutionDate: new Date().toISOString().slice(0, 10),
+            transactions: [{
+              instructionId: `INSTR-${payout.id.slice(0, 16).toUpperCase()}`,
+              endToEndId: payout.internal_reference,
+              uetr: String(payout.uetr || generateUetr()).toLowerCase(),
+              amount: amt,
+              currency: ccy,
+              creditor,
+              creditorAgent,
+              remittance: { unstructured: [payout.purpose || `SEPA Payout ${payout.internal_reference}`] },
+            }],
           }],
         });
-        return { payload: xml, format: 'PAIN001_XML', uetr: payout.uetr || generateUetr(), reference: msgId };
+        return { payload: built.xml, format: 'PAIN001_XML', uetr: payout.uetr || generateUetr(), reference: msgId };
       }
       case 'INTERNAL': {
         const internalJson = JSON.stringify({

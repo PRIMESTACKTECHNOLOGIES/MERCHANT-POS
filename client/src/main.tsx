@@ -7,6 +7,30 @@ import { registerAutoSync } from "./lib/offline-sync";
 import { installClientSecurityGuard } from "./lib/security-guard";
 import "./index.css";
 
+// ── Boot-time crash reporter ───────────────────────────────────────────────
+// This app mounts no ErrorBoundary and a module-level throw happens BEFORE React
+// ever mounts, so both cases previously produced a completely blank page with no
+// visible cause (the security guard also hides DevTools by default). This
+// reports the real error into #root instead of leaving it empty.
+const escapeHtml = (value: string) =>
+  value.replace(/[<>&]/g, (c) => (c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;"));
+
+function renderBootError(title: string, detail: unknown) {
+  const root = document.getElementById("root");
+  if (!root || root.childElementCount > 0) return;
+  const message = detail instanceof Error
+    ? `${detail.message}\n\n${detail.stack || ""}`
+    : String(detail);
+  root.innerHTML =
+    '<div style="padding:32px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b1120;min-height:100vh">' +
+    `<h1 style="color:#f87171;font-size:18px;margin:0 0 12px">${escapeHtml(title)}</h1>` +
+    `<pre style="white-space:pre-wrap;background:#1e293b;color:#e2e8f0;padding:16px;border-radius:8px;font-size:13px">${escapeHtml(message)}</pre>` +
+    "</div>";
+}
+
+window.addEventListener("error", (e) => renderBootError("PRIMESTACK POS — boot error", e.error || e.message));
+window.addEventListener("unhandledrejection", (e) => renderBootError("PRIMESTACK POS — unhandled promise rejection", e.reason));
+
 // Install client-side intrusion deterrents + attempt reporting (see lib/security-guard.ts)
 installClientSecurityGuard();
 
@@ -88,19 +112,55 @@ registerAutoSync((result) => {
   }
 });
 // alert("Dashboard is starting...");
+
+// ── Root error boundary ────────────────────────────────────────────────────
+// Without this, any render-time throw unmounts the entire tree and the operator
+// sees a blank page. Surfacing the message makes the failure actionable.
+class RootErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[main.tsx] Root error boundary caught:", error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 32, fontFamily: "ui-monospace, monospace", background: "#0b1120", minHeight: "100vh" }}>
+          <h1 style={{ color: "#f87171", fontSize: 18, margin: "0 0 12px" }}>
+            PRIMESTACK POS — render error
+          </h1>
+          <pre style={{ whiteSpace: "pre-wrap", background: "#1e293b", color: "#e2e8f0", padding: 16, borderRadius: 8, fontSize: 13 }}>
+            {`${this.state.error.message}\n\n${this.state.error.stack || ""}`}
+          </pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const rootElement = document.getElementById("root");
-console.log("[main.tsx] Root element:", rootElement);
 
 if (!rootElement) {
   console.error("[main.tsx] ERROR: Root element not found!");
 } else {
   try {
     ReactDOM.createRoot(rootElement).render(
-      <BrowserRouter>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
-      </BrowserRouter>
+      <RootErrorBoundary>
+        <BrowserRouter>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </BrowserRouter>
+      </RootErrorBoundary>
     );
     console.log("[main.tsx] App rendered successfully!");
   } catch (error) {
