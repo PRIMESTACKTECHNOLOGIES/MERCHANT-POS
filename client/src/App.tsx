@@ -1,8 +1,9 @@
-﻿import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { OverviewPage } from "./pages/OverviewPage";
 import { NotificationProvider } from "./contexts/NotificationProvider";
 import { TerminalsPage } from "./pages/TerminalsPage";
+import { MerchantProfilesPage } from "./pages/MerchantProfilesPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BatchesPage } from "./pages/BatchesPage";
@@ -134,6 +135,7 @@ function App() {
           <Route path="/pos-secure" element={<POSPageSecure />} />
           <Route path="/payment-processor" element={<POSPageSecure />} />
           <Route path="/terminals" element={<TerminalsPage />} />
+          <Route path="/merchant-profiles" element={<MerchantProfilesPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/batches" element={<BatchesPage />} />
           <Route path="/settlements" element={<SettlementsPage />} />

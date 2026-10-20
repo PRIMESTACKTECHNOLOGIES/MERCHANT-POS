@@ -5,19 +5,19 @@ import './WalletsPage.css';
 import {
   getCustomers, createCustomer, updateCustomerKYC,
   fetchSettings,
-  getWalletBalance, getWalletTransactions, topupWalletWithCard, debitWallet,
+  getWalletBalance, getWalletTransactions, getCustomerWalletBalances, topupWalletWithCard, debitWallet,
   walletTransfer,
   sendToHotWallet,
   getBankAccounts, addBankAccount, bankPayout, getBankPayouts,
   getCryptoWallets, getCryptoPrice, buyCryptoWithWallet, sellCrypto, getCryptoTransactions, withdrawCrypto,
-  getMerchantBalance, getMerchantTransactions, buyCryptoWithMerchant, merchantToCustomerTransfer,
+  getMerchantBalance, getMerchantTransactions, getMerchantWallets, buyCryptoWithMerchant, merchantToCustomerTransfer,
   merchantCryptoPayout, createVirtualAccount, listVirtualAccounts,
   getMerchantBankAccounts, getMerchantPayouts, merchantBankPayout,
   approveMerchantPayout, rejectMerchantPayout,
   downloadPayoutReceipt,
   transakSendUserOtp, transakVerifyUserOtp, transakGetUserLimits, transakGetUserDetails, transakRefreshUserAccessToken, transakLogoutUser, transakOnboardUser, transakVerifyWalletAddress,
   checkBackendHealth,
-  type Customer, type WalletBalance, type WalletTransaction,
+  type Customer, type WalletBalance, type WalletTransaction, type CustomerWalletBalance,
   type BankAccount, type BankPayout,
   type CryptoWallet, type CryptoTransaction, type MerchantWallet, type MerchantWalletTransaction, type BankTransferTransaction,
   type MerchantBankAccount, type MerchantPayout,
@@ -144,6 +144,10 @@ export const WalletsPage = () => {
   const [loadingCust, setLoadingCust] = useState(true);
   const [balance, setBalance] = useState<WalletBalance>({ balance:0, currency:'USD' });
   const [walletTxns, setWalletTxns] = useState<WalletTransaction[]>([]);
+  // Customer wallets are multi-currency too. Choosing a currency here swaps the
+  // whole customer wallet (balance + ledger) to that currency automatically.
+  const [customerCurrencyWallets, setCustomerCurrencyWallets] = useState<CustomerWalletBalance[]>([]);
+  const [walletCurrency, setWalletCurrency] = useState<string>('');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [bankPayouts, setBankPayouts] = useState<BankPayout[]>([]);
   const [selBank, setSelBank] = useState('');
@@ -151,6 +155,10 @@ export const WalletsPage = () => {
   const [cryptoTxns, setCryptoTxns] = useState<CryptoTransaction[]>([]);
   const [merchantWallet, setMerchantWallet] = useState<MerchantWallet | null>(null);
   const [merchantTxns, setMerchantTxns] = useState<MerchantWalletTransaction[]>([]);
+  // Merchant wallets are multi-currency. We keep the full list + the currency
+  // currently being viewed so a EUR balance is never masked by a USD-only view.
+  const [merchantCurrencyWallets, setMerchantCurrencyWallets] = useState<MerchantWallet[]>([]);
+  const [merchantCurrency, setMerchantCurrency] = useState<string>('');
   const [merchantBankAccounts, setMerchantBankAccounts] = useState<MerchantBankAccount[]>([]);
   const [merchantPayouts, setMerchantPayouts] = useState<MerchantPayout[]>([]);
   const [selMerchantBank, setSelMerchantBank] = useState<string>('');
@@ -227,18 +235,35 @@ export const WalletsPage = () => {
     );
   };
 
-  const refreshMerchantWallet = async (merchantIdOverride?: string) => {
+  const refreshMerchantWallet = async (merchantIdOverride?: string, currencyOverride?: string) => {
     const targetMerchantId = merchantIdOverride || f.merchantId || '';
     if (!targetMerchantId) {
       setMerchantWallet(null);
       setMerchantTxns([]);
+      setMerchantCurrencyWallets([]);
       return;
     }
 
     try {
+      // Fetch every currency wallet first. If the caller did not pin a currency,
+      // fall back to the wallet holding the largest balance (by absolute value)
+      // so a EUR settlement balance is surfaced instead of an empty USD wallet.
+      const wallets = await getMerchantWallets(targetMerchantId);
+      setMerchantCurrencyWallets(wallets);
+
+      const targetCurrency =
+        currencyOverride ||
+        merchantCurrency ||
+        wallets
+          .slice()
+          .sort((a, b) => Math.abs(Number(b.balance || 0)) - Math.abs(Number(a.balance || 0)))[0]
+          ?.currency ||
+        'USD';
+      setMerchantCurrency(targetCurrency);
+
       const [wallet, txns] = await Promise.all([
-        getMerchantBalance(targetMerchantId),
-        getMerchantTransactions(targetMerchantId),
+        getMerchantBalance(targetMerchantId, targetCurrency),
+        getMerchantTransactions(targetMerchantId, targetCurrency),
       ]);
       setMerchantWallet(wallet);
       setMerchantTxns(txns);
@@ -345,7 +370,11 @@ export const WalletsPage = () => {
 
   useEffect(() => {
     if (!selId) return;
-    getWalletBalance(selId).then(b => { setBalance(b); cacheBalance(selId, Number(b.balance), b.currency); })
+    // A different customer means a different set of currency wallets — reset the view.
+    setWalletCurrency('');
+    setCustomerCurrencyWallets([]);
+    getCustomerWalletBalances(selId).then(setCustomerCurrencyWallets).catch(()=>setCustomerCurrencyWallets([]));
+    getWalletBalance(selId).then(b => { setBalance(b); if (b?.currency) setWalletCurrency(String(b.currency)); cacheBalance(selId, Number(b.balance), b.currency); })
       .catch(() => { const c = getCachedBalance(selId); if (c) setBalance(c); });
     getWalletTransactions(selId).then(setWalletTxns).catch(()=>{});
     getBankAccounts(selId).then(ba => { setBankAccounts(ba); if (ba.length>0) setSelBank(ba[0].id); }).catch(()=>{});
@@ -389,11 +418,17 @@ export const WalletsPage = () => {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  const refreshWallet = async () => {
+  const refreshWallet = async (currencyOverride?: string) => {
     if (!selId) return;
     try {
-      const [bal, wt] = await Promise.all([getWalletBalance(selId), getWalletTransactions(selId)]);
-      setBalance(bal); setWalletTxns(wt); cacheBalance(selId, Number(bal.balance), bal.currency);
+      const targetCurrency = currencyOverride || walletCurrency || undefined;
+      const [bal, wt] = await Promise.all([
+        getWalletBalance(selId, targetCurrency),
+        getWalletTransactions(selId, targetCurrency),
+      ]);
+      setBalance(bal); setWalletTxns(wt);
+      if (bal?.currency) setWalletCurrency(String(bal.currency));
+      cacheBalance(selId, Number(bal.balance), bal.currency);
     } catch { const c = getCachedBalance(selId); if (c) setBalance(c); }
     setQueuedOps(offlinePending());
   };
@@ -1153,16 +1188,14 @@ export const WalletsPage = () => {
               className="rounded-xl border border-red-400/30 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/25">
               ⬆️ Send to Hot Wallet
             </button>
-            {false && (
             <button onClick={() => {
                 const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
-                setF({ merchantId, currency: merchantWallet?.currency || 'USD' });
+                setF({ merchantId, currency: merchantCurrency || merchantWallet?.currency || 'USD' });
                 setModal('merchant-bank-payout');
               }}
               className="rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/25">
               🏦 Merchant Bank Payout
             </button>
-            )}
             <button onClick={() => {
                 const merchantId = f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || '';
                 setF({ merchantId });
@@ -1247,6 +1280,48 @@ export const WalletsPage = () => {
                     ? <>Merchant wallet <span className="font-mono font-semibold text-slate-900">{merchantWallet.merchant_id}</span> is connected to the live settlement ledger. Last update: <span className="font-semibold text-slate-900">{merchantWallet.updated_at ? new Date(merchantWallet.updated_at).toLocaleString() : 'available from provider'}</span>.</>
                     : 'Merchant wallet data is not available yet.'}
                 </div>
+
+                {merchantCurrencyWallets.length > 0 && (
+                  <div className="mt-6">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Currency balances</div>
+                    <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+                      <table className="min-w-full text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                            <th className="px-4 py-2 font-bold">Currency</th>
+                            <th className="px-4 py-2 text-right font-bold">Balance</th>
+                            <th className="px-4 py-2 text-right font-bold" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {merchantCurrencyWallets
+                            .slice()
+                            .sort((a, b) => Math.abs(Number(b.balance || 0)) - Math.abs(Number(a.balance || 0)))
+                            .map((w) => (
+                              <tr
+                                key={w.currency}
+                                onClick={() => { void refreshMerchantWallet(undefined, w.currency); }}
+                                className={`cursor-pointer border-b border-slate-100 last:border-0 transition-colors ${merchantCurrency === w.currency ? 'bg-emerald-50' : 'hover:bg-slate-50'}`}
+                              >
+                                <td className="px-4 py-2.5">
+                                  <span className="inline-flex items-center gap-2">
+                                    <span className={`h-2 w-2 rounded-full ${merchantCurrency === w.currency ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                                    <span className="font-bold text-slate-900">{w.currency}</span>
+                                  </span>
+                                </td>
+                                <td className={`px-4 py-2.5 text-right font-mono font-semibold tabular-nums ${Number(w.balance || 0) < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                                  {Number(w.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-[11px] font-semibold text-slate-400">
+                                  {merchantCurrency === w.currency ? 'Viewing' : 'View →'}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
@@ -1256,6 +1331,56 @@ export const WalletsPage = () => {
                   {sel.email && <div className="mt-1">{sel.email}</div>}
                   {sel.phone && <div className="mt-1 text-slate-500">ðŸ“ž {sel.phone}</div>}
                 </div>
+
+                <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-emerald-700">Live available balance</div>
+                  <div className="mt-1 text-2xl font-extrabold tabular-nums text-emerald-900">
+                    {balance.currency} {Number(balance.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="mt-1 text-xs text-emerald-700">{walletTxns.length} recent ledger records loaded</div>
+                </div>
+
+                {customerCurrencyWallets.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Currency balances</div>
+                    <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
+                      <table className="min-w-full text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                            <th className="px-4 py-2 font-bold">Currency</th>
+                            <th className="px-4 py-2 text-right font-bold">Balance</th>
+                            <th className="px-4 py-2 text-right font-bold" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customerCurrencyWallets
+                            .slice()
+                            .sort((a, b) => Math.abs(Number(b.balance || 0)) - Math.abs(Number(a.balance || 0)))
+                            .map((w) => (
+                              <tr
+                                key={w.currency}
+                                onClick={() => { void refreshWallet(w.currency); }}
+                                className={`cursor-pointer border-b border-slate-100 last:border-0 transition-colors ${String(balance.currency).toUpperCase() === String(w.currency).toUpperCase() ? 'bg-emerald-50' : 'hover:bg-slate-50'}`}
+                              >
+                                <td className="px-4 py-2.5">
+                                  <span className="inline-flex items-center gap-2">
+                                    <span className={`h-2 w-2 rounded-full ${String(balance.currency).toUpperCase() === String(w.currency).toUpperCase() ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                                    <span className="font-bold text-slate-900">{w.currency}</span>
+                                  </span>
+                                </td>
+                                <td className={`px-4 py-2.5 text-right font-mono font-semibold tabular-nums ${Number(w.balance || 0) < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                                  {Number(w.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-[11px] font-semibold text-slate-400">
+                                  {String(balance.currency).toUpperCase() === String(w.currency).toUpperCase() ? 'Viewing' : 'View →'}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
                 <div className="mt-6">
                   <button
                     type="button"
@@ -1269,7 +1394,6 @@ export const WalletsPage = () => {
             </div>
 
 
-            {false && (
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -1482,7 +1606,6 @@ export const WalletsPage = () => {
                     </div>}
               </div>
             </section>
-            )}
 
             <section className="overflow-hidden rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 via-white to-sky-50 shadow-sm">
               <div className="flex flex-col gap-4 border-b border-cyan-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">

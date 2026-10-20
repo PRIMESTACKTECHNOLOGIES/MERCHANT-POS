@@ -303,7 +303,7 @@ export class VaultController {
                     FROM vault_real_funds
                    WHERE source = 'signed-bank-webhook'
                    GROUP BY currency`),
-        db.query(`SELECT COALESCE(SUM(balance), 0) AS total FROM merchant_wallets`),
+        db.query(`SELECT currency, COALESCE(SUM(balance), 0) AS total FROM merchant_wallets GROUP BY currency`),
         db.query(`SELECT currency, COALESCE(SUM(amount), 0) AS total
                     FROM batch_settlement
                    WHERE status = 'PENDING'
@@ -321,6 +321,12 @@ export class VaultController {
       const pendingSettlementsByCurrency = Object.fromEntries(
         (pendingSettlements.rows || []).map((row: any) => [String(row.currency).toUpperCase(), Number(row.total || 0)]),
       );
+      // Merchant wallet balances are held per currency and MUST NOT be summed into
+      // a single figure — adding EUR + USD + AED produces a meaningless number (a
+      // EUR balance read as if it were USD). The dashboard renders this breakdown.
+      const merchantBalancesByCurrency = Object.fromEntries(
+        (merchants.rows || []).map((row: any) => [String(row.currency || 'USD').toUpperCase(), Number(row.total || 0)]),
+      );
       return res.json({
         // totalVaultBalance = BATCH_TO_VAULT credits (real merchant transfers) 
         // + signed bank webhook funds - VAULT_TO_BANK debits
@@ -329,7 +335,8 @@ export class VaultController {
         vaultBalancesByCurrency,
         totalPendingSettlement: Number(pendingSettlementsByCurrency.USD || 0),
         pendingSettlementsByCurrency,
-        totalMerchantBalances: Number(merchants.rows?.[0]?.total || 0),
+        totalMerchantBalances: Object.values(merchantBalancesByCurrency).reduce((a: number, b: any) => a + Number(b || 0), 0),
+        merchantBalancesByCurrency,
         totalPendingPayouts: Number(pendingPayouts.rows?.[0]?.total || 0),
         totalOfflineApprovals: Number(offline.rows?.[0]?.total || 0),
         totalStoredTransactions: Number(stored.rows?.[0]?.total || 0),

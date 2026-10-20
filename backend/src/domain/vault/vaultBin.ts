@@ -38,3 +38,18 @@ export function getVaultBin(vaultAccountId: string): VaultBinInfo {
   if (bin) return bin;
   return VAULT_BIN;
 }
+
+/**
+ * True when a PAN belongs to a card Primestack itself issues.
+ *
+ * This distinction decides who validates the ARQC: Primestack holds only the
+ * vault issuer master key, so it can validate its own cards' cryptograms — an
+ * external customer card's cryptogram can only be validated by *its* issuer
+ * (i.e. by the acquirer/scheme). Running the local validator on an external
+ * PAN would fail a genuine tap.
+ */
+export function isVaultBin(pan: string): boolean {
+  const clean = String(pan || '').replace(/\D/g, '');
+  if (clean.length < 6) return false;
+  return Object.values(VAULT_BINS).some(b => clean.startsWith(b.bin));
+}

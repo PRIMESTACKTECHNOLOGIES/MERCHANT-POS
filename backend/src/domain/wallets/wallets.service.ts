@@ -15,6 +15,29 @@ export class WalletsService {
   }
 
   // ── Wallet helpers ───────────────────────────────────────────────────────────
+  /**
+   * Every wallet must belong to a row in `customers`, otherwise the funds in it
+   * are invisible: every customer view (GET /wallet/customers, the wallets page,
+   * the funds-transfer page) lists customers and then reads that customer's own
+   * wallets. A wallet whose customer_id has no matching customers row — e.g. the
+   * per-merchant WALKIN-<merchantId> id used when a capture names no customer —
+   * would hold money that no screen can show. Create the owning record first.
+   */
+  private async ensureCustomerRecord(customerId: string) {
+    const existing = await db.query('SELECT id FROM customers WHERE id = ?', [customerId]);
+    if (existing.rows.length) return;
+    const walkIn = /^WALKIN-(.+)$/i.exec(customerId);
+    const name = walkIn ? `Walk-in Customer (${walkIn[1]})` : `Customer ${customerId}`;
+    try {
+      await db.query(
+        `INSERT INTO customers (id, merchant_id, name, kyc_status, created_at, updated_at)
+         VALUES (?, ?, ?, 'PENDING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [customerId, walkIn ? walkIn[1] : null, name]
+      );
+      console.log(`[Wallets] Created owning customer record for wallet ${customerId} (${name})`);
+    } catch { /* already created concurrently — the wallet is still owned */ }
+  }
+
   async getOrCreateWallet(customerId: string, currency: string = 'USD') {
     const ccy = this.normalizeCurrency(currency);
     const res = await db.query(
@@ -22,6 +45,7 @@ export class WalletsService {
       [customerId, ccy]
     );
     if (res.rows.length) return res.rows[0];
+    await this.ensureCustomerRecord(customerId);
     const id = uuidv4();
     const walletCode = `PSW-${Math.floor(Math.random() * 9000) + 1000}-${Math.floor(Math.random() * 9000) + 1000}`;
     await db.query(
@@ -33,7 +57,7 @@ export class WalletsService {
 
   async listCustomerWallets(customerId: string) {
     return (await db.query(
-      `SELECT id, customer_id, balance, currency, wallet_code, status, created_at, updated_at
+      `SELECT id, customer_id, balance, currency, wallet_code, created_at, updated_at
        FROM customer_wallets
        WHERE customer_id = ?
        ORDER BY CASE WHEN balance != 0 THEN 0 ELSE 1 END,
@@ -176,6 +200,11 @@ export class WalletsService {
         `UPDATE customer_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`,
         [amount, now, wallet.id],
       );
+      // An internal-ledger capture was never seen by a real provider, so it must not be
+      // labelled as provider-captured money — it is a non-withdrawable receivable.
+      const description = source === 'pos_card_charge_internal_ledger'
+        ? `Internal-ledger POS capture (${reference}) — non-withdrawable until the provider pull`
+        : `Provider-captured POS funds (${reference})`;
       await db.query(
         `INSERT INTO wallet_transactions
           (id, wallet_id, type, amount, currency, source, reference, description, created_at)
@@ -187,7 +216,7 @@ export class WalletsService {
           ccy,
           source,
           reference,
-          `Provider-captured POS funds (${reference})`,
+          description,
           now,
         ],
       );
@@ -1368,6 +1397,41 @@ export class WalletsService {
         'UPDATE customer_provider_pulls SET status = ?, merchant_wallet_id = ?, updated_at = ? WHERE reference = ?',
         ['MERCHANT_CREDITED', merchantWalletId, postedAt, requestReference],
       );
+
+      // ── Settle the customer-wallet internal-ledger receivable ───────────────
+      // The POS capture credited the CUSTOMER wallet as a non-withdrawable
+      // internal-ledger receivable. Now that the provider confirmed REAL funds and
+      // they are credited to the merchant wallet, clear that receivable so the same
+      // value is not counted twice and cannot be pulled again. Guarded: if the
+      // customer wallet does not hold enough in this currency (e.g. an out-of-band
+      // pull), the confirmed merchant credit still stands and we flag it.
+      const custWallet = await this.getOrCreateWallet(customerId, ccy);
+      const settled = await db.query(
+        'UPDATE customer_wallets SET balance = balance - ?, updated_at = ? WHERE id = ? AND balance >= ?',
+        [amount, postedAt, custWallet.id, amount],
+      );
+      if (settled.rowCount === 1) {
+        await db.query(
+          `INSERT INTO wallet_transactions
+            (id, wallet_id, type, amount, currency, source, reference, description, created_at)
+           VALUES (?, ?, 'debit', ?, ?, 'internal_ledger_settled_by_provider_pull', ?, ?, ?)`,
+          [
+            uuidv4(),
+            custWallet.id,
+            amount,
+            ccy,
+            requestReference,
+            `Internal-ledger receivable settled by real provider pull ${providerReference} → merchant wallet ${merchantId}`,
+            postedAt,
+          ],
+        );
+      } else {
+        console.warn(
+          `[WalletsService] Customer wallet ${custWallet.id} (${ccy}) had insufficient balance to settle ` +
+          `internal-ledger receivable for ${requestReference}; real merchant credit stands.`
+        );
+      }
+
       await db.query('COMMIT');
     } catch (error) {
       try { await db.query('ROLLBACK'); } catch (rollbackError) {

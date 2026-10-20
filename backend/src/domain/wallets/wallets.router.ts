@@ -15,6 +15,7 @@ router.post('/offline/sync', wcc.sync.bind(wcc));
 
 // ── Merchant wallet ────────────────────────────────────────────────────────
 router.get('/merchant-balance/:merchantId',      wc.getMerchantBalance.bind(wc));
+router.get('/merchant-wallets/:merchantId',      wc.getMerchantWallets.bind(wc));
 router.get('/merchant-transactions/:merchantId', wc.getMerchantTransactions.bind(wc));
 router.post('/merchant/transfer-to-customer',    wc.merchantToCustomerTransfer.bind(wc));
 router.post('/merchant/settle-emv-2013',         wc.settleEmv2013.bind(wc));

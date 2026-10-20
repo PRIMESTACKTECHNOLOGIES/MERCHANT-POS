@@ -1103,21 +1103,38 @@ export function VaultDashboardPage() {
   const guideAmount = String(extMethodValues.amount || "").trim();
   const guideCurrency = selectedLoadingCard ? selectedLoadingCard.toUpperCase() : "";
 
+  /**
+   * The exact values a loader must be handed for a rail: the real amount, the
+   * reference and the actual account numbers / deposit address. A description
+   * of which details to collect cannot be acted on; a copyable value can.
+   */
+  const loaderHandoff = (m: ExtFundingMethod): Array<{ label: string; value: string; mono?: boolean }> => {
+    const rows: Array<{ label: string; value: string; mono?: boolean }> = [];
+    rows.push({ label: "Rail", value: m.subtitle ? `${m.title} — ${m.subtitle}` : m.title });
+    rows.push({
+      label: "Amount",
+      value: guideAmount ? `${guideAmount} ${guideCurrency}`.trim() : "the amount you agree with them",
+    });
+    if (guideRef) rows.push({ label: "Payment reference", value: guideRef, mono: true });
+    (m.receiving || []).forEach(acct => {
+      acct.rows.forEach(r => rows.push({ label: r.label, value: r.value, mono: r.mono }));
+    });
+    return rows;
+  };
+
+  const guideHandoff = guideMethod ? loaderHandoff(guideMethod) : [];
+
   /** The whole sheet as plain text, so it can be pasted into an email or chat. */
   const guideAsText = (m: ExtFundingMethod): string => {
     const lines: string[] = [`${m.title} — ${m.subtitle}`, ""];
-    lines.push("SENDING DETAILS");
-    lines.push(`  Amount: ${guideAmount || "the agreed amount"}${guideCurrency ? ` ${guideCurrency}` : ""}`);
-    if (guideRef) lines.push(`  Payment reference: ${guideRef}`);
-    (m.provideToLoader || []).forEach(l => lines.push(`  - ${l}`));
-    lines.push("", "RECEIVING DETAILS");
-    if (m.receiving && m.receiving.length) {
-      m.receiving.forEach(acct => {
-        lines.push(`  ${acct.title}`);
-        acct.rows.forEach(r => lines.push(`    ${r.label}: ${r.value}`));
-      });
-    } else {
-      lines.push(`  ${m.receivingNote || "No receiving details are configured."}`);
+    lines.push("WHAT TO GIVE THE LOADER");
+    loaderHandoff(m).forEach(r => lines.push(`  ${r.label}: ${r.value}`));
+    if (!m.receiving || m.receiving.length === 0) {
+      lines.push(`  ${m.receivingNote || "No receiving account is registered for this rail yet."}`);
+    }
+    if (m.provideToLoader && m.provideToLoader.length) {
+      lines.push("", "RULES TO STATE");
+      m.provideToLoader.forEach(l => lines.push(`  - ${l}`));
     }
     return lines.join("\n");
   };
@@ -1786,7 +1803,6 @@ export function VaultDashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {([
           ["Confirmed USD available to send", stats.totalVaultBalance ?? 0],
-          ["Merchant liabilities", stats.totalMerchantBalances ?? 0],
           ["Pending settlements", stats.totalPendingSettlement ?? 0],
           ["Pending payouts", stats.totalPendingPayouts ?? 0],
         ] as [string, number][]).map(([label, value]) => (
@@ -1795,6 +1811,28 @@ export function VaultDashboardPage() {
             <p className="mt-3 text-2xl font-extrabold text-gray-900">{Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
           </div>
         ))}
+        {/* Merchant wallet balances are held PER CURRENCY. Summing them into a single
+            figure is meaningless (it would add EUR to USD to AED), so each currency
+            is listed separately instead of one mixed number. */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Merchant liabilities</p>
+          {Object.entries(stats.merchantBalancesByCurrency || {}).length === 0 ? (
+            <p className="mt-3 text-2xl font-extrabold text-gray-900">0.00</p>
+          ) : (
+            <div className="mt-3 space-y-1">
+              {Object.entries(stats.merchantBalancesByCurrency || {})
+                .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
+                .map(([ccy, amount]) => (
+                  <div key={ccy} className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs font-bold text-gray-500">{ccy}</span>
+                    <span className="text-lg font-extrabold text-gray-900">
+                      {Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
       </div>
       <p className="text-xs text-gray-500">
         The vault balance above includes only externally confirmed funds that are eligible for transfer to the vault bank.
@@ -2126,10 +2164,38 @@ export function VaultDashboardPage() {
                       </div>
                     )}
                     <div className="px-4 py-3">
-                      <p className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-400">What to give the loader</p>
-                      <ul className="list-disc space-y-0.5 pl-4 text-[11px] leading-4 text-slate-600">
-                        {(guideMethod.provideToLoader || []).map((line, i) => <li key={i}>{line}</li>)}
-                      </ul>
+                      <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">What to give the loader</p>
+                      <div className="space-y-1.5">
+                        {guideHandoff.map((row, ri) => (
+                          <div key={ri} className="flex items-baseline justify-between gap-4">
+                            <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-slate-400">{row.label}</span>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className={`truncate text-sm text-slate-900 ${row.mono ? "font-mono font-bold" : "font-semibold"}`}>{row.value}</span>
+                              <button
+                                type="button"
+                                onClick={() => { void navigator.clipboard.writeText(row.value); setMessage(`${row.label} copied`); }}
+                                className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                aria-label={`Copy ${row.label}`}
+                              >
+                                <Copy size={14} />
+                              </button>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {(!guideMethod.receiving || guideMethod.receiving.length === 0) && (
+                        <p className="mt-2 text-[11px] font-semibold leading-4 text-amber-700">
+                          {guideMethod.receivingNote || "No receiving account is registered for this rail yet, so there is nothing to hand over."}
+                        </p>
+                      )}
+                      {(guideMethod.provideToLoader || []).length > 0 && (
+                        <>
+                          <p className="mb-1 mt-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Rules to state</p>
+                          <ul className="list-disc space-y-0.5 pl-4 text-[11px] leading-4 text-slate-600">
+                            {guideMethod.provideToLoader!.map((line, i) => <li key={i}>{line}</li>)}
+                          </ul>
+                        </>
+                      )}
                     </div>
                   </div>
                 </section>
@@ -2285,6 +2351,54 @@ export function VaultDashboardPage() {
             <p className="px-5 pb-4 pt-2 text-xs text-gray-400">Only separately confirmed real funds can be loaded. Ledger balances are not eligible.</p>
           </Card>
 
+          {/* Separate per-currency vault tables — USD / AED / EUR */}
+          <Card title="Vault Bank — Balances by Currency">
+            <div className="grid gap-4 p-5 md:grid-cols-3">
+              {['USD', 'AED', 'EUR'].map(ccy => {
+                const accs = vaultAccounts.filter(a => String(a.currency || '').toUpperCase() === ccy);
+                const confirmed = Number(vaultByCurrency[ccy] || 0);
+                const merchant = Number((stats.merchantBalancesByCurrency || {})[ccy] || 0);
+                const rows = accs.length ? accs : [{ id: `${ccy}-empty`, currency: ccy, balance: 0 }];
+                return (
+                  <div key={ccy} className="overflow-hidden rounded-xl border border-gray-200">
+                    <div className="flex items-center justify-between bg-gray-50 px-4 py-2.5">
+                      <span className="text-sm font-bold text-gray-900">{ccy} ACCOUNTS</span>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${confirmed > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {confirmed > 0 ? '● Funded' : '○ Empty'}
+                      </span>
+                    </div>
+                    <table className="min-w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-100 text-[10px] uppercase tracking-wide text-gray-500">
+                          <th className="px-3 py-2 font-bold">Account</th>
+                          <th className="px-3 py-2 text-right font-bold">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((a: AnyRecord) => (
+                          <tr key={a.id} className="border-b border-gray-50 last:border-0">
+                            <td className="px-3 py-2 font-mono text-gray-600">{a.username || a.account_id || a.iban || a.id || '—'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-gray-900">{fmtNum(a.balance || 0, ccy)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-gray-50/60">
+                          <td className="px-3 py-2 text-[10px] uppercase text-gray-500">Confirmed real funds</td>
+                          <td className="px-3 py-2 text-right font-mono font-bold text-gray-900">{fmtNum(confirmed, ccy)}</td>
+                        </tr>
+                        <tr className="bg-gray-50/60">
+                          <td className="px-3 py-2 text-[10px] uppercase text-gray-500">Merchant liability</td>
+                          <td className="px-3 py-2 text-right font-mono font-bold text-gray-900">{fmtNum(merchant, ccy)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
           {/* Load from an external source */}
           <Card title="Load from an external source">
             <div className="p-5 space-y-4">
@@ -2395,16 +2509,34 @@ export function VaultDashboardPage() {
                     <p className="text-[11px] leading-4 text-slate-500">
                       <span className="font-bold text-slate-600">Verification: </span>{selectedMethod.verifiedAgainst}
                     </p>
-                    {selectedMethod.provideToLoader && selectedMethod.provideToLoader.length > 0 && (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-                        <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-700">
-                          What to give the loader
-                        </p>
-                        <ul className="list-disc space-y-0.5 pl-4 text-[11px] leading-4 text-amber-900">
-                          {selectedMethod.provideToLoader.map((line, i) => <li key={i}>{line}</li>)}
-                        </ul>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-700">
+                        What to give the loader
+                      </p>
+                      <div className="space-y-1">
+                        {loaderHandoff(selectedMethod).map((row, i) => (
+                          <div key={i} className="flex items-baseline justify-between gap-3">
+                            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-amber-700/80">{row.label}</span>
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className={`truncate text-[11px] text-amber-900 ${row.mono ? "font-mono font-bold" : "font-semibold"}`}>{row.value}</span>
+                              <button
+                                type="button"
+                                onClick={() => { void navigator.clipboard.writeText(row.value); setMessage(`${row.label} copied`); }}
+                                className="shrink-0 rounded p-0.5 text-amber-700 hover:bg-amber-100"
+                                aria-label={`Copy ${row.label}`}
+                              >
+                                <Copy size={12} />
+                              </button>
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    )}
+                      {(!selectedMethod.receiving || selectedMethod.receiving.length === 0) && (
+                        <p className="mt-1.5 text-[10px] font-semibold leading-4 text-amber-800">
+                          {selectedMethod.receivingNote || "No receiving account is registered for this rail yet, so there is nothing to hand over."}
+                        </p>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={() => setExtGuideId(selectedMethod.id)}

@@ -140,6 +140,9 @@ router.post('/pos/offline-sale', async (req, res) => {
         terminalId: terminal_id,
         merchantId,
         stan: stan || undefined,
+        // This is a genuine standalone offline approval, so the
+        // offline-disallowed rules DO apply here.
+        allowOfflineApproval: true,
       });
       if (preflight.declined) {
         results.push({

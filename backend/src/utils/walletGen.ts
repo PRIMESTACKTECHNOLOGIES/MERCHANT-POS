@@ -8,10 +8,10 @@
  * .env keys required:
  *   WALLET_MASTER_MNEMONIC=<12 or 24 word BIP-39 seed phrase>
  *
- * BIP-44 derivation paths used:
+ * BIP-44/84 derivation paths used:
  *   EVM (ETH / BSC / Polygon):  m/44'/60'/0'/0/<index>
  *   Tron (TRC-20):              m/44'/195'/0'/0/<index>
- *   Bitcoin:                    m/44'/0'/0'/0/<index>
+ *   Bitcoin:                    m/84'/0'/0'/0/<index>   (BIP-84 native SegWit, bc1q…)
  *   Solana:                     m/44'/501'/0'/0/<index>  (ed25519 — approximated via secp256k1)
  *
  * SECURITY NOTES:
@@ -27,10 +27,23 @@ import crypto from 'crypto';
 let bip39Cache: any = null;
 let bip32Cache: any = null;
 let ethersCache: any = null;
+let wordlistCache: string[] | null = null;
 
 async function getBip39() {
   if (!bip39Cache) bip39Cache = await import('@scure/bip39');
   return bip39Cache;
+}
+
+/**
+ * @scure/bip39 v1.6 removed the `wordlists` property from the main entry —
+ * the English wordlist must be imported from its own subpath.
+ */
+async function getWordlist(): Promise<string[]> {
+  if (!wordlistCache) {
+    const mod: any = await import('@scure/bip39/wordlists/english');
+    wordlistCache = mod.wordlist ?? mod.default ?? mod;
+  }
+  return wordlistCache as string[];
 }
 
 async function getBip32() {
@@ -71,7 +84,8 @@ function pubKeyToTronAddress(compressedPubKey: Uint8Array): string {
   const checksum = sha256(sha256(tronRaw)).slice(0, 4);
 
   // 5. Base58 encode
-  const bs58 = require('bs58');
+  const mod = require('bs58');
+  const bs58 = mod?.default ?? mod;
   return bs58.encode(Buffer.concat([tronRaw, checksum]));
 }
 
@@ -109,7 +123,7 @@ export async function deriveWallet(
   const { HDKey } = await getBip32();
 
   // Validate mnemonic
-  const wordlist = bip39.wordlists.english;
+  const wordlist = await getWordlist();
   if (!bip39.validateMnemonic(mnemonic, wordlist)) {
     throw new Error('WALLET_MASTER_MNEMONIC is not a valid BIP-39 mnemonic.');
   }
@@ -136,18 +150,15 @@ export async function deriveWallet(
     if (!child.publicKey) throw new Error(`Failed to derive Tron key at ${path}`);
     address = pubKeyToTronAddress(child.publicKey);
   } else if (network === 'bitcoin') {
-    // BIP-44 path for Bitcoin (coin type 0) — returns P2PKH address
-    path = `m/44'/0'/0'/0/${index}`;
+    // BIP-84 path for Bitcoin (coin type 0) — native SegWit address (bc1q…)
+    path = `m/84'/0'/0'/0/${index}`;
     const child = root.derive(path);
     if (!child.publicKey) throw new Error(`Failed to derive BTC key at ${path}`);
-    // P2PKH: hash160(pubkey) → version byte 0x00 + checksum
-    const sha256 = (b: Buffer) => crypto.createHash('sha256').update(b).digest();
-    const ripemd160 = (b: Buffer) => crypto.createHash('ripemd160').update(b).digest();
-    const pubKeyHash = ripemd160(sha256(Buffer.from(child.publicKey)));
-    const payload = Buffer.concat([Buffer.from([0x00]), pubKeyHash]);
-    const checksum = sha256(sha256(payload)).slice(0, 4);
-    const bs58 = require('bs58');
-    address = bs58.encode(Buffer.concat([payload, checksum]));
+    const bitcoin = require('bitcoinjs-lib');
+    address = bitcoin.payments.p2wpkh({
+      pubkey: Buffer.from(child.publicKey),
+      network: bitcoin.networks.bitcoin,
+    }).address as string;
   } else {
     throw new Error(`Unsupported network for derivation: ${network}`);
   }
@@ -207,17 +218,32 @@ export async function derivePrivateKey(
 
   const bip39 = await getBip39();
   const { HDKey } = await getBip32();
-  const wordlist = bip39.wordlists.english;
+  const wordlist = await getWordlist();
   if (!bip39.validateMnemonic(mnemonic, wordlist)) throw new Error('Invalid mnemonic.');
 
   const seed = bip39.mnemonicToSeedSync(mnemonic);
   const root = HDKey.fromMasterSeed(seed);
 
   const coinType = network === 'evm' ? "60'" : network === 'tron' ? "195'" : "0'";
-  const path = `m/44'/${coinType}/0'/0/${index}`;
+  const purpose = network === 'bitcoin' ? 84 : 44;
+  const path = `m/${purpose}'/${coinType}/0'/0/${index}`;
   const child = root.derive(path);
   if (!child.privateKey) throw new Error(`Key derivation failed at ${path}`);
   return Buffer.from(child.privateKey).toString('hex');
+}
+
+/**
+ * Derive a WIF-encoded private key for Bitcoin (mainnet) at a BIP-84 index.
+ */
+export async function deriveBitcoinWif(index: number): Promise<string> {
+  const privHex = await derivePrivateKey('bitcoin', index);
+  const bitcoin = require('bitcoinjs-lib');
+  const ECPair = (require('ecpair').ECPairFactory || require('ecpair').default || require('ecpair'))(
+    require('tiny-secp256k1')
+  );
+  return ECPair.fromPrivateKey(Buffer.from(privHex, 'hex'), {
+    network: bitcoin.networks.bitcoin,
+  }).toWIF();
 }
 
 /**
@@ -226,7 +252,8 @@ export async function derivePrivateKey(
  */
 export async function generateMnemonic(strength: 128 | 256 = 256): Promise<string> {
   const bip39 = await getBip39();
-  return bip39.generateMnemonic(bip39.wordlists.english, strength);
+  const wordlist = await getWordlist();
+  return bip39.generateMnemonic(wordlist, strength);
 }
 
 /**

@@ -1214,6 +1214,150 @@ async function getDb(): Promise<any> {
     _db.run(`UPDATE vault_accounts SET updated_at = COALESCE(updated_at, ?), created_at = COALESCE(created_at, ?)`, [NOW_ISO2, NOW_ISO2]);
   } catch (_) {}
 
+  // ── BACKFILL: internal-ledger POS captures → CUSTOMER wallet (runs once) ────
+  // Card charges taken before the INTERNAL_LEDGER customer credit existed were
+  // recorded in pos2013_transactions but credited NO wallet, so the customer
+  // wallet stayed empty and the provider pull (customer → merchant) could never
+  // be started for them. Record those captures now as a non-withdrawable
+  // INTERNAL_LEDGER receivable on the paying customer's wallet, keyed by the
+  // transaction id (idempotent per row). Captures already backed by a wallet
+  // credit, or that produced a settlement row, are skipped so nothing is
+  // double-counted. Real, withdrawable funds still reach the merchant wallet
+  // only via the provider pull.
+  try {
+    _db.run(`CREATE TABLE IF NOT EXISTS db_maintenance (
+      key TEXT PRIMARY KEY, applied_at TEXT NOT NULL
+    )`);
+    const alreadyApplied = (_db.exec(
+      `SELECT key FROM db_maintenance WHERE key = 'backfill_internal_ledger_customer_credits_v1'`,
+    )[0]?.values?.length || 0) > 0;
+
+    if (!alreadyApplied) {
+      const { v4: uuidv4 } = require('uuid');
+      const candidates = _db.exec(`
+        SELECT t.id,
+               COALESCE(t.customer_id, 'WALKIN-' || t.merchant_id) AS wallet_customer,
+               t.amount_minor / 100.0 AS amount,
+               COALESCE(NULLIF(UPPER(t.currency), ''), 'USD') AS ccy
+          FROM pos2013_transactions t
+         WHERE t.status = 'APPROVED'
+           AND NOT EXISTS (SELECT 1 FROM merchant_wallet_transactions m WHERE m.reference = t.id)
+           AND NOT EXISTS (SELECT 1 FROM wallet_transactions w WHERE w.reference = t.id)
+           AND NOT EXISTS (SELECT 1 FROM merchant_pos_settlements s
+                            WHERE s.meta LIKE '%"paymentIntentId":"' || t.id || '"%')
+      `);
+      const rows: any[][] = candidates[0]?.values || [];
+      let credited = 0;
+
+      for (const row of rows) {
+        const txnId = String(row[0] || '');
+        const customerId = String(row[1] || '');
+        const amount = Number(row[2]);
+        const ccy = String(row[3] || 'USD');
+        if (!txnId || !customerId || !Number.isFinite(amount) || amount <= 0) continue;
+
+        // resolve (or create) the customer's wallet for this currency
+        let walletId = '';
+        const findStmt = _db.prepare(
+          'SELECT id FROM customer_wallets WHERE customer_id = ? AND currency = ? LIMIT 1',
+        );
+        try {
+          findStmt.bind([customerId, ccy]);
+          if (findStmt.step()) walletId = String((findStmt.getAsObject() as any).id || '');
+        } finally { findStmt.free(); }
+
+        if (!walletId) {
+          walletId = uuidv4();
+          const walletCode = `PSW-${Math.floor(Math.random() * 9000) + 1000}-${Math.floor(Math.random() * 9000) + 1000}`;
+          _db.run(
+            `INSERT INTO customer_wallets (id, customer_id, balance, currency, wallet_code) VALUES (?, ?, 0, ?, ?)`,
+            [walletId, customerId, ccy, walletCode],
+          );
+        }
+
+        // per-row idempotency: never credit the same capture twice
+        let alreadyCredited = false;
+        const dupStmt = _db.prepare(
+          `SELECT 1 AS hit FROM wallet_transactions
+            WHERE wallet_id = ? AND type = 'credit' AND reference = ? LIMIT 1`,
+        );
+        try {
+          dupStmt.bind([walletId, txnId]);
+          alreadyCredited = dupStmt.step();
+        } finally { dupStmt.free(); }
+        if (alreadyCredited) continue;
+
+        _db.run(
+          `INSERT INTO wallet_transactions
+            (id, wallet_id, type, amount, currency, source, reference, description, created_at)
+           VALUES (?, ?, 'credit', ?, ?, 'pos_card_charge_internal_ledger', ?, ?, ?)`,
+          [
+            uuidv4(),
+            walletId,
+            amount,
+            ccy,
+            txnId,
+            `Internal-ledger POS capture backfill (${txnId}) — non-withdrawable until the provider pull`,
+            NOW_ISO,
+          ],
+        );
+        _db.run(
+          `UPDATE customer_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?`,
+          [amount, NOW_ISO, walletId],
+        );
+        credited++;
+      }
+
+      _db.run(`INSERT OR IGNORE INTO db_maintenance (key, applied_at)
+               VALUES ('backfill_internal_ledger_customer_credits_v1', ?)`, [NOW_ISO]);
+      console.warn(
+        `[DB] internal-ledger POS capture backfill: credited ${credited} capture(s) to customer wallets ` +
+        `(scanned ${rows.length}).`,
+      );
+    }
+  } catch (err) {
+    console.warn('[DB] internal-ledger customer-wallet backfill skipped:', (err as Error)?.message);
+  }
+
+  // ── BACKFILL: give every existing wallet an owning customer row (runs once) ──
+  // Wallet credits can create a wallet for a customer_id that has no matching
+  // row in `customers` (e.g. the per-merchant WALKIN-<merchantId> id used when a
+  // capture names no customer). Because every customer-facing view lists
+  // customers first and then reads that customer's own wallets, such a wallet —
+  // and the money in it — is invisible on every screen. Materialise the missing
+  // owner records so those funds appear in the customer's own wallet.
+  try {
+    _db.run(`CREATE TABLE IF NOT EXISTS db_maintenance (
+      key TEXT PRIMARY KEY, applied_at TEXT NOT NULL
+    )`);
+    const alreadyApplied = (_db.exec(
+      `SELECT key FROM db_maintenance WHERE key = 'backfill_walkin_customer_records_v1'`,
+    )[0]?.values?.length || 0) > 0;
+
+    if (!alreadyApplied) {
+      _db.run(`
+        INSERT INTO customers (id, merchant_id, name, kyc_status, created_at, updated_at)
+        SELECT w.customer_id,
+               CASE WHEN UPPER(w.customer_id) LIKE 'WALKIN-%' THEN substr(w.customer_id, 8) ELSE NULL END,
+               CASE WHEN UPPER(w.customer_id) LIKE 'WALKIN-%'
+                    THEN 'Walk-in Customer (' || substr(w.customer_id, 8) || ')'
+                    ELSE 'Customer ' || w.customer_id END,
+               'PENDING', ?, ?
+          FROM (SELECT DISTINCT customer_id FROM customer_wallets) w
+         WHERE w.customer_id IS NOT NULL
+           AND w.customer_id <> ''
+           AND NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = w.customer_id)
+      `, [NOW_ISO, NOW_ISO]);
+
+      const created = Number(_db.exec(`SELECT changes()`)[0]?.values?.[0]?.[0] || 0);
+      _db.run(`INSERT OR IGNORE INTO db_maintenance (key, applied_at)
+               VALUES ('backfill_walkin_customer_records_v1', ?)`, [NOW_ISO]);
+      console.warn(`[DB] orphan-wallet owner repair: created ${created} missing customer record(s).`);
+    }
+  } catch (err) {
+    console.warn('[DB] orphan-wallet owner repair skipped:', (err as Error)?.message);
+  }
+
   // ── Bootstrap: Inbound SWIFT registration removed ──
   // No fabricated inbound transaction records are seeded at startup.
   // All inbound registrations must be created via POST /payments/inbound/register

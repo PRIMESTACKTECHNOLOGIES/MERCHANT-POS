@@ -103,7 +103,11 @@ export const POSPageSecure = () => {
   const [voiceAuth, setVoiceAuth] = useState(false);
   const [voiceAuthCode, setVoiceAuthCode] = useState("");
   const [posProtocol, setPosProtocol] = useState<PosProtocol>('NORMAL');
-  
+  // Set when a contactless tap must complete the sale automatically. A tap is
+  // expected to deduct, so the captured EMV card is charged without a second
+  // manual confirmation (protocols that need an authorization code still open the form).
+  const [autoChargeAfterTap, setAutoChargeAfterTap] = useState(false);
+
   const { showToast } = useToast();
 
   const loadTransactions = useCallback(() => {
@@ -435,17 +439,27 @@ export const POSPageSecure = () => {
       return false;
     }
     
-    if (!cardData.expiry.match(/^\d{2}\/\d{2}$/)) {
+    // A contactless tap supplies the expiry inside the chip data (field 55), and
+    // some cards expose it only in Track 2 — or not at all. The operator must
+    // never be asked to type an expiry for a tap, so the MM/YY check applies to
+    // typed expiry values and to non-tap flows only.
+    const tappedWithEmv = cardEntryMode === 'NFC' && !!nfcEmvData;
+    if (cardData.expiry) {
+      if (!cardData.expiry.match(/^\d{2}\/\d{2}$/)) {
+        showToast('Expiry must be in MM/YY format', 'error');
+        return false;
+      }
+
+      const [month, year] = cardData.expiry.split('/').map(Number);
+      const now = new Date();
+      const expiryDate = new Date(2000 + year, month - 1);
+
+      if (expiryDate < now) {
+        showToast('Card has expired', 'error');
+        return false;
+      }
+    } else if (!tappedWithEmv) {
       showToast('Expiry must be in MM/YY format', 'error');
-      return false;
-    }
-    
-    const [month, year] = cardData.expiry.split('/').map(Number);
-    const now = new Date();
-    const expiryDate = new Date(2000 + year, month - 1);
-    
-    if (expiryDate < now) {
-      showToast('Card has expired', 'error');
       return false;
     }
     
@@ -507,15 +521,50 @@ export const POSPageSecure = () => {
           return;
         }
 
-        const expiryRaw: string = emv['5F24'] || '';
-        const expiry = expiryRaw.length >= 4
-          ? `${expiryRaw.substring(2, 4)}/${expiryRaw.substring(0, 2)}`
+        // Expiry sources, in order of authority:
+        //   1. 5F24 Application Expiration Date (YYMMDD) — often omitted on
+        //      contactless cards.
+        //   2. emv.expiry — the backend normalises 5F24 *or* Track 2 (57) to YYMM.
+        //   3. Track 2 Equivalent Data (57) itself, expiry sits after the "D".
+        // Without these fallbacks a contactless card that carries only Track 2
+        // left the field blank and failed the MM/YY check.
+        const track2Raw = String(emv['57'] || emv.track2 || '');
+        const track2Expiry = track2Raw.includes('D')
+          ? (track2Raw.split('D')[1] || '').replace(/[^0-9]/g, '').slice(0, 4)
+          : '';
+        const expiryDigits = String(emv['5F24'] || '').replace(/[^0-9]/g, '')
+          || String(emv.expiry || '').replace(/[^0-9]/g, '')
+          || track2Expiry;
+        // 5F24 is YYMMDD and emv.expiry is YYMM; the first 4 digits are YYMM either way.
+        const expiryYymm = expiryDigits.slice(0, 4);
+        const expiry = expiryYymm.length === 4
+          ? `${expiryYymm.substring(2, 4)}/${expiryYymm.substring(0, 2)}`
           : '';
 
-        setCardData(prev => ({ ...prev, pan, expiry: expiry || prev.expiry }));
+        // Set the expiry the chip actually supplied — never keep a stale value
+        // typed for a previous card.
+        setCardData(prev => ({ ...prev, pan, expiry }));
         setNfcEmvData({ emv, tlvRaw: result.tlvRaw || null });
         setCardEntryMode('NFC');
-        showToast(`Contactless card captured ****${pan.slice(-4)} — complete the payment.`, 'success');
+        // A tap that produced no cryptogram cannot be authorized by any issuer,
+        // so say so rather than letting the operator believe the card was
+        // captured and the money is coming.
+        if (result.card?.cryptogramError) {
+          showToast(
+            `Card read, but GENERATE AC returned no cryptogram (${result.card.cryptogramError}). No issuer can authorize this tap.`,
+            'warning'
+          );
+        }
+        // A tap is expected to deduct: for the default protocol the sale is
+        // completed automatically; protocols that require the customer-provided
+        // authorization code open the card form so the operator can enter it.
+        if (posProtocol === 'NORMAL') {
+          showToast(`Contactless card captured ****${pan.slice(-4)} — completing payment…`, 'success');
+          setAutoChargeAfterTap(true);
+        } else {
+          showToast(`Contactless card captured ****${pan.slice(-4)} — enter the authorization code.`, 'success');
+          setShowCardForm(true);
+        }
       } else if (result?.nfcDetected) {
         showToast(result.error || 'NFC device detected, but it is not readable as an EMV payment card.', 'warning');
       } else {
@@ -798,6 +847,17 @@ export const POSPageSecure = () => {
       setVoiceAuthCode("");
     }
   };
+
+  // A successful contactless tap completes the sale: once the captured card state
+  // has landed, charge it immediately instead of waiting for a separate Charge →
+  // Pay press — matching real POS behaviour where tapping the card deducts.
+  useEffect(() => {
+    if (!autoChargeAfterTap) return;
+    if (cardEntryMode !== 'NFC' || !nfcEmvData || !cardData.pan) return;
+    setAutoChargeAfterTap(false);
+    void handleCharge();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoChargeAfterTap, cardEntryMode, nfcEmvData, cardData.pan]);
 
   const formatCardDisplay = (value: string) => {
     const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');

@@ -32,13 +32,14 @@ import {
   topupViaCash,
   topupViaCardToCard,
   handleTransakTopupWebhook,
-  EVM_PUBLIC_RPC,
 } from './cardTopup.service';
 import {
+  creditCard,
   getCardBalance,
   getCardHistory,
   listAllCardBalances,
 } from './cardBalance.service';
+import { findCryptoCard, verifyIncoming } from './cryptoCards.service';
 import { db } from '../../config/db';
 
 const router = Router();
@@ -173,15 +174,10 @@ export interface BankAccountRow {
 
 const envSet = (k: string) => Boolean((process.env[k] || '').trim());
 
-/** EVM networks that can be verified without a scanner key (public RPC fallback). */
-const EVM_NETWORKS = new Set(Object.keys(EVM_PUBLIC_RPC));
-
 /** Human-readable network names for the loader checklist. */
 const NETWORK_LABEL: Record<string, string> = {
   tron: 'TRON (TRC-20)',
-  ethereum: 'Ethereum (ERC-20)',
-  bsc: 'BNB Chain (BEP-20)',
-  polygon: 'Polygon',
+  bitcoin: 'Bitcoin',
 };
 
 /** The vault's USDT deposit address per network — shown to the loader verbatim. */
@@ -191,6 +187,12 @@ const USDT_DEPOSIT_ADDRESS: Record<string, string> = {
   bsc:      (process.env.VAULT_USDT_BSC_ADDRESS || '').trim(),
   polygon:  (process.env.VAULT_USDT_POLYGON_ADDRESS || '').trim(),
 };
+
+/** The TRC-20 USDT contract the TRON card receives on. */
+const TRON_USDT_CONTRACT = (process.env.VAULT_USDT_TRON_CONTRACT || 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t').trim();
+
+/** The vault's Bitcoin receiving address (BIP-84 native SegWit). */
+const BTC_DEPOSIT_ADDRESS = (process.env.VAULT_BTC_ADDRESS || '').trim();
 
 /** Which currency a wire rail can receive into. null = any currency. */
 const WIRE_CURRENCY: Record<string, string | null> = {
@@ -221,10 +223,44 @@ const accountTitle = (a: BankAccountRow): string =>
 const toLoaderAccounts = (rows: BankAccountRow[]): LoaderAccount[] =>
   rows.map((a) => ({ title: accountTitle(a), rows: accountDetailRows(a) })).filter((acct) => acct.rows.length > 0);
 
-const CRYPTO_FIELDS = (network: string): FundingField[] => [
-  { name: 'txHash', label: 'Transaction hash', type: 'text', required: true, placeholder: network === 'tron' ? 'TRON tx id' : '0x…' },
-  { name: 'amount', label: 'Amount (USDT)', type: 'number', required: true, placeholder: '0.00' },
-];
+/**
+ * The company's own receiving accounts, configured once in the environment as
+ * WISE_RECEIVE_<CCY>_*. They belong to Primestack rather than to a merchant, so
+ * they are not stored per merchant — but the loader sheet still has to print
+ * the real IBAN / account number, never a description of which details to send.
+ */
+function envReceiveAccounts(): BankAccountRow[] {
+  const currencies = new Set<string>();
+  for (const key of Object.keys(process.env)) {
+    const match = /^WISE_RECEIVE_([A-Z]{3})_/.exec(key);
+    if (match) currencies.add(match[1]);
+  }
+  const accounts: BankAccountRow[] = [];
+  for (const currency of currencies) {
+    const get = (suffix: string) => (process.env[`WISE_RECEIVE_${currency}_${suffix}`] || '').trim();
+    const accountHolder = get('ACCOUNT_HOLDER');
+    if (!accountHolder) continue;
+    accounts.push({
+      bank_name: get('BANK') || 'Wise',
+      account_holder: accountHolder,
+      account_number: get('ACCOUNT') || get('ACCOUNT_NUMBER'),
+      routing_number: get('ROUTING'),
+      iban: get('IBAN'),
+      swift_code: get('SWIFT') || get('BIC'),
+      bank_address: get('BANK_ADDRESS'),
+      currency,
+      is_default: 0,
+    });
+  }
+  return accounts;
+}
+
+/** Accounts registered for the merchant win per currency; the env ones fill the rest. */
+export function receivingAccounts(merchantRows: BankAccountRow[]): BankAccountRow[] {
+  const covered = new Set(merchantRows.map((a) => String(a.currency || '').toUpperCase()));
+  const extra = envReceiveAccounts().filter((a) => !covered.has(String(a.currency || '').toUpperCase()));
+  return [...merchantRows, ...extra];
+}
 
 const WIRE_FIELDS = (): FundingField[] => [
   { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
@@ -277,40 +313,43 @@ export function listFundingMethods(bankAccounts: BankAccountRow[] = []): Funding
     };
   };
 
-  const crypto = (id: string, title: string, subtitle: string, network: string, envKey: string, scanner: string): FundingMethod => {
-    // A scanner key is optional for EVM networks — verification falls back to a
-    // keyless public JSON-RPC node (see EVM_PUBLIC_RPC in cardTopup.service).
-    const hasKey = envSet(envKey);
-    const keyless = EVM_NETWORKS.has(network);
-    const depositAddress = USDT_DEPOSIT_ADDRESS[network] || '';
+  const crypto = (cfg: {
+    id: string; title: string; subtitle: string;
+    networkLabel: string; networkKey: 'tron' | 'bitcoin';
+    asset: string; address: string; contract?: string;
+    available: boolean; unavailableReason?: string;
+    verifiedAgainst: string; txPlaceholder: string;
+  }): FundingMethod => {
+    const receiving: LoaderAccount[] = cfg.address
+      ? [{
+          title: `${cfg.networkLabel} deposit address`,
+          rows: [
+            { label: 'Network', value: cfg.networkLabel },
+            { label: 'Asset', value: cfg.asset, mono: true },
+            ...(cfg.contract ? [{ label: 'Token contract', value: cfg.contract, mono: true }] : []),
+            { label: 'Deposit address', value: cfg.address, mono: true },
+          ],
+        }]
+      : [];
     return {
-      id, title, subtitle, group: 'crypto', badge: 'Verified',
+      id: cfg.id, title: cfg.title, subtitle: cfg.subtitle, group: 'crypto', badge: 'Verified',
       endpoint: '/api/vault/cardtopup/crypto',
-      verifiedAgainst: keyless && !hasKey
-        ? `Transaction and receipt are read from a public ${scanner} node; a reverted transfer or a mismatched USDT amount is rejected. Set ${envKey} to verify through the scanner API instead.`
-        : `Transaction looked up on ${scanner} and the on-chain USDT amount must match the amount you enter.`,
-      available: hasKey || keyless,
-      unavailableReason: hasKey || keyless ? undefined : `Requires ${envKey} to be set on this server.`,
+      verifiedAgainst: cfg.verifiedAgainst,
+      available: cfg.available,
+      unavailableReason: cfg.available ? undefined : cfg.unavailableReason,
       provideToLoader: [
-        `The vault USDT deposit address on ${NETWORK_LABEL[network] || network} — they must send on this exact network.`,
-        'The exact USDT amount to send. A mismatched amount is refused.',
-        'The warning to send USDT only — another token, or a transfer that reverts on-chain, is refused.',
+        `The ${cfg.asset} deposit address on ${cfg.networkLabel} — this exact address, on this exact network.`,
+        `The exact ${cfg.asset} amount to send. A mismatched amount is refused.`,
+        `The warning to send ${cfg.asset} on ${cfg.networkLabel} only — another token or network is refused.`,
         'The request to send you the transaction hash once the transfer confirms.',
       ],
-      receiving: depositAddress
-        ? [{
-            title: `${NETWORK_LABEL[network] || network} deposit address`,
-            rows: [
-              { label: 'Network', value: NETWORK_LABEL[network] || network },
-              { label: 'Token', value: 'USDT', mono: true },
-              { label: 'Deposit address', value: depositAddress, mono: true },
-            ],
-          }]
-        : [],
-      receivingNote: depositAddress
-        ? undefined
-        : `Set VAULT_USDT_${network.toUpperCase()}_ADDRESS to show the deposit address here.`,
-      fixed: { network }, fields: CRYPTO_FIELDS(network),
+      receiving,
+      receivingNote: receiving.length ? undefined : cfg.unavailableReason,
+      fixed: { network: cfg.networkKey },
+      fields: [
+        { name: 'txHash', label: 'Transaction hash', type: 'text', required: true, placeholder: cfg.txPlaceholder },
+        { name: 'amount', label: `Amount (${cfg.asset})`, type: 'number', required: true, placeholder: '0.00' },
+      ],
     };
   };
 
@@ -349,10 +388,27 @@ export function listFundingMethods(bankAccounts: BankAccountRow[] = []): Funding
       ],
     },
 
-    crypto('usdt_tron', 'USDT — TRON (TRC-20)', 'TRC-20 deposit', 'tron', 'TRON_API_KEY', 'TronGrid'),
-    crypto('usdt_ethereum', 'USDT — Ethereum (ERC-20)', 'ERC-20 deposit', 'ethereum', 'ETHERSCAN_API_KEY', 'Etherscan'),
-    crypto('usdt_bsc', 'USDT — BNB Chain (BEP-20)', 'BEP-20 deposit', 'bsc', 'BSCSCAN_API_KEY', 'BscScan'),
-    crypto('usdt_polygon', 'USDT — Polygon', 'Polygon deposit', 'polygon', 'POLYGONSCAN_API_KEY', 'PolygonScan'),
+    crypto({
+      id: 'usdt_tron', title: 'USDT — TRON (TRC-20)', subtitle: 'TRC-20 deposit',
+      networkLabel: NETWORK_LABEL.tron, networkKey: 'tron', asset: 'USDT',
+      address: USDT_DEPOSIT_ADDRESS.tron, contract: TRON_USDT_CONTRACT,
+      available: Boolean(USDT_DEPOSIT_ADDRESS.tron) && envSet('TRON_API_KEY'),
+      unavailableReason: USDT_DEPOSIT_ADDRESS.tron
+        ? 'Requires TRON_API_KEY to be set on this server.'
+        : 'Set VAULT_USDT_TRON_ADDRESS to show the deposit address here.',
+      verifiedAgainst: 'Transaction looked up on TronGrid; a reverted transfer, or a USDT amount that does not match the amount you enter, is refused.',
+      txPlaceholder: 'TRON tx id',
+    }),
+
+    crypto({
+      id: 'crypto_btc', title: 'BTC — Bitcoin', subtitle: 'Bitcoin network deposit',
+      networkLabel: NETWORK_LABEL.bitcoin, networkKey: 'bitcoin', asset: 'BTC',
+      address: BTC_DEPOSIT_ADDRESS,
+      available: Boolean(BTC_DEPOSIT_ADDRESS),
+      unavailableReason: 'Set VAULT_BTC_ADDRESS to show the deposit address here.',
+      verifiedAgainst: 'Transaction looked up on mempool.space; only a confirmed transaction that pays this card’s Bitcoin address the exact amount is accepted.',
+      txPlaceholder: 'Bitcoin txid',
+    }),
 
     {
       id: 'transak', title: 'Transak on-ramp', subtitle: 'Card / bank → crypto → card', group: 'ramp', badge: 'Verified',
@@ -449,7 +505,7 @@ router.get('/methods', async (_req: Request, res: Response) => {
     // The catalog is still useful without receiving details.
   }
 
-  const methods = listFundingMethods(bankAccounts);
+  const methods = listFundingMethods(receivingAccounts(bankAccounts));
   return res.json({
     ok: true,
     count: methods.length,
@@ -561,15 +617,42 @@ router.post('/wise', async (req: Request, res: Response) => {
 // ═══════════════════════════════════════════════════════════════════════════
 /**
  * POST /api/card-topup/crypto
- * Body: { cardId, currency, amount, txHash, network: 'tron'|'bsc'|'ethereum'|'polygon', note? }
+ * Body: { cardId, currency, amount, txHash, network: 'tron'|'bitcoin', note? }
  */
 router.post('/crypto', async (req: Request, res: Response) => {
   try {
     const { cardId, currency, amount, txHash, network, note } = req.body || {};
-    const validNetworks = ['tron', 'bsc', 'ethereum', 'polygon'];
+    const validNetworks = ['tron', 'bitcoin'];
 
     if (!cardId || !currency || !amount || !txHash || !validNetworks.includes(String(network))) {
       return res.status(400).json({ ok: false, error: `cardId, currency, amount, txHash and network (${validNetworks.join('|')}) are required` });
+    }
+
+    // Bitcoin has no scanner API — the transaction is read straight from the
+    // Bitcoin network through mempool.space and must pay the vault BTC address.
+    if (String(network) === 'bitcoin') {
+      const btcCard = findCryptoCard('btc');
+      if (!btcCard) {
+        return res.status(500).json({ ok: false, error: 'Bitcoin card is not configured on this server' });
+      }
+
+      const check = await verifyIncoming(btcCard, String(txHash), Number(amount));
+      if (!check.ok) {
+        return res.status(400).json({ ok: false, channel: 'crypto', cardId: String(cardId), error: check.error });
+      }
+
+      const txn = await creditCard(
+        String(cardId), String(currency), Number(amount),
+        'crypto', String(txHash), 'bitcoin',
+        note ? String(note) : `Confirmed BTC on-chain deposit ${String(txHash).slice(0, 12)}…`,
+      );
+
+      return res.json({
+        ok: true, channel: 'crypto', cardId: String(cardId), currency: String(currency).toUpperCase(),
+        amount: Number(amount), providerRef: String(txHash), balanceAfter: txn.balanceAfter,
+        message: `Credited ${amount} ${String(currency).toUpperCase()} from a confirmed Bitcoin transaction.`,
+        txnId: txn.id, status: 'CONFIRMED',
+      });
     }
 
     const result = await topupViaCrypto({

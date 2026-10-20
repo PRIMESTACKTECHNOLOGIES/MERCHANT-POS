@@ -152,8 +152,8 @@ export const TerminalsPage = () => {
       showToast("Terminal deleted", "success");
       setShowConfigureModal(null);
       loadTerminals();
-    } catch {
-      showToast("Failed to delete terminal", "error");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Failed to delete terminal", "error");
     }
   };
 
@@ -165,8 +165,8 @@ export const TerminalsPage = () => {
       await deleteTerminal(terminal.merchantId || "MRC-1001", terminal.terminalId);
       showToast("Terminal deleted", "success");
       loadTerminals();
-    } catch {
-      showToast("Failed to delete terminal", "error");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Failed to delete terminal", "error");
     }
   };
 

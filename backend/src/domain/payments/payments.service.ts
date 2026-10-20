@@ -9,6 +9,7 @@ import type { OnlineAuthorizationResult } from './pos-decision.service';
 import { captureCardTransaction } from '../../services/payments/cardCapture';
 import { v4 as uuidv4 } from 'uuid';
 import { buildTransactionIdentity } from './transaction-identity';
+import { isVaultBin } from '../vault/vaultBin';
 
 interface PosTransactionPayload extends PreflightPayload {
   customerId?:      string;
@@ -211,7 +212,13 @@ export class PaymentsService {
         // transaction. It is validated *before* the acquirer is asked to move
         // money, and a failure declines the transaction: a forged Field 55 must
         // never reach an approval.
-        if (field55) {
+        //
+        // Only Primestack's OWN cards can be validated here — the local HSM holds
+        // the vault issuer master key and nothing else. An external customer
+        // card's ARQC is keyed by ITS issuer, so validating it locally would fail
+        // a perfectly genuine tap. Field 55 is therefore forwarded to the
+        // acquirer for external PANs, exactly as a real terminal does.
+        if (field55 && isVaultBin(payload.pan || '')) {
           try {
             const { IssuerEmvValidator } = await import('../../services/hsm/issuerEmvValidator');
             const { getHsmClient } = await import('../../services/hsm/hsmClientImpl');
@@ -219,7 +226,7 @@ export class PaymentsService {
             const expiry = (payload.expiry || '3012').replace('/', '');
             const currency = CURRENCY_NUMERIC[String(payload.currency || 'USD').toUpperCase()] || '840';
             await validator.validate(field55, payload.pan || '', expiry, Number(payload.amountMinor), currency);
-            console.log('[EMV] ARQC validated for card ' + String(payload.pan || '').slice(-4));
+            console.log('[EMV] ARQC validated for vault card ' + String(payload.pan || '').slice(-4));
           } catch (emvErr: any) {
             console.warn('[EMV] ARQC validation failed:', emvErr?.message || emvErr);
             return {
@@ -229,6 +236,8 @@ export class PaymentsService {
               error: emvErr?.message || 'EMV cryptogram validation failed',
             };
           }
+        } else if (field55) {
+          console.log('[EMV] Field 55 forwarded to the acquirer for issuer validation (external PAN ' + String(payload.pan || '').slice(-4) + ')');
         }
 
         const result = await acquirer.authorize({
@@ -1041,12 +1050,41 @@ export class PaymentsService {
                 }
               }
             }
+          } else if (ledgerCaptureOnly && ledgerCustomerId) {
+            // ── INTERNAL-LEDGER CAPTURE ──────────────────────────────────────────
+            // No real scheme capture occurred, so no WITHDRAWABLE merchant funds may
+            // be minted. The card value is instead recorded as an INTERNAL-LEDGER
+            // receivable on the CUSTOMER wallet. It becomes real, spendable merchant
+            // funds only after the operator supplies the provider endpoint URL + API
+            // key + secret and pullProviderFundsToMerchant confirms the external
+            // debit (C→M). Until then it is non-withdrawable (funds_type=INTERNAL_LEDGER).
+            try {
+              const { walletsService: ws } = await import('../wallets/wallets.service');
+              await ws.creditCustomerWallet(
+                ledgerCustomerId,
+                captureAmount,
+                'pos_card_charge_internal_ledger',
+                paymentIntentId,
+                chargeCcy
+              );
+              fundsTarget = 'CUSTOMER_WALLET';
+              console.log(
+                '[Charge] Internal-ledger capture → customer wallet credited: ' +
+                chargeCcy + ' ' + captureAmount + ' | customer=' + ledgerCustomerId
+              );
+            } catch (cwErr: any) {
+              console.warn('[Charge] Customer wallet internal-ledger credit failed (non-fatal):', cwErr.message);
+            }
           } else {
             console.warn(
-              '[Charge] No real scheme capture — no wallet credit posted (unbacked funds are never minted). ' +
+              '[Charge] No real scheme capture and no customer wallet — no wallet credit posted (unbacked funds are never minted). ' +
               'paymentIntentId=' + paymentIntentId
             );
           }
+          // An internal-ledger capture that was successfully credited to the customer
+          // wallet (fundsTarget flipped to CUSTOMER_WALLET above).
+          const internalLedgerCredited = ledgerCaptureOnly && fundsTarget === 'CUSTOMER_WALLET';
+
           // Record transaction in pos2013_transactions
           const ledgerEntryId = ledgerEntry.id;
           const settleMeta = JSON.stringify({
@@ -1058,7 +1096,7 @@ export class PaymentsService {
             panLast4: payload.pan ? payload.pan.slice(-4) : '',
             entry_mode: payload.emv ? 'CHIP' : 'MANUAL',
             cardholder_name: payload.cardholderName || payload.cardholder_name || '',
-            funds_type: realFundsCaptured ? 'REAL_FUNDS' : 'UNBACKED',
+            funds_type: realFundsCaptured ? 'REAL_FUNDS' : (internalLedgerCredited ? 'INTERNAL_LEDGER' : 'UNBACKED'),
             funds_target: fundsTarget,
             ledger_customer_id: ledgerCustomerId || null,
             walk_in: ledgerCustomerId ? !payload.customerId : false
@@ -1117,8 +1155,12 @@ export class PaymentsService {
           }
 
           const response: PosTransactionResult = {
-            success: true,
-            status: 'APPROVED',
+            // REAL capture → approved with real funds. An INTERNAL-LEDGER capture is
+            // also accepted, but it is explicitly non-withdrawable customer-wallet
+            // value (funds_type=INTERNAL_LEDGER) pending the provider pull. Only a
+            // capture that reached neither is a DECLINE.
+            success: realFundsCaptured || internalLedgerCredited,
+            status: (realFundsCaptured || internalLedgerCredited) ? 'APPROVED' : 'DECLINED',
             channel: 'ONLINE',
             paymentIntentId,
             amountMinor: payload.amountMinor,
@@ -1133,7 +1175,10 @@ export class PaymentsService {
                   : fundsTarget === 'CUSTOMER_WALLET'
                     ? `POS transaction approved online (real funds captured → fallback customer wallet ${ledgerCustomerId}).`
                     : 'POS transaction approved online — real funds captured, but no wallet credit could be applied.')
-              : 'POS transaction approved online, but NO real scheme capture was confirmed — no wallet was credited and no funds were minted.',
+              : internalLedgerCredited
+                ? `POS transaction approved — INTERNAL-LEDGER capture credited to customer wallet ${ledgerCustomerId}. These funds are non-withdrawable until the provider pull moves real funds to the merchant wallet.`
+                : 'POS transaction DECLINED — no real scheme capture was confirmed, so no wallet was credited and no funds were minted.',
+            error: (realFundsCaptured || internalLedgerCredited) ? undefined : (online.error || 'No real scheme capture was confirmed'),
           };
 
           await this.saveIdempotencyResult(this.buildIdempotencyKey(payload), response);

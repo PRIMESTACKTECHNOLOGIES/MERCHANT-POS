@@ -25,6 +25,22 @@ export interface ACR122UCardData {
   gpo?: string;
   /** EMV GET DATA (80 CA) result — e.g. PIN Try Counter (9F 17). */
   pinTryCounter?: string;
+  /**
+   * GENERATE AC result — the cryptogram computed by the tapped card itself.
+   * `ac` is the genuine 9F26 (ARQC); the terminal cannot produce one.
+   */
+  cryptogram?: {
+    cid: string;
+    atc: string;
+    ac: string;
+    iad?: string;
+  };
+  /**
+   * Why GENERATE AC failed, when it did. Without a cryptogram the charge has no
+   * Field 55 to authorize, so it must decline rather than be reported as
+   * captured.
+   */
+  cryptogramError?: string;
   raw?: Buffer;
 }
 
@@ -61,6 +77,12 @@ export class ACR122UReaderService {
   private static readonly READER_ENUMERATION_WAIT_MS = 1500;
   private static readonly WATCHDOG_INTERVAL_MS = 4000;
   private static readonly SCANNER_STALE_MS = 30000;
+
+  // PC/SC enumerates virtual/simulated readers (e.g. the JAVACOS JavaCard
+  // simulator installed on this host) alongside the physical ACR122U. They are
+  // contact-only and never see a tap, so binding to one leaves the POS reporting
+  // "connected" while detecting no card. Virtual readers are ignored entirely.
+  private static readonly VIRTUAL_READER_PATTERN = /virtual|javacos|simulat|emulat|mock/i;
 
   // Blind application selection list, sourced from the EMV AID registry
   // (services/emv/emvAidRegistry.ts). Ordered contactless-first.
@@ -147,8 +169,21 @@ export class ACR122UReaderService {
     this.lastScannerHealthyAt = Date.now();
 
     nfc.on('reader', (reader: ReaderLike) => {
+      const name = reader?.reader?.name || '';
+      // Never bind to a virtual/simulated reader — the physical ACR122U is the
+      // only reader that can see a contactless tap.
+      if (ACR122UReaderService.VIRTUAL_READER_PATTERN.test(name)) {
+        console.warn(`[ACR122U] Ignoring virtual reader: ${name}`);
+        // A previously bound real reader stays bound; drop only if the ignored
+        // reader was the one currently held.
+        if (this.readerName === name) {
+          this.reader = null;
+          this.readerName = null;
+        }
+        return;
+      }
       this.reader = reader;
-      this.readerName = reader?.reader?.name || null;
+      this.readerName = name || null;
       this.lastScannerHealthyAt = Date.now();
       this.lastInitError = null;
       this.scannerFailed = false;
@@ -455,10 +490,65 @@ export class ACR122UReaderService {
     result.error = 'MIFARE Classic card detected, but no default key authenticated. EMV APDUs are not applicable to this card type.';
   }
 
-  private buildPdolData(pdol: Buffer, amountMinor = 0, currency = 'USD'): Buffer {
-    const values: Buffer[] = [];
+  /**
+   * Walk a card-published DOL (PDOL 9F38 / CDOL1 8C) into its ordered entries.
+   * Every DOL length is a BYTE length (n12 is written as 06), so each entry
+   * tells the terminal exactly how many bytes of that tag to supply.
+   */
+  private parseDolEntries(dol: Buffer): Array<{ tagBytes: Buffer; tag: string; length: number }> {
+    const entries: Array<{ tagBytes: Buffer; tag: string; length: number }> = [];
     let offset = 0;
 
+    while (offset < dol.length) {
+      const tagStart = offset;
+      let tag = dol[offset].toString(16).padStart(2, '0').toUpperCase();
+      offset += 1;
+
+      if ((parseInt(tag, 16) & 0x1f) === 0x1f) {
+        while (offset < dol.length && (dol[offset] & 0x80) === 0x80) {
+          tag += dol[offset].toString(16).padStart(2, '0').toUpperCase();
+          offset += 1;
+        }
+        if (offset < dol.length) {
+          tag += dol[offset].toString(16).padStart(2, '0').toUpperCase();
+          offset += 1;
+        }
+      }
+
+      if (offset >= dol.length) {
+        break;
+      }
+
+      const length = dol[offset];
+      offset += 1;
+
+      entries.push({ tagBytes: dol.slice(tagStart, tagStart + tag.length / 2), tag, length });
+    }
+
+    return entries;
+  }
+
+  /**
+   * Fill a DOL with one value per requested tag, in the order the card asked.
+   *
+   * A tag whose value is missing — or whose length does not exactly match the
+   * DOL — is zero-filled, because a real card rejects a length mismatch with
+   * status 6700 and the whole tap would fail.
+   */
+  private fillDol(dol: Buffer, values: Record<string, Buffer>): Buffer {
+    const parts = this.parseDolEntries(dol).map(({ tag, length }) => {
+      const value = values[tag];
+      return value && value.length === length ? value : Buffer.alloc(length, 0x00);
+    });
+    return Buffer.concat(parts);
+  }
+
+  /** Terminal-side values for the data elements a card's DOL can request. */
+  private terminalDolValues(
+    amountMinor: number,
+    currency: string,
+    unpredictableNumber?: Buffer
+  ): Record<string, Buffer> {
     const bcd = (value: number, bytes: number) => {
       const digits = Math.max(0, Math.round(value)).toString().padStart(bytes * 2, '0').slice(-(bytes * 2));
       const out = Buffer.alloc(bytes);
@@ -470,11 +560,12 @@ export class ACR122UReaderService {
     const currencyCodes: Record<string, number> = { USD: 840, AED: 784, EUR: 978, GBP: 826, SAR: 682, INR: 356, CAD: 124, AUD: 36 };
     const currencyCode = currencyCodes[String(currency || 'USD').toUpperCase()] || 840;
     const now = new Date();
-    const terminalData: Record<string, Buffer> = {
+
+    return {
       '9F02': bcd(amountMinor, 6),
       '9F03': Buffer.alloc(6, 0),
       '9F1A': Buffer.from([0x08, 0x40]),
-      '95': Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00]),
+      '95': Buffer.alloc(5, 0x00),
       '5F2A': Buffer.from([(currencyCode >> 8) & 0xff, currencyCode & 0xff]),
       '9A': Buffer.from([
         ...bcd(now.getUTCFullYear() % 100, 1),
@@ -482,40 +573,18 @@ export class ACR122UReaderService {
         ...bcd(now.getUTCDate(), 1),
       ]),
       '9C': Buffer.from([0x00]),
-      '9F37': require('crypto').randomBytes(4),
+      '9F37': unpredictableNumber || require('crypto').randomBytes(4),
       '9F35': Buffer.from([0x22]),
       '9F33': Buffer.from([0xe0, 0xf8, 0xc8]),
+      '9F34': Buffer.from([0x1f, 0x00, 0x00]),
+      '9F1E': Buffer.from('3132333435363738', 'hex'),
       '9F40': Buffer.from([0xf0, 0x00, 0xf0, 0x01, 0x00]),
       '9F66': Buffer.from([0x26, 0x00, 0x40, 0x00]),
     };
+  }
 
-    while (offset < pdol.length) {
-      let tag = pdol[offset].toString(16).padStart(2, '0').toUpperCase();
-      offset += 1;
-
-      if ((parseInt(tag, 16) & 0x1f) === 0x1f) {
-        while (offset < pdol.length && (pdol[offset] & 0x80) === 0x80) {
-          tag += pdol[offset].toString(16).padStart(2, '0').toUpperCase();
-          offset += 1;
-        }
-        if (offset < pdol.length) {
-          tag += pdol[offset].toString(16).padStart(2, '0').toUpperCase();
-          offset += 1;
-        }
-      }
-
-      if (offset >= pdol.length) {
-        break;
-      }
-
-      const length = pdol[offset];
-      offset += 1;
-      values.push(terminalData[tag] && terminalData[tag].length === length
-        ? terminalData[tag]
-        : Buffer.alloc(length, 0x00));
-    }
-
-    return Buffer.concat(values);
+  private buildPdolData(pdol: Buffer, amountMinor = 0, currency = 'USD'): Buffer {
+    return this.fillDol(pdol, this.terminalDolValues(amountMinor, currency));
   }
 
   private async selectAID(reader: any, aid: Buffer): Promise<Buffer> {
@@ -595,6 +664,72 @@ export class ACR122UReaderService {
     }
 
     return records;
+  }
+
+  /**
+   * GENERATE AC — 80 AE [P1] 00 [Lc] [CDOL1 data] 00 (EMV Book 3 §6.5.9).
+   *
+   * P1 bits 8-7 select what the terminal asks the card for:
+   *   0x00 = AAC (decline), 0x40 = TC (offline approve), 0x80 = ARQC (go online).
+   *
+   * The cryptogram is computed and MACed INSIDE the card, keyed by an issuer
+   * master key the terminal does not hold. That is why a genuine 9F26 can only
+   * ever come from this response — no amount of terminal code can derive it.
+   *
+   * Response layout: CID (1) ‖ ATC (2) ‖ AC (8) ‖ IAD (variable).
+   */
+  private async generateApplicationCryptogram(
+    reader: any,
+    cdol1: Buffer,
+    values: Record<string, Buffer>
+  ): Promise<{ cid: Buffer; atc: Buffer; ac: Buffer; iad: Buffer }> {
+    const data = this.fillDol(cdol1, values);
+    const apdu = Buffer.concat([
+      Buffer.from([0x80, 0xae, 0x80, 0x00, data.length]),
+      data,
+      Buffer.from([0x00]),
+    ]);
+
+    const response = await this.transmitApdu(reader, apdu, 512, 'GENERATE AC');
+
+    if (response.length < 11) {
+      throw new Error(`GENERATE AC response too short (${response.length} bytes) — CID/ATC/AC missing`);
+    }
+
+    return {
+      cid: response.slice(0, 1),
+      atc: response.slice(1, 3),
+      ac: response.slice(3, 11),
+      iad: response.slice(11),
+    };
+  }
+
+  /**
+   * Build the Field 55 (DE55) block for the GENERATE AC that was just sent.
+   *
+   * The issuer must MAC the *identical* byte string the card signed, so every
+   * data element named by CDOL1 is echoed here in CDOL1 order, followed by the
+   * cryptogram (9F26) and CID (9F27) the card returned. Dropping any element —
+   * or reporting a different unpredictable number — makes the issuer recompute
+   * a different cryptogram and decline a genuine tap.
+   */
+  private buildAcTlv(
+    cdol1: Buffer,
+    values: Record<string, Buffer>,
+    ac: { cid: Buffer; ac: Buffer }
+  ): Buffer {
+    const tlv = (tagBytes: Buffer, value: Buffer) =>
+      Buffer.concat([tagBytes, Buffer.from([value.length]), value]);
+
+    const parts = this.parseDolEntries(cdol1).map(({ tagBytes, tag, length }) => {
+      const value = values[tag];
+      return tlv(tagBytes, value && value.length === length ? value : Buffer.alloc(length, 0x00));
+    });
+
+    parts.push(tlv(Buffer.from([0x9f, 0x27]), ac.cid));
+    parts.push(tlv(Buffer.from([0x9f, 0x26]), ac.ac));
+
+    return Buffer.concat(parts);
   }
 
   private collectNestedTagValues(buffer: Buffer, targetTag: string): Buffer[] {
@@ -731,9 +866,63 @@ export class ACR122UReaderService {
       }
 
       const recordResponses = await this.readRecords(reader, this.parseAfl(afl));
-      const combinedRaw = Buffer.concat([ppseResponse, selectAIDResponse, gpoResponse, ...recordResponses]);
+      let combinedRaw = Buffer.concat([ppseResponse, selectAIDResponse, gpoResponse, ...recordResponses]);
       result.raw = combinedRaw;
       result.emvReady = true;
+
+      // ── GENERATE AC — the only source of a genuine 9F26 ARQC ───────────────
+      // Reading records yields PAN/expiry/AIP/AFL but NO cryptogram: an issuer
+      // will not authorize a tap without one. The card's own CDOL1 (8C) decides
+      // exactly which data elements it must be handed for that computation.
+      const cardSources = [gpoResponse, ...recordResponses];
+      const findCardTag = (tag: string): Buffer | null => {
+        for (const source of cardSources) {
+          const found = this.collectNestedTagValues(source, tag);
+          if (found.length) return found[0];
+        }
+        return null;
+      };
+
+      const cdol1 = findCardTag('8C');
+      if (cdol1 && cdol1.length) {
+        try {
+          const unpredictableNumber = require('crypto').randomBytes(4);
+          const cardAip = findCardTag('82');
+          const cardAtc = findCardTag('9F36');
+          const cardIad = findCardTag('9F10');
+          // Application Version Number lives in the ADF FCI, not in the records,
+          // and CDOL1 frequently asks for it — zero-filling it makes cards
+          // reject the command with 6985.
+          const adfAppVersion = this.collectNestedTagValues(selectAIDResponse, '9F09')[0];
+          const values: Record<string, Buffer> = {
+            ...this.terminalDolValues(amountMinor, currency, unpredictableNumber),
+            ...(cardAip ? { '82': cardAip } : {}),
+            ...(cardAtc ? { '9F36': cardAtc } : {}),
+            ...(cardIad ? { '9F10': cardIad } : {}),
+            ...(adfAppVersion ? { '9F09': adfAppVersion } : {}),
+          };
+
+          const ac = await this.generateApplicationCryptogram(reader, cdol1, values);
+          result.cryptogram = {
+            cid: ac.cid.toString('hex').toUpperCase(),
+            atc: ac.atc.toString('hex').toUpperCase(),
+            ac: ac.ac.toString('hex').toUpperCase(),
+            iad: ac.iad.length ? ac.iad.toString('hex').toUpperCase() : undefined,
+          };
+          // The AC block joins the raw stream so the charge's Field 55 carries
+          // the cryptogram and every CDOL1 element behind it.
+          combinedRaw = Buffer.concat([combinedRaw, this.buildAcTlv(cdol1, values, ac)]);
+          result.raw = combinedRaw;
+        } catch (acError: any) {
+          // The card was read, so keep emvReady — but record why no cryptogram
+          // exists. The charge fails closed on the missing 9F26 instead of
+          // fabricating one.
+          result.cryptogramError = acError?.message || String(acError);
+          console.warn('[ACR122U] GENERATE AC failed:', result.cryptogramError);
+        }
+      } else {
+        result.cryptogramError = 'Card published no CDOL1 (8C) — GENERATE AC is not applicable to this application';
+      }
 
       return result;
     } catch (error: any) {

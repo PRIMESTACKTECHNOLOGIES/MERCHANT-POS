@@ -10,6 +10,19 @@ export interface PreflightPayload {
   terminalId?: string;
   merchantId?: string;
   stan?: string;
+  /**
+   * True only when the caller may actually approve the transaction OFFLINE.
+   *
+   * The offline-disallowed rules below (TVR "online required", offline PIN
+   * required, AIP offline-data-auth unsupported) exist to stop an OFFLINE
+   * approval of a card that must go online. An online authorization is the
+   * correct outcome for exactly those cards, so the rules MUST NOT be applied
+   * to it — otherwise every online-only card (which is every contactless card,
+   * since AIP bit1=0 means "no offline SDA") is declined.
+   *
+   * Defaults to false (online). Only the offline batch upload path sets it.
+   */
+  allowOfflineApproval?: boolean;
 }
 
 export interface PreflightResult {
@@ -58,6 +71,9 @@ function parseHexTlvToTagMap(hex: string): Record<string, string> {
 export function syncOfflinePreflight(payload: PreflightPayload): PreflightResult {
   const pan = String(payload.pan || '').replace(/\s+/g, '');
   const exp = String(payload.expiry || '').replace(/\D/g, '');
+  // Offline-disallowed rules only apply when an offline approval is actually
+  // being attempted; an online authorization must never be declined for it.
+  const allowOffline = payload.allowOfflineApproval === true;
 
   // ── 1. Wrong details ────────────────────────────────────────────────────
   if (pan) {
@@ -122,8 +138,10 @@ export function syncOfflinePreflight(payload: PreflightPayload): PreflightResult
     if ((b4 & 0x01) === 0x01) return { declined: true, reason: 'Card blocked: issuer authentication failed', code: 'CARD_BLOCKED_ISSUER_AUTH' };
     if ((b1 & 0x20) === 0x20 || (b1 & 0x40) === 0x40) return { declined: true, reason: 'Card details wrong: SDA/DDA/CDA integrity check failed (card tampered)', code: 'EMV_AUTH_FAILED' };
 
-    // ══ ONLY IF NOT TC-APPROVED (above gate) apply offline-disallowed rules ══
-    if (!isTcApproved) {
+    // ══ ONLY IF NOT TC-APPROVED (above gate) AND AN OFFLINE APPROVAL IS SOUGHT ══
+    //    For an online authorization these conditions are the reason to go
+    //    online, not a reason to decline.
+    if (!isTcApproved && allowOffline) {
       // ── 4. Not allowed offline ───────────────────────────────────────
       if ((b3 & 0x01) === 0x01) return { declined: true, reason: 'Card not allowed for offline transactions (online required)', code: 'OFFLINE_NOT_ALLOWED' };
       if ((b1 & 0x80) === 0x80) return { declined: true, reason: 'Card requires online authorization (offline stand-in forbidden)', code: 'OFFLINE_NOT_ALLOWED_TVR' };
@@ -134,10 +152,11 @@ export function syncOfflinePreflight(payload: PreflightPayload): PreflightResult
     if ((b5 & 0x02) === 0x02) return { declined: true, reason: 'Card not allowed for international transfers', code: 'INTERNATIONAL_NOT_ALLOWED' };
   }
 
-  // ── 4. AIP offline support check (skip if TC approved, card offline OK) ──
-  //    (TC from chip already certifies this card works offline.)
+  // ── 4. AIP offline support check — only when an offline approval is sought ─
+  //    AIP bit1=0 means the card has no offline data authentication and MUST be
+  //    authorized online. Sent online (the default), that is a valid card.
   const aipByte = tags.aip ? parseInt(tags.aip.slice(0, 2), 16) : null;
-  if (!isTcApproved && aipByte !== null && (aipByte & 0x02) === 0x00 && pan && /^\d+$/.test(pan)) {
+  if (allowOffline && !isTcApproved && aipByte !== null && (aipByte & 0x02) === 0x00 && pan && /^\d+$/.test(pan)) {
     // AIP bit1=0 means offline data auth not supported → must go online.
     return { declined: true, reason: 'Card not allowed offline: AIP indicates online-only card', code: 'OFFLINE_NOT_ALLOWED_AIP' };
   }

@@ -789,6 +789,14 @@ class LivePaymentActivity : AppCompatActivity() {
             text = "Customer: $selCustName"
             textSize = 14f; setTextColor(Color.parseColor("#86EFAC")); gravity = Gravity.CENTER
         })
+        // Live customer-wallet balance — the customer must see the funds that were just
+        // credited, not only an "APPROVED" badge.
+        val tvWallet = TextView(this).apply {
+            text = ""; textSize = 13f
+            setTextColor(Color.parseColor("#D4AF37")); gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, 0)
+        }
+        if (!offline && selCustId.isNotBlank()) overlay.addView(tvWallet)
         overlay.addView(TextView(this).apply {
             text = if (offline) "Will sync to dashboard when online" else "Synced to dashboard ✓"
             textSize = 11f; setTextColor(Color.parseColor("#94A3B8")); gravity = Gravity.CENTER
@@ -812,9 +820,35 @@ class LivePaymentActivity : AppCompatActivity() {
             setOnClickListener { returnToTerminal() }
         })
         setContentView(overlay)
+        if (!offline && selCustId.isNotBlank()) refreshApprovalWallet(tvWallet)
         val r = Runnable { if (!isFinishing) returnToTerminal() }
         approvalJob = r
         Handler(Looper.getMainLooper()).postDelayed(r, 8000)
+    }
+
+    /**
+     * Pulls the customer's wallet balance straight after an approved charge so the freshly
+     * credited internal-ledger funds are visible on the terminal itself.
+     */
+    private fun refreshApprovalWallet(tv: TextView) {
+        val custId = selCustId
+        if (custId.isBlank()) return
+        tv.text = "Updating wallet…"
+        lifecycleScope.launch {
+            try {
+                val api = ApiClient.createWalletsApi(
+                    PosApplication.getServerUrl(this@LivePaymentActivity),
+                    jwtToken.ifBlank { null }
+                )
+                val resp = withContext(Dispatchers.IO) { api.getBalance(custId) }
+                val b = resp.body()
+                tv.text = if (resp.isSuccessful && b != null)
+                    "Customer wallet: ${b.currency} ${"%.2f".format(b.balance)}"
+                else "Customer wallet: unavailable"
+            } catch (_: Exception) {
+                tv.text = "Customer wallet: unavailable"
+            }
+        }
     }
 
     /** Rebuilds the payment screen after an approval (single pending auto-return at a time). */

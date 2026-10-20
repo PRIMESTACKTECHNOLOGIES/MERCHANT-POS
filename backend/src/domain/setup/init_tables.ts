@@ -109,6 +109,9 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE wallet_transactions ADD COLUMN currency TEXT DEFAULT 'USD'`),
       // merchant_wallet_transactions â€” native currency column
       parseAddCol(`ALTER TABLE merchant_wallet_transactions ADD COLUMN currency TEXT DEFAULT 'USD'`),
+      // payout_instructions â€” bank_name (older databases created this table before
+      // the column existed; GET /api/vault/payouts selects it and 500s without it)
+      parseAddCol(`ALTER TABLE payout_instructions ADD COLUMN bank_name TEXT`),
       // customer_crypto_wallets_v2 â€” HD derivation index for BIP-44 wallet generation
       parseAddCol(`ALTER TABLE customer_crypto_wallets_v2 ADD COLUMN derivation_index INTEGER`),
     ];

@@ -3,10 +3,41 @@ import { v4 as uuid } from "uuid";
 
 export class TerminalsService {
   async registerTerminal(name: string, deviceSerial?: string) {
-    const id = uuid();
     const merchantId = "MRC-1001";
-    const terminalId = deviceSerial ? String(deviceSerial) : "T2013-" + Math.floor(Math.random() * 9999);
+
+    // terminal_id is UNIQUE. A device that re-registers (same serial) used to hit a
+    // constraint violation that surfaced as HTTP 500 on the pairing screen. Registration
+    // is now idempotent: an already-paired serial gets its existing credentials back so
+    // the device can always recover its Merchant/Terminal/Secret values.
+    if (deviceSerial) {
+      const existing = await db.query(
+        `SELECT id, merchant_id, terminal_id, terminal_secret, offline_enabled
+         FROM terminals WHERE terminal_id = ? LIMIT 1`,
+        [String(deviceSerial)]
+      );
+      if (existing.rows.length) {
+        const row = existing.rows[0] as any;
+        console.log(`[Terminal Register] terminal_id ${row.terminal_id} already registered - returning existing credentials`);
+        return {
+          id: row.id, merchantId: row.merchant_id, terminalId: row.terminal_id,
+          terminalSecret: row.terminal_secret,
+          offlineEnabled: Boolean(row.offline_enabled),
+          alreadyRegistered: true
+        };
+      }
+    }
+
+    const id = uuid();
     const terminalSecret = uuid().replace(/-/g, "");
+
+    // Generated ids must not collide either - retry before falling back to a time-based id.
+    let terminalId = deviceSerial ? String(deviceSerial) : "";
+    for (let attempt = 0; attempt < 5 && !terminalId; attempt++) {
+      const candidate = "T2013-" + Math.floor(Math.random() * 9999);
+      const clash = await db.query(`SELECT 1 FROM terminals WHERE terminal_id = ? LIMIT 1`, [candidate]);
+      if (!clash.rows.length) terminalId = candidate;
+    }
+    if (!terminalId) terminalId = "T2013-" + Date.now().toString().slice(-5);
 
     await db.query(
       `INSERT INTO terminals (id, merchant_id, terminal_id, name, terminal_secret, offline_enabled)

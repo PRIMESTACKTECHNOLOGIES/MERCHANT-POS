@@ -5,6 +5,7 @@ import { db } from "./config/db";
 import { buildCorsOptions } from "./config/cors";
 import { authenticateToken } from "./middleware/auth.middleware";
 import { terminalsRouter } from "./domain/terminals/terminals.router";
+import { merchantsRouter } from "./domain/merchants/merchants.router";
 import { transactionsRouter } from "./domain/transactions/transactions.router";
 import { productsRouter } from "./domain/products/products.router";
 import { authRouter } from "./domain/auth/auth.router";
@@ -52,6 +53,7 @@ import bankPartnerWebhookRouter from './domain/payouts/bank-partner-webhook.rout
 import developerIntegrationRouter from './domain/developer/developer-integration.router';
 import { prismaLaposRouter } from './domain/payments/prisma-lapos/prisma-lapos.router';
 import { cardTopupRouter } from './domain/vault/cardTopup.router';
+import { cryptoCardsRouter } from './domain/vault/cryptoCards.router';
 import { transakVbaRouter } from './domain/wallets/transakVba.router';
 import { securityEventRouter } from './domain/security/security.router';
 import { gatewayWebhookRouter, gatewayRouter, gatewayRawBodyParser } from './domain/vault/gateways/gateway.router';
@@ -351,6 +353,7 @@ app.use('/webhooks', fundingWebhookRouter);
 // These must come BEFORE the /api/* mounts so Express matches them first.
 app.use('/wallet', walletsRouter);
 app.use('/merchant/v1/terminals', terminalsRouter);
+app.use('/merchant/v1/merchants', merchantsRouter);
 app.use('/merchant/v1/transactions', transactionsRouter);
 app.use('/merchant/v1/settings', settingsRouter);
 app.use('/merchant/v1/batches', batchesRouter);
@@ -358,10 +361,12 @@ app.use('/merchant/v1/products', productsRouter);
 app.use('/merchant/v1/receipts', receiptsRouter);
 
 app.use('/api/wallets', walletsRouter);
+app.use('/api/merchants', merchantsRouter);
 app.use('/api/wallets/vba', transakVbaRouter);
 app.use('/api', apiRouter);
 app.use('/api/vault', vaultRouter);
 app.use('/api/vault/cardtopup', cardTopupRouter);
+app.use('/api/vault/crypto', cryptoCardsRouter);
 app.use('/api/vault/gateways', gatewayRouter);
 app.use('/api/settlements', settlementsRouter);
 app.use('/api/iso20022', iso20022Router);

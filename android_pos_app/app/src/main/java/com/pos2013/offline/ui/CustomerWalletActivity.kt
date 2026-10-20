@@ -60,12 +60,17 @@ class CustomerWalletActivity : AppCompatActivity() {
 
         setContentView(buildUI())
 
-        if (customerId.isNotBlank()) {
-            loadWallet()
-        } else {
+        if (customerId.isBlank()) {
             tvName.text = "No customer selected"
             tvBalance.text = "—"
         }
+    }
+
+    // Reload on every visit — the wallet is credited by the charge that just happened, so
+    // the balance must not be a stale snapshot from the first time this screen opened.
+    override fun onResume() {
+        super.onResume()
+        if (customerId.isNotBlank()) loadWallet()
     }
 
     private fun buildUI(): View {

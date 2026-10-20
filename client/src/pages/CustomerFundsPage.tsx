@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Eye, EyeOff, Send, RefreshCw, X, Check, ChevronRight, Wallet, ArrowRight } from "lucide-react";
 import { resolveApiBaseUrl } from "../lib/backendUrl";
 
@@ -116,14 +116,20 @@ export function CustomerFundsPage() {
       const wallets: CustomerWallet[] = [];
       for (const c of list.slice(0, 50)) {
         try {
-          const wb = await apiFetch(`/wallet/balance/${encodeURIComponent(c.id)}`);
-          if (Number(wb?.balance) > 0) {
-            wallets.push({
-              customerId: c.id,
-              name: c.name || c.full_name || c.id,
-              balance: Number(wb.balance),
-              currency: String(wb.currency || "USD"),
-            });
+          // A customer holds ONE wallet PER currency. The POS capture credits the
+          // wallet in the transaction currency (USD/EUR/AED/…), so read every
+          // currency wallet — a USD-only lookup hides AED/EUR internal-ledger funds.
+          const wb = await apiFetch(`/api/wallet/customer/${encodeURIComponent(c.id)}/balances`);
+          const rows = Array.isArray(wb?.wallets) ? wb.wallets : [];
+          for (const w of rows) {
+            if (Number(w?.balance) > 0) {
+              wallets.push({
+                customerId: c.id,
+                name: c.name || c.full_name || c.id,
+                balance: Number(w.balance),
+                currency: String(w.currency || "USD"),
+              });
+            }
           }
         } catch { /* skip wallets that fail */ }
       }
@@ -166,20 +172,39 @@ export function CustomerFundsPage() {
     setSending(true);
     setSendErr("");
     try {
-      const r = await apiFetch("/api/wallets/customer-to-merchant", {
+      // The backend requires an idempotency reference in the WPP-<alnum> format.
+      // Reuse the operator reference if it already matches, else mint one.
+      const reqRef = /^WPP-[A-Z0-9]{8,32}$/i.test(reference.trim())
+        ? reference.trim().toUpperCase()
+        : `WPP-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      const r = await apiFetch("/api/wallets/provider-pull-to-merchant", {
         method: "POST",
         body: JSON.stringify({
-          customerId:        custId,
+          customerId:       custId,
           merchantId,
-          amount:            Number(amount),
+          amountMinor:      Math.round(Number(amount) * 100),
           currency,
-          providerUrl:       providerUrl.trim(),
-          providerApiKey:    providerApiKey.trim(),
-          providerSecretKey: providerSecret.trim(),
-          reference:         reference.trim() || undefined,
+          endpointUrl:      providerUrl.trim(),
+          apiKey:           providerApiKey.trim(),
+          secretKey:        providerSecret.trim(),
+          requestReference: reqRef,
+          reason:           reference.trim() || undefined,
         }),
       });
-      setSendResult(r);
+      let merchantBalanceAfter = 0;
+      try {
+        const mb = await apiFetch(`/wallet/merchant-balance/${encodeURIComponent(merchantId)}?currency=${encodeURIComponent(String(r?.currency || currency))}`);
+        merchantBalanceAfter = Number(mb?.balance ?? 0);
+      } catch { /* non-fatal — balance display only */ }
+      setSendResult({
+        amount:            Number(r?.amount ?? Number(amount)),
+        currency:          String(r?.currency || currency),
+        reference:         String(r?.reference || reqRef),
+        merchantId,
+        merchantBalanceAfter,
+        providerReference: r?.providerReference,
+        creditedAt:        r?.creditedAt,
+      });
       setShowModal(false);
       setProviderUrl(""); setProviderApiKey(""); setProviderSecret(""); setShowSecret(false);
       setFlowStep(3);

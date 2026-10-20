@@ -254,7 +254,12 @@ class SettingsActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val api        = ApiClient.createTerminalsApi(ApiClient.DEFAULT_URL)
+                // Register against the server this device is actually configured for.
+                // ApiClient.DEFAULT_URL is only the compiled-in fallback, so using it here
+                // paired the terminal with a different backend than the one that processes
+                // the payments.
+                val serverUrl  = PosApplication.getServerUrl(this@SettingsActivity)
+                val api        = ApiClient.createTerminalsApi(serverUrl)
                 val deviceName = android.os.Build.MODEL ?: "Android POS"
                 val response   = withContext(Dispatchers.IO) {
                     api.registerTerminal(
@@ -311,7 +316,8 @@ class SettingsActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val api      = ApiClient.createTerminalsApi(ApiClient.DEFAULT_URL)
+                val serverUrl = PosApplication.getServerUrl(this@SettingsActivity)
+                val api      = ApiClient.createTerminalsApi(serverUrl)
                 val response = withContext(Dispatchers.IO) {
                     api.verifyTerminal(TerminalVerifyRequest(merchantId, terminalId, secretKey))
                 }

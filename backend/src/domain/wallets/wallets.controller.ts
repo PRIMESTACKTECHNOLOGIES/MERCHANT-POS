@@ -1,4 +1,4 @@
-﻿import { Request, Response } from 'express';
+import { Request, Response } from 'express';
 import { walletsService } from './wallets.service';
 import { fundsSettlementService } from '../settlements/funds-settlement.service';
 
@@ -1670,6 +1670,17 @@ export class WalletsController {
       const { currency } = req.query as any;
       const wallet = await walletsService.getOrCreateMerchantWallet(merchantId, (currency as string) || 'USD');
       res.json({ balance: wallet.balance, currency: wallet.currency, merchantId });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  }
+
+  // Returns EVERY currency wallet held by the merchant (EUR, USD, AED, ...).
+  // The merchant wallet is multi-currency; a USD-only lookup hides balances
+  // that were actually credited in another currency.
+  async getMerchantWallets(req: Request, res: Response) {
+    try {
+      const { merchantId } = req.params;
+      const wallets = await walletsService.listMerchantWallets(merchantId);
+      res.json(wallets);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   }
 
