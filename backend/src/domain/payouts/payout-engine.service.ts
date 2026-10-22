@@ -14,6 +14,7 @@
 
 import { db } from '../../config/db';
 import { ledgerService } from '../ledger/ledger.service';
+import { resolveMerchantBankAccount, isReceivingBankConfigured } from '../../config/merchantBank';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface PayoutRequest {
@@ -49,23 +50,16 @@ export class PayoutEngine {
     
     const { merchantId, amount, currency } = request;
     
-    // Get merchant bank details
-    const merchantSettings = await db.query(`
-      SELECT 
-        merchant_name,
-        bank_name, 
-        bank_account_holder, 
-        bank_account_number, 
-        bank_routing_number
-      FROM merchant_settings
-      WHERE merchant_id = ?
-    `, [merchantId]);
-    
-    if (!merchantSettings.rows[0]?.bank_account_number) {
-      throw new Error('Merchant bank account not configured. Please add bank details in Settings.');
+    // Receiver account — env vars (MERCHANT_BANK_*) override Merchant Settings bank_* columns
+    const bank = await resolveMerchantBankAccount(merchantId);
+    if (!isReceivingBankConfigured(bank)) {
+      throw new Error('Merchant bank account not configured. Add bank details in Merchant Settings or set MERCHANT_BANK_* env vars.');
     }
-    
-    const settings = merchantSettings.rows[0];
+    const settings = {
+      merchant_name: bank.accountHolder || bank.bankName || merchantId,
+      bank_name: bank.bankName,
+      bank_account_number: bank.accountNumber || bank.iban,
+    };
     
     // Check ledger balance
     const balance = await ledgerService.getSettledBalance(merchantId, currency);
@@ -79,11 +73,16 @@ export class PayoutEngine {
     
     const destination = {
       merchantName: settings.merchant_name,
-      bankName: settings.bank_name,
-      accountHolder: settings.bank_account_holder,
-      accountNumber: settings.bank_account_number,
-      routingNumber: settings.bank_routing_number,
-      country: 'South Africa'
+      bankName: bank.bankName,
+      accountHolder: bank.accountHolder,
+      accountNumber: bank.accountNumber || bank.iban,
+      iban: bank.iban,
+      routingNumber: bank.routingNumber,
+      swiftCode: bank.swiftCode,
+      bankAddress: bank.bankAddress,
+      currency: bank.currency,
+      country: bank.country || 'South Africa',
+      bankSource: bank.source
     };
     
     await db.query(`

@@ -163,6 +163,23 @@ services:
       - key: MERCHANT_BIC
         value: TRWIBEB1XXX
 
+      # ── Receiving bank account (merchant receiver of settled funds) ────────
+      # Overrides the bank account saved in Merchant Settings. Empty = use Settings.
+      - key: MERCHANT_BANK_NAME
+        value: Wise
+      - key: MERCHANT_BANK_ACCOUNT_HOLDER
+        value: PRIMESTACK TECHNOLOGIES LLC
+      - key: MERCHANT_BANK_ACCOUNT_NUMBER
+        sync: false
+      - key: MERCHANT_BANK_ROUTING_NUMBER
+        sync: false
+      - key: MERCHANT_BANK_ADDRESS
+        value: Rue du Trone 100, 3rd floor, Brussels, 1050, Belgium
+      - key: MERCHANT_BANK_CURRENCY
+        value: EUR
+      - key: MERCHANT_BANK_COUNTRY
+        value: Belgium
+
       # ── Binance ────────────────────────────────────────────────────────────
       - key: BINANCE_MODE
         value: live

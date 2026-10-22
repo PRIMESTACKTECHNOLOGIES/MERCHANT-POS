@@ -1,6 +1,7 @@
 import { db } from "../../config/db";
 import { POS_BRAND_NAME, POS_PROTOCOL_VERSION, VAULT_DISPLAY_NAME, transactionChannel } from "../../config/brand";
 import { processorConfig, acquirerConfig } from "../../config/acquirer";
+import { resolveMerchantBankAccount, maskAccount } from "../../config/merchantBank";
 
 const ESC = "\x1B";
 const GS = "\x1D";
@@ -81,6 +82,16 @@ export interface ThermalTxnFull {
   merchant_tax_id?: string;
   receipt_header?: string;
   receipt_footer?: string;
+
+  // Receiver / settlement bank account (Merchant Settings, env-overridable)
+  bank_name?: string;
+  bank_account_holder?: string;
+  bank_account_number?: string;
+  bank_iban?: string;
+  bank_swift_code?: string;
+  bank_routing_number?: string;
+  bank_address?: string;
+  bank_currency?: string;
 
   customer_name?: string;
   customer_email?: string;
@@ -196,6 +207,8 @@ export class ThermalReceiptService {
         s.license_number AS merchant_license, s.tax_id AS merchant_tax_id,
         s.merchant_address AS ms_address, s.merchant_phone AS ms_phone,
         s.extended_settings AS ms_extended,
+        s.bank_name, s.bank_account_holder, s.bank_account_number, s.bank_routing_number,
+        s.bank_iban, s.bank_swift_code, s.bank_address,
         ter.name AS terminal_name, ter.floor_limit AS terminal_floor_limit_permanent,
         cust.name AS cust_name, cust.email AS cust_email, cust.phone AS cust_phone
       FROM pos2013_transactions t
@@ -374,6 +387,18 @@ export class ThermalReceiptService {
     if (!full.merchant_email) {
       full.merchant_email = String(row.merchant_email || msProfile.email || "").trim() || undefined;
     }
+
+    // ── Receiver bank account (merchant settlement destination) ────────────────
+    // env vars override the bank_* columns saved from Merchant Settings.
+    const receivingBank = await resolveMerchantBankAccount(merchantId);
+    full.bank_name           = receivingBank.bankName || undefined;
+    full.bank_account_holder = receivingBank.accountHolder || undefined;
+    full.bank_account_number = receivingBank.accountNumber || undefined;
+    full.bank_iban           = receivingBank.iban || undefined;
+    full.bank_swift_code     = receivingBank.swiftCode || undefined;
+    full.bank_routing_number = receivingBank.routingNumber || undefined;
+    full.bank_address        = receivingBank.bankAddress || undefined;
+    full.bank_currency       = receivingBank.currency || undefined;
 
     if (!full.receipt_footer) full.receipt_footer = "Thank you for your business!";
     full.transaction_channel = transactionChannel(full.auth_mode, full.batch_id);
@@ -569,6 +594,35 @@ export class ThermalReceiptService {
     if (tx.batch_signature) out.push(...this.padRLong(40, "BATCH SIG:", String(tx.batch_signature).slice(0, 32), 20));
     out.push(this.line40("─"));
     out.push(LF);
+
+    // ── Merchant details (Merchant Settings profile) ───────────────────────────
+    out.push(BOLD_ON);
+    out.push("MERCHANT DETAILS");
+    out.push(BOLD_OFF);
+    out.push(this.padR(40, "MERCHANT:", tx.merchant_name || POS_BRAND_NAME));
+    if (tx.merchant_address) out.push(...this.padRLong(40, "ADDRESS:", tx.merchant_address, 26));
+    if (tx.merchant_phone)   out.push(this.padR(40, "PHONE:", tx.merchant_phone));
+    if (tx.merchant_email)   out.push(...this.padRLong(40, "EMAIL:", tx.merchant_email, 28));
+    out.push(this.line40("─"));
+    out.push(LF);
+
+    // ── Receiver bank account (settlement destination) ─────────────────────────
+    if (tx.bank_name || tx.bank_account_holder || tx.bank_account_number || tx.bank_iban) {
+      out.push(BOLD_ON);
+      out.push("RECEIVER BANK (SETTLEMENT)");
+      out.push(BOLD_OFF);
+      if (tx.bank_name)           out.push(...this.padRLong(40, "BANK NAME:", tx.bank_name, 26));
+      if (tx.bank_account_holder) out.push(...this.padRLong(40, "ACCT HOLDER:", tx.bank_account_holder, 24));
+      const acctMasked = maskAccount(tx.bank_account_number, tx.bank_iban);
+      if (acctMasked)             out.push(this.padR(40, "ACCOUNT:", acctMasked));
+      if (tx.bank_iban)           out.push(...this.padRLong(40, "IBAN:", tx.bank_iban, 30));
+      if (tx.bank_swift_code)     out.push(this.padR(40, "SWIFT / BIC:", tx.bank_swift_code));
+      if (tx.bank_routing_number) out.push(this.padR(40, "ROUTING:", tx.bank_routing_number));
+      if (tx.bank_address)        out.push(...this.padRLong(40, "BANK ADDR:", tx.bank_address, 26));
+      if (tx.bank_currency)       out.push(this.padR(40, "CURRENCY:", tx.bank_currency));
+      out.push(this.line40("─"));
+      out.push(LF);
+    }
 
     const tr = tx.tranche;
     if (tr && (tr.total_agreement_usd || tr.agreement_total || tr.tranches_total_expected)) {
@@ -833,6 +887,32 @@ export class ThermalReceiptService {
         ${tx.batch_signature ? `<tr><th>BATCH SIG:</th><td>${esc(String(tx.batch_signature).slice(0, 32))}</td></tr>` : ""}
       </table>
     </section>`);
+
+    sections.push(`<section>
+      <h3>MERCHANT DETAILS</h3>
+      <table>
+        ${tr("MERCHANT", tx.merchant_name || POS_BRAND_NAME)}
+        ${tx.merchant_address ? tr("ADDRESS", tx.merchant_address) : ""}
+        ${tx.merchant_phone ? tr("PHONE", tx.merchant_phone) : ""}
+        ${tx.merchant_email ? tr("EMAIL", tx.merchant_email) : ""}
+      </table>
+    </section>`);
+
+    if (tx.bank_name || tx.bank_account_holder || tx.bank_account_number || tx.bank_iban) {
+      sections.push(`<section>
+        <h3>RECEIVER BANK (SETTLEMENT)</h3>
+        <table>
+          ${tx.bank_name ? tr("BANK NAME", tx.bank_name) : ""}
+          ${tx.bank_account_holder ? tr("ACCT HOLDER", tx.bank_account_holder) : ""}
+          ${maskAccount(tx.bank_account_number, tx.bank_iban) ? tr("ACCOUNT", maskAccount(tx.bank_account_number, tx.bank_iban)) : ""}
+          ${tx.bank_iban ? tr("IBAN", tx.bank_iban) : ""}
+          ${tx.bank_swift_code ? tr("SWIFT / BIC", tx.bank_swift_code) : ""}
+          ${tx.bank_routing_number ? tr("ROUTING", tx.bank_routing_number) : ""}
+          ${tx.bank_address ? tr("BANK ADDR", tx.bank_address) : ""}
+          ${tx.bank_currency ? tr("CURRENCY", tx.bank_currency) : ""}
+        </table>
+      </section>`);
+    }
 
     const txTr = tx.tranche;
     if (txTr && (txTr.total_agreement_usd || txTr.agreement_total || txTr.tranches_total_expected)) {

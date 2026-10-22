@@ -24,13 +24,27 @@ export class SettingsService {
         features.manualEntry = true;
         const extended = row.extended_settings ? JSON.parse(row.extended_settings) : {};
         const paymentConfig = row.payment_config ? JSON.parse(row.payment_config) : [];
+        const bankingJson = extended.banking || {};
+
+        // The bank_* columns are the canonical receiver account; merge them over the JSON
+        // copy so a saved Merchant Settings bank account is always visible to the UI.
+        const banking = {
+          ...bankingJson,
+          holderName: row.bank_account_holder || bankingJson.holderName || "",
+          bankName: row.bank_name || bankingJson.bankName || "",
+          routingNumber: row.bank_routing_number || bankingJson.routingNumber || "",
+          accountNumber: row.bank_account_number || bankingJson.accountNumber || "",
+          swiftCode: row.bank_swift_code || bankingJson.swiftCode || "",
+          iban: row.bank_iban || bankingJson.iban || "",
+          bankAddress: row.bank_address || bankingJson.bankAddress || ""
+        };
 
         // Merge extended settings into the root object for the frontend
         return { 
           ...row, 
           features,
           business: extended.business || {},
-          banking: extended.banking || {},
+          banking,
           notifications: extended.notifications || { email: false, sms: false, alerts: {} },
           security: extended.security || { twoFactorEnabled: false, activeDevices: [] },
           terminal: {
@@ -100,15 +114,28 @@ export class SettingsService {
       const extendedJson = JSON.stringify(extendedSettings);
       const paymentConfigJson = JSON.stringify(paymentConfig || []);
 
+      // Promote the banking block into the dedicated columns — these are the receiver
+      // account used by payouts and printed on receipts.
+      const bankingIn = banking || {};
+      const bankName = String(bankingIn.bankName || bankingIn.bank_name || "").trim() || null;
+      const bankAccountHolder = String(bankingIn.holderName || bankingIn.accountHolder || bankingIn.account_holder_name || "").trim() || null;
+      const bankAccountNumber = String(bankingIn.accountNumber || bankingIn.account_number || "").trim() || null;
+      const bankRoutingNumber = String(bankingIn.routingNumber || bankingIn.routing || "").trim() || null;
+      const bankIban = String(bankingIn.iban || "").trim() || null;
+      const bankSwiftCode = String(bankingIn.swiftCode || bankingIn.swift || "").trim() || null;
+      const bankAddress = String(bankingIn.bankAddress || bankingIn.bank_address || "").trim() || null;
+
       // Check if exists
       const check = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = ?", [merchantId]);
       
       if (check.rows.length === 0) {
         await db.query(`
           INSERT INTO merchant_settings 
-          (merchant_id, api_key, webhook_url, test_mode, merchant_name, support_email, features, extended_settings, payment_config)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [merchantId, api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson]);
+          (merchant_id, api_key, webhook_url, test_mode, merchant_name, support_email, features, extended_settings, payment_config,
+           bank_name, bank_account_holder, bank_account_number, bank_routing_number, bank_iban, bank_swift_code, bank_address)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [merchantId, api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson,
+            bankName, bankAccountHolder, bankAccountNumber, bankRoutingNumber, bankIban, bankSwiftCode, bankAddress]);
         
         return { merchant_id: merchantId, ...data };
       }
@@ -116,9 +143,12 @@ export class SettingsService {
       await db.query(`
         UPDATE merchant_settings 
         SET api_key = ?, webhook_url = ?, test_mode = ?, merchant_name = ?, support_email = ?,
-            features = ?, extended_settings = ?, payment_config = ?, updated_at = CURRENT_TIMESTAMP
+            features = ?, extended_settings = ?, payment_config = ?,
+            bank_name = ?, bank_account_holder = ?, bank_account_number = ?, bank_routing_number = ?,
+            bank_iban = ?, bank_swift_code = ?, bank_address = ?, updated_at = CURRENT_TIMESTAMP
         WHERE merchant_id = ?
-      `, [api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson, merchantId]);
+      `, [api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, featuresJson, extendedJson, paymentConfigJson,
+          bankName, bankAccountHolder, bankAccountNumber, bankRoutingNumber, bankIban, bankSwiftCode, bankAddress, merchantId]);
 
       const res = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = ?", [merchantId]);
       if (!res.rows || res.rows.length === 0) {
@@ -128,12 +158,22 @@ export class SettingsService {
       const extended = row.extended_settings ? JSON.parse(row.extended_settings) : {};
       const parsedFeatures = JSON.parse(row.features || '{}');
       parsedFeatures.manualEntry = true;
+      const bankingJson = extended.banking || {};
       
       return { 
         ...row, 
         features: parsedFeatures,
         business: extended.business || {},
-        banking: extended.banking || {},
+        banking: {
+          ...bankingJson,
+          holderName: row.bank_account_holder || bankingJson.holderName || "",
+          bankName: row.bank_name || bankingJson.bankName || "",
+          routingNumber: row.bank_routing_number || bankingJson.routingNumber || "",
+          accountNumber: row.bank_account_number || bankingJson.accountNumber || "",
+          swiftCode: row.bank_swift_code || bankingJson.swiftCode || "",
+          iban: row.bank_iban || bankingJson.iban || "",
+          bankAddress: row.bank_address || bankingJson.bankAddress || ""
+        },
         notifications: extended.notifications || {},
         security: extended.security || {},
         terminal: {
