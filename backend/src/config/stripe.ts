@@ -8,10 +8,7 @@ export function getStripe(): Stripe {
     if (!key) {
       throw new Error('STRIPE_SECRET_KEY environment variable is not set');
     }
-    _stripe = new Stripe(key, {
-      apiVersion: '2025-07-30.basil' as any,
-      typescript: true,
-    });
+    _stripe = new Stripe(key);
   }
   return _stripe;
 }
