@@ -111,13 +111,13 @@ function loginRateLimiter(req: Request, res: Response, next: NextFunction) {
 // Payment webhook and processor endpoints may require raw body handling for specific routes
 app.use("/merchant/v1/payments/webhook", express.raw({ type: "application/json" }));
 
-// Stripe webhook — must use raw body for signature verification, mounted before JSON parser
+// Stripe webhook — must use raw body for signature verification, mounted BEFORE JSON parser
 app.use("/api/stripe/webhook", stripeWebhookRawParser, stripeRouter);
 
-// ── JSON body parser (must be before routes that read req.body)
+// ── JSON body parser
 app.use(express.json({ limit: "10mb" }));
 
-// ── Stripe payment endpoints (authenticated routes)
+// ── Stripe payment endpoints (authenticated routes) — mounted AFTER JSON parser so req.body works
 app.use("/api/stripe", stripeRouter);
 
 // â”€â”€ Public routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
