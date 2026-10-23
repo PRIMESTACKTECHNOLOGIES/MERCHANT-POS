@@ -31,27 +31,16 @@ stripeRouter.post('/payment-intents', async (req: Request, res: Response) => {
     const stripe = getStripe();
 
     const paymentIntentParams: any = {
-      amount: Math.round(amount), // in smallest currency unit
+      amount: Math.round(amount),
       currency: String(currency).toLowerCase(),
       description: description || 'POS ORGINAL payment',
+      payment_method_types: ['card'],
       metadata: {
         source: 'pos_orginal',
         customerId: customerId || '',
         ...metadata,
       },
-      automatic_payment_methods: { enabled: true },
     };
-
-    if (customerId) {
-      try {
-        const customer = await stripe.customers.retrieve(customerId);
-        if (!('deleted' in customer) && customer.id) {
-          paymentIntentParams.customer = customer.id;
-        }
-      } catch {
-        // Customer not found on Stripe — proceed without attaching
-      }
-    }
 
     const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
 
@@ -75,7 +64,7 @@ stripeRouter.post('/payment-intents', async (req: Request, res: Response) => {
     });
   } catch (e: any) {
     console.error('[Stripe] PaymentIntent error:', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, type: e.type, stripeCode: e.code });
   }
 });
 
