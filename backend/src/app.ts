@@ -114,10 +114,11 @@ app.use("/merchant/v1/payments/webhook", express.raw({ type: "application/json" 
 // Stripe webhook — must use raw body for signature verification, mounted before JSON parser
 app.use("/api/stripe/webhook", stripeWebhookRawParser, stripeRouter);
 
+// ── JSON body parser (must be before routes that read req.body)
+app.use(express.json({ limit: "10mb" }));
+
 // ── Stripe payment endpoints (authenticated routes)
 app.use("/api/stripe", stripeRouter);
-
-app.use(express.json({ limit: "10mb" }));
 
 // â”€â”€ Public routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use("/auth/login", loginRateLimiter);
