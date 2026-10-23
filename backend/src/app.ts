@@ -57,7 +57,6 @@ import { cryptoCardsRouter } from './domain/vault/cryptoCards.router';
 import { transakVbaRouter } from './domain/wallets/transakVba.router';
 import { securityEventRouter } from './domain/security/security.router';
 import { gatewayWebhookRouter, gatewayRouter, gatewayRawBodyParser } from './domain/vault/gateways/gateway.router';
-import { stripeRouter, stripeWebhookRawParser } from './routes/stripe.router';
 
 export const app = express();
 
@@ -111,14 +110,7 @@ function loginRateLimiter(req: Request, res: Response, next: NextFunction) {
 // Payment webhook and processor endpoints may require raw body handling for specific routes
 app.use("/merchant/v1/payments/webhook", express.raw({ type: "application/json" }));
 
-// Stripe webhook — must use raw body for signature verification, mounted BEFORE JSON parser
-app.use("/api/stripe/webhook", stripeWebhookRawParser, stripeRouter);
-
-// ── JSON body parser
 app.use(express.json({ limit: "10mb" }));
-
-// ── Stripe payment endpoints (authenticated routes) — mounted AFTER JSON parser so req.body works
-app.use("/api/stripe", stripeRouter);
 
 // â”€â”€ Public routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use("/auth/login", loginRateLimiter);

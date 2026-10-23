@@ -2343,35 +2343,6 @@ export const initTables = async () => {
     try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_cards_pan ON wallet_cards(card_number)`); } catch(_) {}
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_wallet_cards_wallet ON wallet_cards(wallet_id)`); } catch(_) {}
 
-    // ── Stripe tables ──────────────────────────────────────────────────────────
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS stripe_payment_intents (
-        id            TEXT PRIMARY KEY,
-        customer_id   TEXT,
-        amount        REAL NOT NULL,
-        currency      TEXT NOT NULL DEFAULT 'usd',
-        status        TEXT NOT NULL DEFAULT 'unknown',
-        client_secret TEXT,
-        description   TEXT,
-        metadata_json TEXT,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
-    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_stripe_pi_customer ON stripe_payment_intents(customer_id)`); } catch(_) {}
-    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_stripe_pi_status ON stripe_payment_intents(status)`); } catch(_) {}
-
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS stripe_webhook_log (
-        event_id     TEXT PRIMARY KEY,
-        event_type   TEXT NOT NULL,
-        api_version  TEXT,
-        raw_payload  TEXT,
-        processed_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
-    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_stripe_wh_type ON stripe_webhook_log(event_type)`); } catch(_) {}
-
     console.log("Tables initialized successfully (SQLite)");
   } catch (error) {
     // Log the error but DO NOT rethrow — a partial init is better than no init.
