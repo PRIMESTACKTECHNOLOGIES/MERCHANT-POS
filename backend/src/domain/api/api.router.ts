@@ -140,6 +140,9 @@ router.post('/pos/offline-sale', async (req, res) => {
         terminalId: terminal_id,
         merchantId,
         stan: stan || undefined,
+        // Without this the downgrade guard never fires on offline batches —
+        // the entry mode is what distinguishes a chip read from a stripe/MSD one.
+        entryMode: entry_mode || undefined,
         // This is a genuine standalone offline approval, so the
         // offline-disallowed rules DO apply here.
         allowOfflineApproval: true,

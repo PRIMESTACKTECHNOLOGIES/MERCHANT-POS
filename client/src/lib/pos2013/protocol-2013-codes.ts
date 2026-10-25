@@ -73,9 +73,6 @@ export const P2013 = {
   SETTLEMENT_RECONCILE_FAILED: '150503',
 
   // ─── Payout Engine (16) ─────────────────────────────────────────────────
-  PAYOUT_WISE_STARTED:      '160101',
-  PAYOUT_WISE_SUCCESS:      '160102',
-  PAYOUT_WISE_FAILED:       '160103',
   PAYOUT_BANK_WIRE_STARTED: '160201',
   PAYOUT_BANK_WIRE_SUCCESS: '160202',
   PAYOUT_CRYPTO_STARTED:    '160301',

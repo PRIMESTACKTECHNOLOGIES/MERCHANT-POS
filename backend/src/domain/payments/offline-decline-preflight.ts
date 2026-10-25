@@ -1,4 +1,5 @@
 import { parseTlv } from './emv-tlv-parser';
+import { processorConfig } from '../../config/acquirer';
 
 export interface PreflightPayload {
   amountMinor: number;
@@ -10,6 +11,16 @@ export interface PreflightPayload {
   terminalId?: string;
   merchantId?: string;
   stan?: string;
+  /**
+   * How the card was read. Accepts either the EMV label used by the POS clients
+   * (CHIP, NFC, CONTACTLESS, MAGSTRIPE, MANUAL, VOICE_AUTH…) or the raw ISO 8583
+   * DE22 value (05 chip, 02 mag-stripe, 91 contactless MSD…).
+   *
+   * Used by the downgrade guard: a card presented over the magnetic stripe / MSD
+   * path is refused when chip is possible, which is what a contactless clone
+   * relies on to spend a pre-played code.
+   */
+  entryMode?: string;
   /**
    * True only when the caller may actually approve the transaction OFFLINE.
    *
@@ -50,6 +61,32 @@ function parseHexTlvToTagMap(hex: string): Record<string, string> {
     /* ignore malformed */
   }
   return result;
+}
+
+/**
+ * Classify how the card was read.
+ *
+ * Accepts the EMV label the POS clients send (CHIP, NFC, MAGSTRIPE…) and the
+ * raw ISO 8583 DE22 value (leading two digits: 05 = chip, 02 = mag-stripe,
+ * 90/91 = contactless magnetic stripe, 80 = fallback).
+ */
+function classifyEntryMode(raw: string): 'chip' | 'magstripe' | 'msd' | 'other' {
+  const mode = String(raw || '').trim().toUpperCase();
+  if (!mode) return 'other';
+
+  const digits = mode.replace(/[^0-9]/g, '');
+  if (digits.length >= 2) {
+    const lead = digits.slice(0, 2);
+    if (lead === '90' || lead === '91') return 'msd';
+    if (lead === '02' || lead === '80') return 'magstripe';
+    if (lead === '05' || lead === '07' || lead === '17') return 'chip';
+  }
+
+  if (mode.includes('MSD')) return 'msd';
+  if (mode.includes('MAG') || mode.includes('STRIPE') || mode.includes('TRACK')) return 'magstripe';
+  if (mode.includes('CHIP') || mode.includes('EMV') || mode.includes('NFC')
+    || mode.includes('CONTACTLESS') || mode.includes('DIP')) return 'chip';
+  return 'other';
 }
 
 /**
@@ -108,6 +145,43 @@ export function syncOfflinePreflight(payload: PreflightPayload): PreflightResult
     });
   } catch {
     tags = {};
+  }
+
+  // ── DOWNGRADE GUARD ────────────────────────────────────────────────────
+  //  A contactless clone (pre-play + downgrade) skips the chip protocol and
+  //  presents the magnetic-stripe / MSD path instead, so the issuer never sees
+  //  an ARQC it could reject. Two signatures are refused:
+  //
+  //    a) the entry mode claims a stripe read, yet chip data is present too —
+  //       a card cannot be both, so the stripe path is a downgrade.
+  //    b) the entry mode claims a stripe/MSD read above the terminal floor
+  //       limit — chip is mandatory there, so the stripe read is not accepted.
+  //
+  //  Below the floor limit a genuine stripe card is still allowed through, so
+  //  ordinary low-value contactless is unaffected.
+  const entryKind = classifyEntryMode(String(payload.entryMode || ''));
+  if (entryKind === 'msd' || entryKind === 'magstripe') {
+    const field55Hex = String(
+      payload.emv?.field55 || payload.emv?.field55Hex || payload.emv?.tlvRaw || payload.emv?.TLV || ''
+    ).trim();
+    const cryptogram = String(
+      payload.emv?.cryptogramType || payload.emv?.cryptogram || payload.emv?.cid || ''
+    ).trim();
+
+    if (field55Hex || cryptogram) {
+      return {
+        declined: true,
+        reason: 'Downgrade blocked: magnetic-stripe/MSD read presented alongside chip data',
+        code: 'EMV_DOWNGRADE_BLOCKED',
+      };
+    }
+    if (Number(payload.amountMinor) > processorConfig.floorLimit) {
+      return {
+        declined: true,
+        reason: `Downgrade blocked: magnetic-stripe/MSD above the floor limit of ${processorConfig.floorLimit} minor units — chip is required`,
+        code: 'EMV_DOWNGRADE_FLOOR_LIMIT',
+      };
+    }
   }
 
   // ── 2. No balance / issuer AAC ──────────────────────────────────────────

@@ -25,12 +25,6 @@ export const VAULT_BINS: Record<string, VaultBinInfo> = {
     product: "DEBIT",
     country: "BE",
   },
-  "VAULT-WISE-EUR-001": {
-    bin: "532345",
-    scheme: "MASTERCARD",
-    product: "DEBIT",
-    country: "DE",
-  },
 };
 
 export function getVaultBin(vaultAccountId: string): VaultBinInfo {

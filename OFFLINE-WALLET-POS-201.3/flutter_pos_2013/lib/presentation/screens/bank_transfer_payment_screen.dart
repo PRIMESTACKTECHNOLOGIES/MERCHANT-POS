@@ -13,17 +13,19 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
   bool _showDetails = false;
   final bool _copiedToClipboard = false;
 
-  // Wise USD Account Details
+  // Receiving bank account details.
+  // The previous Wise USD account was closed permanently — populate these with the
+  // replacement merchant receiving account before shipping this screen.
   final Map<String, String> bankDetails = {
-    'Payee Name': 'Wise US Inc',
-    'Wire Routing Number': '021000021',
-    'Account Number': '205756130',
-    'Account Type': 'Checking / Business Checking',
-    'Reference Code': 'P201006522',
-    'Bank Name': 'JPMORGAN CHASE BANK',
-    'Bank Address': '270 Park Avenue, New York, NY 10017',
-    'Bank Phone': '+1 212 270 6000',
-    'Amount to Send': '117,123.08 USD',
+    'Payee Name': '',
+    'Wire Routing Number': '',
+    'Account Number': '',
+    'Account Type': '',
+    'Reference Code': '',
+    'Bank Name': '',
+    'Bank Address': '',
+    'Bank Phone': '',
+    'Amount to Send': '',
   };
 
   void _copyToClipboard(String text, String label) {
@@ -72,7 +74,7 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'Send USD directly to our Wise account',
+                    'Send USD directly to our merchant bank account',
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                 ],
@@ -326,12 +328,10 @@ class _BankTransferPaymentScreenState extends State<BankTransferPaymentScreen> {
                           ),
                           const SizedBox(height: 12),
                           const Text(
-                            'Contact Wise Support:',
+                            'Contact Support:',
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
-                          const Text('30 W 26th Street, Floor 6, New York, NY 10010'),
-                          const SizedBox(height: 12),
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton.icon(

@@ -24,9 +24,11 @@ router.post('/merchant/settle-emv-2013',         wc.settleEmv2013.bind(wc));
 router.get('/customers',                              wc.getCustomers.bind(wc));
 router.get('/customers-by-merchant/:merchantId',       wc.getCustomersByMerchant.bind(wc));
 router.post('/customers',                              wc.createCustomer.bind(wc));
+router.post('/customers/pins/issue-all',               authenticateToken, wc.issueAllCustomerPins.bind(wc));
 router.delete('/customers/:customerId',                authenticateToken, wc.deleteCustomer.bind(wc));
 router.get('/customers/:customerId/profile',           wc.getCustomerProfile.bind(wc));
 router.patch('/customers/:customerId/kyc',             wc.updateCustomerKYC.bind(wc));
+router.post('/customers/:customerId/pin',              authenticateToken, wc.setCustomerPin.bind(wc));
 
 // ── Fiat wallet ────────────────────────────────────────────────────────────
 router.post('/topup',                   wc.topup.bind(wc));

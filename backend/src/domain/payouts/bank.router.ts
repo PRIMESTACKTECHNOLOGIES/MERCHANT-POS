@@ -3,7 +3,7 @@ import { debitMerchantWallet } from './payoutHelpers';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'crypto';
 import { db } from '../../config/db';
-import { submitBankPayout, getWiseDiagnostics } from './payoutProvider.service';
+import { submitBankPayout } from './payoutProvider.service';
 import { executeInternalPayout } from './internalPayoutProvider';
 import { authenticateToken } from '../../middleware/auth.middleware';
 
@@ -101,37 +101,6 @@ function renderPayoutReceiptHtml(po: any, wallet: any, ldg: any, mtx: any): stri
 
 const router = Router();
 
-// GET /api/payout/bank/diagnostics — payout provider status
-router.get('/bank/wise/diagnostics', authenticateToken, async (_req, res) => {
-  const provider = (process.env.BANK_PAYOUT_PROVIDER || 'manual').trim().toLowerCase();
-  const downstream = (process.env.INTERNAL_PAYOUT_DOWNSTREAM || '').trim().toLowerCase();
-  const receiverConfigured = Boolean(process.env.INTERNAL_PAYOUT_RECEIVER_URL?.trim());
-  const externalConfigured = Boolean(
-    process.env.BANK_PAYOUT_API_URL?.trim() && process.env.BANK_PAYOUT_API_KEY?.trim()
-  );
-  return res.status(200).json({
-    ok: true,
-    provider,
-    downstream: downstream || null,
-    ready_to_send: provider === 'external'
-      ? externalConfigured
-      : provider === 'internal'
-      ? (downstream === 'wise' ? Boolean(process.env.WISE_API_KEY?.trim()) : receiverConfigured)
-      : provider === 'wise'
-      ? Boolean(process.env.WISE_API_KEY?.trim() || process.env.BANK_PAYOUT_API_KEY?.trim())
-      : false,
-    message: provider === 'manual'
-      ? 'Payout mode: MANUAL. Wallet debits immediately on payout creation. Confirm receipt once funds arrive in your bank.'
-      : provider === 'external'
-      ? `Payout mode: EXTERNAL. Processor URL: ${process.env.BANK_PAYOUT_API_URL || '(not set)'}. Each new payout calls this endpoint.`
-      : provider === 'internal' && downstream === 'wise'
-      ? 'Payout mode: INTERNAL acquirer → Wise rail. Each new payout calls Wise when WISE_API_KEY is configured.'
-      : provider === 'internal'
-      ? `Payout mode: INTERNAL acquirer → bank receiver callback. Each new payout calls ${process.env.INTERNAL_PAYOUT_RECEIVER_URL || '(not configured)'}.`
-      : `Payout mode: ${provider}`,
-  });
-});
-
 // GET /api/merchant/:merchantId/bank-accounts
 // Lists all inbuilt + ad-hoc bank accounts configured for a merchant.
 // The row with is_default=1 is used automatically by /payout/bank when no
@@ -145,10 +114,6 @@ router.get('/merchant/:merchantId/bank-accounts', authenticateToken, async (req,
          FROM bank_accounts
         WHERE merchant_id = ?
          ORDER BY
-           CASE WHEN lower(bank_name) LIKE '%wise%'
-                   OR lower(bank_name) LIKE '%column%'
-                   OR lower(bank_name) LIKE '%transferwise%'
-                THEN 0 ELSE 1 END,
            is_default DESC,
            currency ASC`,
       [merchantId]
@@ -200,28 +165,20 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
   const payoutProvider = process.env.BANK_PAYOUT_PROVIDER?.trim().toLowerCase() || 'manual';
   const payoutApiUrl = process.env.BANK_PAYOUT_API_URL?.trim();
   const payoutApiKey = process.env.BANK_PAYOUT_API_KEY?.trim();
-  const wiseApiKey = process.env.WISE_API_KEY?.trim() || payoutApiKey;
 
   const isManual = payoutProvider === 'manual' || payoutProvider === '' || payoutProvider == null;
   const isInternal = payoutProvider === 'internal';
   const isExternal = payoutProvider === 'external';
-  const isWise = payoutProvider === 'wise';
 
-  if (!isManual && !isInternal && !isExternal && !isWise) {
+  if (!isManual && !isInternal && !isExternal) {
     return res.status(501).json({
-      error: 'Invalid BANK_PAYOUT_PROVIDER. Use "internal", "manual", "external", or "wise" in backend/.env.'
+      error: 'Invalid BANK_PAYOUT_PROVIDER. Use "internal", "manual", or "external" in backend/.env.'
     });
   }
 
   if (isExternal && (!payoutApiUrl || !payoutApiKey)) {
     return res.status(501).json({
       error: 'External payout provider requires both BANK_PAYOUT_API_URL and BANK_PAYOUT_API_KEY in backend/.env.'
-    });
-  }
-
-  if (isWise && !wiseApiKey) {
-    return res.status(501).json({
-      error: 'Wise payout provider requires WISE_API_KEY (or BANK_PAYOUT_API_KEY) in backend/.env.'
     });
   }
 
@@ -244,17 +201,12 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
       const pick = await db.query(
         `SELECT * FROM bank_accounts ${where}
          ORDER BY
-           CASE WHEN ? = 'wise' AND (
-             lower(bank_name) LIKE '%wise%'
-             OR lower(bank_name) LIKE '%column%'
-             OR lower(bank_name) LIKE '%transferwise%'
-           ) THEN 0 ELSE 1 END,
            CASE WHEN currency = ? AND is_default = 1 THEN 0
                 WHEN is_default = 1 THEN 1
                 WHEN currency = ? THEN 2
                 ELSE 3 END
          LIMIT 1`,
-        [...params, payoutProvider, currency, currency]
+        [...params, currency, currency]
       );
       if (pick.rows.length === 0) {
         return res.status(404).json({
@@ -275,7 +227,7 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
         recipient_address: row.recipient_address ? JSON.parse(row.recipient_address) : null,
         account_holder: row.account_holder,
         account_number: row.account_number,
-        routing_number: row.routing_number || process.env.WISE_US_ROUTING_NUMBER || '084009519',
+        routing_number: row.routing_number || process.env.PAYOUT_BANK_ROUTING_NUMBER || '',
         account_type: row.account_type || 'CHECKING',
         iban: row.iban,
         swift_code: row.swift_code,
@@ -341,43 +293,25 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
       message = 'Merchant bank withdrawal created. Merchant wallet has been debited (your gold-sale proceeds are being moved to your saved bank account). Once the funds physically arrive in your bank (any method — deposit/cash/wire/ACH), click "Confirm Received in Bank" (POST /api/payout/payouts/:id/approve) to close the payout.';
     } else if (isInternal) {
       // ── YOUR OWN LICENSED ACQUIRER (Protocol 201.3) ───────────────────────
-      // Internal acquirer is the PROVIDER. Wise (or another rail) is the transport.
+      // Internal acquirer is the PROVIDER.
       const downstream = process.env.INTERNAL_PAYOUT_DOWNSTREAM?.trim().toLowerCase() || '';
-      const wiseKey    = process.env.WISE_API_KEY?.trim();
 
-      if (downstream === 'wise' && wiseKey) {
-        // ── Route through Wise as the rail ─────────────────────────────────
-        const wiseResult = await submitBankPayout({
-          merchantId,
-          payoutId,
-          amount: Number(amount),
-          currency,
-          bankAccount: bank_account,
-          reference: payoutId,
-        });
-        finalStatus    = wiseResult.status || 'submitted';
-        finalProvider  = 'internal/wise-rail';
-        finalReference = wiseResult.providerReference || null;
-        finalRaw       = wiseResult.raw;
-        message        = `Internal acquirer (Protocol 201.3) processed payout via Wise rail. Transfer ID: ${finalReference || 'pending'}. Funds en route to ${bank_account?.bank_name || 'destination'}.`;
-      } else {
-        // ── Configured bank receiver callback, or local pending instruction ──
-        const internalResult = await executeInternalPayout({
-          merchantId,
-          payoutId,
-          amount: Number(amount),
-          currency,
-          bankAccount: bank_account,
-          reference: payoutId,
-        });
-        finalStatus    = internalResult.status;
-        finalProvider  = 'internal';
-        finalReference = internalResult.providerReference;
-        finalRaw       = internalResult.raw;
-        message        = internalResult.status === 'SENT'
-          ? `Internal acquirer called the configured bank provider. Ref: ${internalResult.providerReference}. Funds are being sent to ${bank_account?.bank_name || 'the destination bank'}.`
-          : `Internal acquirer payout recorded but not sent. Ref: ${internalResult.providerReference}. Configure INTERNAL_PAYOUT_RECEIVER_URL (and its API key if required) to call the bank provider.`;
-      }
+      // ── Configured bank receiver callback, or local pending instruction ──
+      const internalResult = await executeInternalPayout({
+        merchantId,
+        payoutId,
+        amount: Number(amount),
+        currency,
+        bankAccount: bank_account,
+        reference: payoutId,
+      });
+      finalStatus    = internalResult.status;
+      finalProvider  = 'internal';
+      finalReference = internalResult.providerReference;
+      finalRaw       = internalResult.raw;
+      message        = internalResult.status === 'SENT'
+        ? `Internal acquirer called the configured bank provider. Ref: ${internalResult.providerReference}. Funds are being sent to ${bank_account?.bank_name || 'the destination bank'}.`
+        : `Internal acquirer payout recorded but not sent. Ref: ${internalResult.providerReference}. Configure INTERNAL_PAYOUT_RECEIVER_URL (and its API key if required) to call the bank provider.`;
 
       await db.query(
         `UPDATE merchant_payouts
@@ -694,304 +628,6 @@ router.get('/payouts/:payoutId/receipt', authenticateToken, async (req, res) => 
   }
 });
 
-// ── Manual Wise Sync (replaces webhooks for localhost) ───────────────────────
-// POST /api/payout/wise/sync
-// Polls Wise API for:
-//   1. Pending outbound payout status updates (B — no webhook needed)
-//   2. Recent incoming transfers to credit merchant wallet (D — no webhook needed)
-router.post('/wise/sync', authenticateToken, async (_req, res) => {
-  const apiKey = process.env.WISE_API_KEY?.trim();
-  if (!apiKey) {
-    return res.status(200).json({
-      ok: false,
-      configured: false,
-      message: 'WISE_API_KEY not set in .env — add your key to enable Wise sync.',
-    });
-  }
-
-  const baseUrl = (process.env.WISE_API_URL?.trim() || 'https://api.wise.com/2026Q3').replace(/\/+$/, '');
-  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
-  const axios = (await import('axios')).default;
-  const { v4: uuid } = await import('uuid');
-
-  const results: any = {
-    outbound_updated: [],
-    incoming_credited: [],
-    errors: [],
-  };
-
-  try {
-    // ── Resolve profile ID ──────────────────────────────────────────────────
-    let profileId = process.env.WISE_PROFILE_ID?.trim();
-    if (!profileId) {
-      const pRes = await axios.get(`${baseUrl}/v1/profiles`, { headers, timeout: 10000 });
-      const profiles: any[] = Array.isArray(pRes.data) ? pRes.data : [];
-      const biz = profiles.find(p => p.type === 'business') || profiles[0];
-      if (!biz?.id) throw new Error('Could not resolve Wise profile ID');
-      profileId = String(biz.id);
-    }
-
-    // ── B: Poll pending outbound payout statuses ────────────────────────────
-    const pendingPayouts = await db.query(
-      `SELECT id, merchant_id, amount, currency, provider_reference
-       FROM merchant_payouts
-       WHERE provider = 'wise'
-       AND status NOT IN ('COMPLETED','FAILED','REJECTED')
-       AND provider_reference IS NOT NULL
-       ORDER BY created_at DESC LIMIT 50`
-    );
-
-    for (const payout of pendingPayouts.rows) {
-      try {
-        const tRes = await axios.get(
-          `${baseUrl}/v1/transfers/${payout.provider_reference}`,
-          { headers, timeout: 10000 }
-        );
-        const transfer = tRes.data;
-        const wiseStatus = String(transfer?.status || '').toUpperCase();
-
-        let newStatus: string | null = null;
-        if (['OUTGOING_PAYMENT_SENT', 'FUNDS_CONVERTED', 'COMPLETED'].some(s => wiseStatus.includes(s))) {
-          newStatus = 'COMPLETED';
-        } else if (['PROCESSING', 'FUNDS_RECEIVED', 'IN_PROGRESS'].some(s => wiseStatus.includes(s))) {
-          newStatus = 'PROCESSING';
-        } else if (['FAILED', 'CANCELLED', 'BOUNCED', 'REJECTED'].some(s => wiseStatus.includes(s))) {
-          newStatus = 'FAILED';
-        }
-
-        if (newStatus && newStatus !== payout.status) {
-          await db.query(
-            `UPDATE merchant_payouts
-             SET status = ?,
-                 completed_at = CASE WHEN ? = 'COMPLETED' THEN CURRENT_TIMESTAMP ELSE completed_at END,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [newStatus, newStatus, payout.id]
-          );
-
-          // If failed — refund merchant wallet
-          if (newStatus === 'FAILED') {
-            const wallet = await db.query(
-              `SELECT id FROM merchant_wallets WHERE merchant_id = ? AND currency = ? LIMIT 1`,
-              [payout.merchant_id, payout.currency || 'USD']
-            );
-            if (wallet.rows.length > 0) {
-              await db.query(
-                `UPDATE merchant_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                [Number(payout.amount), wallet.rows[0].id]
-              );
-              await db.query(
-                `INSERT INTO merchant_wallet_transactions
-                   (id, wallet_id, type, amount, currency, source, reference, description, created_at)
-                 VALUES (?, ?, 'credit', ?, ?, 'wise_payout_refund', ?, ?, CURRENT_TIMESTAMP)`,
-                [uuid(), wallet.rows[0].id, Number(payout.amount), payout.currency || 'USD',
-                 payout.provider_reference, `Wise transfer ${payout.provider_reference} ${newStatus} — refunded`]
-              );
-            }
-          }
-
-          results.outbound_updated.push({
-            payout_id: payout.id,
-            transfer_id: payout.provider_reference,
-            old_status: payout.status,
-            new_status: newStatus,
-          });
-        }
-      } catch (err: any) {
-        results.errors.push({ type: 'outbound', payout_id: payout.id, error: err.message });
-      }
-    }
-
-    // ── D: Poll recent incoming transfers → credit merchant wallet ──────────
-    try {
-      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(); // last 7 days
-      const inRes = await axios.get(
-        `${baseUrl}/v1/transfers?profile=${profileId}&limit=20&createdDateStart=${since}`,
-        { headers, timeout: 15000 }
-      );
-
-      const transfers: any[] = Array.isArray(inRes.data) ? inRes.data : inRes.data?.content || [];
-      const incomingCompleted = transfers.filter((t: any) =>
-        String(t.status || '').toUpperCase().includes('COMPLETED') &&
-        t.sourceCurrency && t.targetAmount > 0
-      );
-
-      for (const t of incomingCompleted) {
-        const transferId = String(t.id);
-        const amount     = Number(t.targetAmount || t.sourceAmount || 0);
-        const currency   = String(t.targetCurrency || t.sourceCurrency || 'USD').toUpperCase();
-        const reference  = String(t.reference || t.details?.reference || transferId);
-
-        // Check if already credited (idempotency)
-        const existing = await db.query(
-          `SELECT id FROM merchant_wallet_transactions WHERE reference = ? LIMIT 1`,
-          [transferId]
-        );
-        if (existing.rows.length > 0) continue; // already credited
-
-        // Check if this is an outbound payout (skip — already handled above)
-        const isOutbound = await db.query(
-          `SELECT id FROM merchant_payouts WHERE provider_reference = ? LIMIT 1`,
-          [transferId]
-        );
-        if (isOutbound.rows.length > 0) continue;
-
-        // Credit merchant wallet
-        const merchantId = 'MRC-1001';
-        let walletRow = await db.query(
-          `SELECT id FROM merchant_wallets WHERE merchant_id = ? AND currency = ? LIMIT 1`,
-          [merchantId, currency]
-        );
-        if (!walletRow.rows.length) {
-          const wId = uuid();
-          await db.query(
-            `INSERT INTO merchant_wallets (id, merchant_id, balance, currency, created_at, updated_at)
-             VALUES (?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-            [wId, merchantId, currency]
-          );
-          walletRow = { rows: [{ id: wId }], rowCount: 1 };
-        }
-
-        await db.query(
-          `UPDATE merchant_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [amount, walletRow.rows[0].id]
-        );
-        await db.query(
-          `INSERT INTO merchant_wallet_transactions
-             (id, wallet_id, type, amount, currency, source, reference, description, created_at)
-           VALUES (?, ?, 'credit', ?, ?, 'wise_incoming', ?, ?, CURRENT_TIMESTAMP)`,
-          [uuid(), walletRow.rows[0].id, amount, currency, transferId,
-           `Wise incoming transfer ${transferId}${reference ? ` — ${reference}` : ''}`]
-        );
-
-        results.incoming_credited.push({
-          transfer_id: transferId,
-          amount,
-          currency,
-          reference,
-        });
-      }
-    } catch (err: any) {
-      results.errors.push({ type: 'incoming', error: err.message });
-    }
-
-    return res.json({
-      ok: true,
-      synced_at: new Date().toISOString(),
-      outbound_updated: results.outbound_updated.length,
-      incoming_credited: results.incoming_credited.length,
-      errors: results.errors.length,
-      details: results,
-    });
-
-  } catch (err: any) {
-    return res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// ── C: Wise balance sync ──────────────────────────────────────────────────────
-// GET /api/payout/wise/balance
-// Returns live Wise account balances across all currencies.
-// Used by Developer page to show funded amounts.
-router.get('/wise/balance', authenticateToken, async (_req, res) => {
-  const apiKey = process.env.WISE_API_KEY?.trim();
-  if (!apiKey) {
-    return res.status(200).json({
-      ok: false,
-      configured: false,
-      message: 'WISE_API_KEY not set in .env — Wise integration is not active.',
-      balances: [],
-    });
-  }
-  try {
-    const diag = await getWiseDiagnostics();
-    return res.status(200).json({
-      ok: true,
-      configured: true,
-      profileId: diag.profileId,
-      balances: diag.balances,
-      warnings: diag.warnings,
-    });
-  } catch (e: any) {
-    return res.status(502).json({ ok: false, configured: true, error: e.message, balances: [] });
-  }
-});
-
-// POST /api/payout/wise/collect-and-send
-// Collects from your Wise balance and sends to destination bank (ABSA etc.)
-// Body: { amount, currency, targetBic, targetAccount, targetName, reference }
-router.post('/wise/collect-and-send', authenticateToken, async (req, res) => {
-  try {
-    const { wiseCollectAndSend } = await import('./wiseCollect.service');
-    const { amount, currency, targetBic, targetAccount, targetName, targetAddressLines, reference, merchantId } = req.body || {};
-
-    if (!amount || amount <= 0)   return res.status(400).json({ error: 'amount required' });
-    if (!targetBic)                return res.status(400).json({ error: 'targetBic (SWIFT/BIC) required' });
-    if (!targetAccount)            return res.status(400).json({ error: 'targetAccount required' });
-    if (!targetName)               return res.status(400).json({ error: 'targetName required' });
-
-    const result = await wiseCollectAndSend({
-      amount:             Number(amount),
-      currency:           String(currency || 'USD').toUpperCase(),
-      targetBic:          String(targetBic),
-      targetAccount:      String(targetAccount),
-      targetName:         String(targetName),
-      targetAddressLines: targetAddressLines,
-      reference:          reference,
-      merchantId:         merchantId || 'MRC-1001',
-    });
-
-    return res.status(result.success ? 200 : 400).json(result);
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// GET /api/payout/wise/diagnostics — full Wise account diagnostics
-router.get('/wise/diagnostics', authenticateToken, async (_req, res) => {
-  const apiKey = process.env.WISE_API_KEY?.trim();
-  if (!apiKey) {
-    return res.status(200).json({
-      ok: false,
-      configured: false,
-      provider: 'none',
-      message: 'WISE_API_KEY not set. Add it to backend/.env to enable Wise integration.',
-    });
-  }
-  try {
-    const diag = await getWiseDiagnostics();
-    return res.status(200).json({ ok: true, configured: true, provider: 'wise', ...diag });
-  } catch (e: any) {
-    return res.status(502).json({ ok: false, configured: true, error: e.message });
-  }
-});
-
-// GET /api/payout/wise/webhook-events — recent Wise webhook events (audit log)
-router.get('/wise/webhook-events', authenticateToken, async (req, res) => {
-  const limit = parseInt(req.query.limit as string) || 50;
-  try {
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS wise_webhook_events (
-        id TEXT PRIMARY KEY,
-        event_type TEXT,
-        event_category TEXT,
-        merchant_id TEXT,
-        raw_payload TEXT,
-        created_at TEXT
-      )
-    `);
-    const rows = await db.query(
-      `SELECT id, event_type, event_category, merchant_id, created_at
-       FROM wise_webhook_events
-       ORDER BY created_at DESC LIMIT ?`,
-      [limit]
-    );
-    return res.json({ ok: true, count: rows.rows.length, events: rows.rows });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
 // GET /api/payout/settlement-instructions/:merchantId
 // Lists all internal settlement instructions for a merchant.
 // Use this to see/download your settlement records when using BANK_PAYOUT_PROVIDER=internal.
@@ -1044,94 +680,3 @@ router.get('/settlement-instructions/:merchantId', authenticateToken, async (req
 });
 
 export default router;
-
-// ── POST /api/payout/pipeline/execute ─────────────────────────────────────────
-// Full 6-step settlement pipeline:
-//   1. Internal provider confirms custody of funds
-//   2. Wise funding mechanism approved
-//   3. Wise accepts the transfer
-//   4. Wise sends to ABSA/beneficiary
-//   5. Wise/provider status confirms completion
-//   6. POS marks payout SETTLED
-router.post('/pipeline/execute', authenticateToken, async (req, res) => {
-  try {
-    const payoutId = (req.body?.payoutId || req.query?.payoutId || '').toString().trim();
-    if (!payoutId) return res.status(400).json({ ok: false, error: 'payoutId is required' });
-
-    const { executePayoutPipeline } = await import('./wisePayoutPipeline.service');
-    const result = await executePayoutPipeline(payoutId);
-
-    return res.status(result.finalStatus === 'FAILED' ? 422 : 200).json({
-      ok:           result.ok,
-      payout_id:    result.payoutId,
-      final_status: result.finalStatus,
-      transfer_id:  result.transferId,
-      uetr:         result.uetr,
-      message:      result.message,
-      pipeline:     result.steps.map(s => ({ step: s.step, name: s.name, status: s.status, detail: s.detail })),
-    });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Convenience: POST /api/payout/pipeline/execute/:payoutId
-router.post('/pipeline/execute/:payoutId', authenticateToken, async (req, res) => {
-  try {
-    const payoutId = (req.params.payoutId || '').trim();
-    if (!payoutId) return res.status(400).json({ ok: false, error: 'payoutId is required' });
-
-    const { executePayoutPipeline } = await import('./wisePayoutPipeline.service');
-    const result = await executePayoutPipeline(payoutId);
-
-    return res.status(result.finalStatus === 'FAILED' ? 422 : 200).json({
-      ok:           result.ok,
-      payout_id:    result.payoutId,
-      final_status: result.finalStatus,
-      transfer_id:  result.transferId,
-      uetr:         result.uetr,
-      message:      result.message,
-      pipeline:     result.steps.map(s => ({ step: s.step, name: s.name, status: s.status, detail: s.detail })),
-    });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ── GET /api/payout/pipeline/status/:payoutId ─────────────────────────────────
-router.get('/pipeline/status/:payoutId', authenticateToken, async (req, res) => {
-  try {
-    const { payoutId } = req.params;
-    const rows = (await db.query(
-      `SELECT p.id, p.merchant_id, p.amount, p.currency, p.status, p.provider,
-              p.provider_reference, p.created_at, p.completed_at,
-              si.reference AS si_reference, si.status AS si_status,
-              si.destination_bank, si.destination_account_number, si.destination_swift
-       FROM merchant_payouts p
-       LEFT JOIN payout_settlement_instructions si ON si.payout_id = p.id
-       WHERE p.id = ? LIMIT 1`,
-      [payoutId]
-    )).rows;
-
-    if (!rows.length) return res.status(404).json({ ok: false, error: `Payout ${payoutId} not found` });
-    const p = rows[0] as any;
-    return res.json({
-      ok: true,
-      payout_id:    p.id,
-      amount:       p.amount,
-      currency:     p.currency,
-      status:       p.status,
-      provider:     p.provider,
-      rail:         String(p.provider || '').includes('wise') ? 'wise' : null,
-      transfer_id:  p.provider_reference,
-      si_status:    p.si_status,
-      si_reference: p.si_reference,
-      destination:  { bank: p.destination_bank, account: p.destination_account_number, swift: p.destination_swift },
-      created_at:   p.created_at,
-      completed_at: p.completed_at,
-      is_settled:   ['SETTLED','COMPLETED'].includes(String(p.status || '').toUpperCase()),
-    });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});

@@ -56,6 +56,8 @@ import { cardTopupRouter } from './domain/vault/cardTopup.router';
 import { cryptoCardsRouter } from './domain/vault/cryptoCards.router';
 import { transakVbaRouter } from './domain/wallets/transakVba.router';
 import { securityEventRouter } from './domain/security/security.router';
+import { customerAuthRouter } from './domain/customerauth/customer-auth.router';
+import { customerPortalRouter } from './domain/customerportal/customer-portal.router';
 import { gatewayWebhookRouter, gatewayRouter, gatewayRawBodyParser } from './domain/vault/gateways/gateway.router';
 
 export const app = express();
@@ -115,6 +117,13 @@ app.use(express.json({ limit: "10mb" }));
 // â”€â”€ Public routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use("/auth/login", loginRateLimiter);
 app.use("/auth", authRouter);
+
+// ── Customer self-service portal ─────────────────────────────────────────────
+// /api/customer-auth   → public wallet-code + PIN login (returns a customer JWT)
+// /api/customer-portal → JWT-scoped to the logged-in customer only
+app.use("/api/customer-auth/login", loginRateLimiter);
+app.use("/api/customer-auth", customerAuthRouter);
+app.use("/api/customer-portal", customerPortalRouter);
 
 // â”€â”€ Health checks (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));

@@ -410,6 +410,7 @@ export default function CustomerWalletPage() {
               <span className="customer-wallet-customer-id">ID · {customer.id}</span>
             </div>
             <div className="customer-wallet-details-grid">
+              <div><span>Portal PIN</span><strong style={{ color: '#65a30d', fontFamily: 'monospace', letterSpacing: '2px' }}>{customer.portal_pin || 'N/A'}</strong></div>
               <div><span>Email</span><strong>{customer.email || 'Not provided'}</strong></div>
               <div><span>Phone</span><strong>{customer.phone || 'Not provided'}</strong></div>
               <div><span>Wallet code</span><strong>{customer.wallet_code || 'Not assigned'}</strong></div>

@@ -12,7 +12,7 @@ import { SECRET_KEY } from "../domain/auth/auth.service";
  *      attach Authorization headers when opening a raw URL.)
  *   3. Cookie:                cookies.auth_token / token
  */
-function extractToken(req: Request): string | null {
+export function extractToken(req: Request): string | null {
   const authHeader = req.headers?.authorization;
   if (authHeader) {
     const parts = String(authHeader).split(' ');

@@ -13,6 +13,7 @@
 
 import axios from 'axios';
 import { acquirerConfig } from '../../config/acquirer';
+import { PspAcquirerClient } from './PspAcquirerClient';
 import type {
   IAcquirerClient,
   AcquirerAuthRequest,
@@ -172,6 +173,11 @@ export class HttpAcquirerClient implements IAcquirerClient {
 let _client: HttpAcquirerClient | null = null;
 
 export function getAcquirerClient(): IAcquirerClient {
+  // The PSP is the only transport that collects real funds, so it wins over
+  // both the local vault-bank pipe and the ISO 8583 link.
+  if (acquirerConfig.pspBaseUrl) {
+    return new PspAcquirerClient();
+  }
   if ((process.env.ACQUIRER_PROTOCOL || '').toLowerCase() === 'iso8583-tcp') {
     const { VaultBankAcquirerClient } = require('../../domain/payments/acquirer/vault-bank-acquirer.client');
     return new VaultBankAcquirerClient();

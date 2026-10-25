@@ -44,12 +44,12 @@ export async function createBankPayout(
     [uuidv4(), wallet.id, amount, ref, `Bank payout to ${bank.bank_name}`]
   );
 
-  // Call Wise / bank API
-  const wiseUrl = process.env.WISE_PAYOUT_URL;
-  if (!wiseUrl) throw new Error("Wise payout URL missing");
+  // Call the configured bank payout API
+  const bankPayoutUrl = process.env.PAYOUT_BANK_API_URL;
+  if (!bankPayoutUrl) throw new Error("Bank payout API URL missing (PAYOUT_BANK_API_URL)");
 
-  const wiseRes = await axios.post(
-    wiseUrl,
+  const payoutRes = await axios.post(
+    bankPayoutUrl,
     {
       amount,
       currency: bank.currency || "EUR",
@@ -61,17 +61,17 @@ export async function createBankPayout(
     { timeout: 10000 }
   );
 
-  if (!wiseRes.data?.id) {
-    throw new Error(wiseRes.data?.message || "Payout creation failed");
+  if (!payoutRes.data?.id) {
+    throw new Error(payoutRes.data?.message || "Payout creation failed");
   }
 
-  const wiseId = wiseRes.data.id;
+  const providerRef = payoutRes.data.id;
 
   await db.query(
     `INSERT INTO bank_payouts (id, customer_id, bank_account_id, amount, currency, fee, net_amount, status, reference, provider_ref)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [payoutId, customerId, bankAccountId, amount, bank.currency || "EUR", 0, amount, "PENDING", ref, wiseId]
+    [payoutId, customerId, bankAccountId, amount, bank.currency || "EUR", 0, amount, "PENDING", ref, providerRef]
   );
 
-  return { success: true, payoutId, reference: ref, providerRef: wiseId };
+  return { success: true, payoutId, reference: ref, providerRef };
 }

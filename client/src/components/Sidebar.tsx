@@ -115,7 +115,7 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
         />
       )}
       
-      <aside className={`sidebar fixed lg:sticky top-0 left-0 h-screen transition-transform duration-300 z-50 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+      <aside className={`sidebar fixed lg:sticky top-0 left-0 h-[100dvh] lg:h-screen transition-transform duration-300 z-50 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="flex justify-between items-center pr-4">
           <div className="sidebar-logo">
             <span style={{ color: 'var(--accent-primary)' }}>POS</span>

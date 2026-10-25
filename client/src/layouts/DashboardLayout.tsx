@@ -12,14 +12,15 @@ export const DashboardLayout = ({ children }: Props) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (
-    <div className="dashboard-root font-sans text-main bg-app flex h-screen overflow-hidden">
+    <div className="dashboard-root font-sans text-main bg-app flex min-h-[100dvh] lg:h-screen lg:overflow-hidden">
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
-      <main className="dashboard-main flex-1 flex flex-col relative h-full overflow-y-auto">
-        <header className="dashboard-header sticky top-0 z-30 flex items-center justify-between px-4 lg:px-10 h-16 lg:h-20 bg-white/80 backdrop-blur-md border-b border-gray-200 shadow-sm">
+      <main className="dashboard-main flex-1 flex flex-col relative min-w-0 lg:h-full lg:overflow-y-auto">
+        <header className="dashboard-header sticky top-0 z-30 flex items-center justify-between gap-2 h-16 lg:h-20 bg-white/80 backdrop-blur-md border-b border-gray-200 shadow-sm">
           {/* Mobile Menu Button */}
           <button 
-            className="lg:hidden mr-4 p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            className="lg:hidden -ml-2 p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0"
             onClick={() => setIsSidebarOpen(true)}
+            aria-label="Open navigation"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -27,11 +28,18 @@ export const DashboardLayout = ({ children }: Props) => {
           </button>
 
           {/* Left side: Logo & Search */}
-          <div className="header-left flex items-center gap-6 flex-1">
-             <div className="logo hidden lg:block mr-4">
+          <div className="header-left flex items-center gap-4 flex-1 min-w-0">
+             <div className="logo hidden lg:block mr-2 shrink-0">
                 <h2 className="text-xl font-bold text-gray-800 tracking-tight">POS Portal</h2>
              </div>
-             <div className="search-bar relative w-full max-w-md group">
+             {/* Compact brand for phones/tablets, where the full logo and the
+                 search field are dropped to keep the header on one line. */}
+             <div className="logo lg:hidden shrink-0">
+                <h2 className="text-base font-bold text-gray-800 tracking-tight">
+                  POS<span className="text-blue-600 ml-1">201.3</span>
+                </h2>
+             </div>
+             <div className="search-bar relative w-full max-w-md group hidden md:block">
                <svg xmlns="http://www.w3.org/2000/svg" className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 transition-colors group-focus-within:text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                <input 
                  type="text" 
@@ -42,8 +50,8 @@ export const DashboardLayout = ({ children }: Props) => {
           </div>
 
           {/* Right side: Actions & Profile */}
-          <div className="header-actions flex items-center gap-4">
-            <div className="icons flex items-center gap-2">
+          <div className="header-actions flex items-center gap-1 sm:gap-2 lg:gap-4 shrink-0">
+            <div className="icons flex items-center gap-0.5 sm:gap-2">
               {/* Notifications */}
               <NotificationMenu />
               
@@ -57,7 +65,7 @@ export const DashboardLayout = ({ children }: Props) => {
           </div>
         </div>
       </header>
-      <section className="dashboard-content flex-1 p-4 lg:p-8 max-w-[1600px] w-full mx-auto animate-fade-in">{children}</section>
+      <section className="dashboard-content flex-1 max-w-[1600px] w-full mx-auto animate-fade-in">{children}</section>
     </main>
   </div>
 );

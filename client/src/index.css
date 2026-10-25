@@ -134,6 +134,9 @@ body {
 .dashboard-root {
   display: flex;
   min-height: 100vh;
+  /* Dynamic viewport height: on iOS/Android the browser chrome must not clip
+     the layout the way a fixed 100vh does. */
+  min-height: 100dvh;
   background-color: var(--bg-app);
 }
 
@@ -143,15 +146,38 @@ body {
   flex-direction: column;
   position: relative;
   overflow-x: hidden;
+  /* Flex children default to min-width:auto, which lets a wide child (a table,
+     a long terminal id) push the whole layout past the right edge of the
+     viewport instead of scrolling inside its own box. */
+  min-width: 0;
 }
 
 .dashboard-content {
-  padding: 32px 40px;
   max-width: 1600px;
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+  /* Fluid gutters with device safe-area insets instead of a fixed 32/40px, so
+     a phone keeps its full width and a notched device keeps its content clear. */
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
   animation: fadeIn 0.4s ease-out;
+}
+
+@media (min-width: 1024px) {
+  .dashboard-content {
+    padding: 32px max(40px, env(safe-area-inset-right, 0px)) 48px max(40px, env(safe-area-inset-left, 0px));
+  }
+}
+
+/* Phones and portrait tablets: scroll the document instead of an inner
+   scroll container. iOS Safari sizes and collapses its chrome far more
+   reliably when the page itself scrolls. */
+@media (max-width: 1023.98px) {
+  .dashboard-main {
+    overflow: visible;
+  }
 }
 
 @keyframes fadeIn {
@@ -213,11 +239,6 @@ body {
   border-color: var(--border-focus);
 }
 
-.stat-card {
-  display: flex;
-  flex-direction: column;
-}
-
 /* Sidebar Styles */
 .sidebar {
   width: var(--sidebar-width);
@@ -226,13 +247,18 @@ body {
   display: flex;
   flex-direction: column;
   padding: 24px 0;
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  /* Position and height come from the element's own utilities (fixed drawer on
+     phones, sticky column on desktop). Hard-coding `position: sticky` and
+     `height: 100vh` here overrode those utilities, so the closed mobile drawer
+     still occupied 260px of the phone layout. */
+  max-width: 85vw;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   flex-shrink: 0;
   box-shadow: 4px 0 24px rgba(0,0,0,0.02);
   z-index: 20;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
 .sidebar-logo {
@@ -284,18 +310,16 @@ body {
 }
 
 /* Header Styles */
+/* The element carries its own height/background/sticky utilities; this rule
+   only supplies the fluid, safe-area-aware gutters that utilities can't express. */
 .dashboard-header {
-  height: var(--header-height);
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 40px;
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px));
+}
+
+@media (min-width: 1024px) {
+  .dashboard-header {
+    padding: 0 max(40px, env(safe-area-inset-right, 0px)) 0 max(40px, env(safe-area-inset-left, 0px));
+  }
 }
 
 /* Blob Animation */
@@ -352,4 +376,238 @@ body {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* ── Live 3D KPI cards ────────────────────────────────────────────────────
+   Each KPI is a real 3D object: the shell tilts on pointer position, and its
+   layers sit at different depths (face 0 / content +18 / icon +34) so the card
+   reads as a solid slab instead of a flat rectangle. Motion (glow drift, orbit
+   ring, shine sweep, pulsing live dot, bar/meter growth) is what makes the
+   dashboard look like it is running live.
+   `overflow` stays visible on the tilting shell on purpose: any clipping or
+   grouping property would force transform-style:flat and kill the depth. */
+.stat-card-3d {
+  position: relative;
+  min-width: 0;
+  transform: perspective(1200px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transform-style: preserve-3d;
+  transition: transform 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.stat-card-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  transition: box-shadow 0.4s ease;
+}
+
+.stat-card-3d:hover .stat-card-face {
+  box-shadow: 0 24px 48px -20px rgba(15, 23, 42, 0.38), 0 8px 20px -12px rgba(15, 23, 42, 0.2);
+}
+
+.stat-card-content {
+  position: relative;
+  /* preserve-3d here is what actually lifts the icon and value off the face:
+     without it their translateZ would be flattened into this element's plane. */
+  transform-style: preserve-3d;
+  transform: translateZ(18px);
+}
+
+.stat-card-icon {
+  transform: translateZ(34px);
+  box-shadow: 0 10px 18px -12px rgba(15, 23, 42, 0.45);
+  animation: statCardIconFloat 5s ease-in-out infinite;
+}
+
+.stat-card-value {
+  transform: translateZ(26px);
+}
+
+/* Clipped decoration layer: glow orb + orbit ring + shine sweep. */
+.stat-card-fx {
+  position: absolute;
+  inset: 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.stat-card-glow {
+  position: absolute;
+  top: -56px;
+  right: -48px;
+  width: 168px;
+  height: 168px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent, #2563eb) 32%, transparent), transparent 68%);
+  animation: statCardDrift 9s ease-in-out infinite;
+}
+
+.stat-card-orbit {
+  position: absolute;
+  top: -4px;
+  right: 22px;
+  width: 92px;
+  height: 92px;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, var(--accent, #2563eb) 40%, transparent);
+  opacity: 0.55;
+  animation: statCardOrbit 7.5s linear infinite;
+}
+
+.stat-card-shine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 42%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.5) 45%, transparent);
+  animation: statCardShine 6s ease-in-out infinite;
+  animation-delay: var(--shine-delay, 0s);
+}
+
+.stat-card-live {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--accent, #2563eb);
+  animation: statCardPulse 2.4s ease-out infinite;
+}
+
+/* Real series (not decoration): 7-day bars that grow on load, then breathe. */
+.stat-card-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 30px;
+  margin-top: 12px;
+  transform: translateZ(14px);
+}
+
+.stat-card-spark > span {
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 4px 4px 2px 2px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent, #2563eb) 85%, transparent), color-mix(in srgb, var(--accent, #2563eb) 30%, transparent));
+  transform-origin: bottom;
+  animation: statCardBarGrow 0.7s cubic-bezier(0.22, 0.61, 0.36, 1) backwards,
+             statCardBarBreathe 3.2s ease-in-out 1s infinite;
+}
+
+.stat-card-meter {
+  height: 4px;
+  margin-top: 10px;
+  border-radius: 9999px;
+  background: var(--bg-card-hover);
+  overflow: hidden;
+  transform: translateZ(12px);
+}
+
+.stat-card-meter > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent, #2563eb) 55%, transparent), var(--accent, #2563eb));
+  animation: statCardFill 1.1s cubic-bezier(0.22, 0.61, 0.36, 1) both,
+             statCardBarBreathe 3.6s ease-in-out 1.2s infinite;
+}
+
+@keyframes statCardDrift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.7; }
+  50%      { transform: translate3d(-18px, 14px, 0) scale(1.15); opacity: 1; }
+}
+
+@keyframes statCardOrbit {
+  from { transform: rotateX(64deg) rotateZ(0deg); }
+  to   { transform: rotateX(64deg) rotateZ(360deg); }
+}
+
+@keyframes statCardShine {
+  0%   { transform: translateX(-160%) skewX(-14deg); opacity: 0; }
+  6%   { opacity: 0.85; }
+  26%  { transform: translateX(260%) skewX(-14deg); opacity: 0; }
+  100% { transform: translateX(260%) skewX(-14deg); opacity: 0; }
+}
+
+@keyframes statCardPulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #2563eb) 60%, transparent); }
+  70%  { box-shadow: 0 0 0 9px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@keyframes statCardIconFloat {
+  0%, 100% { transform: translateZ(34px) translateY(0); }
+  50%      { transform: translateZ(34px) translateY(-3px); }
+}
+
+@keyframes statCardBarGrow {
+  from { transform: scaleY(0.08); opacity: 0.3; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+
+@keyframes statCardBarBreathe {
+  0%, 100% { filter: brightness(1); }
+  50%      { filter: brightness(1.35); }
+}
+
+@keyframes statCardFill {
+  from { width: 0; }
+  to   { width: var(--fill, 0%); }
+}
+
+/* Motion is decoration here — drop all of it when the OS asks for less. */
+@media (prefers-reduced-motion: reduce) {
+  .stat-card-3d {
+    transform: none;
+    transition: none;
+  }
+
+  .stat-card-content,
+  .stat-card-value,
+  .stat-card-icon,
+  .stat-card-spark {
+    transform: none;
+  }
+
+  .stat-card-glow,
+  .stat-card-orbit,
+  .stat-card-shine,
+  .stat-card-live,
+  .stat-card-spark > span,
+  .stat-card-meter > i {
+    animation: none;
+  }
+
+  .stat-card-shine { opacity: 0; }
+  .stat-card-meter > i { width: var(--fill, 0%); }
+}
+
+/* ── Cross-device sizing (Android / iOS / iPad / macOS) ─────────────────── */
+html {
+  /* Stop iOS Safari from inflating text in landscape and from re-flowing the
+     page when the device is rotated. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@media (max-width: 1023.98px) {
+  /* iOS Safari force-zooms the viewport when a focused field's font-size is
+     below 16px, which leaves the whole dashboard scrolled sideways. The
+     :not() clauses give these selectors enough specificity to beat the
+     utility classes on the fields themselves. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Nothing in the shell may exceed the viewport width on a phone. */
+img, svg, video, canvas, table {
+  max-width: 100%;
 }

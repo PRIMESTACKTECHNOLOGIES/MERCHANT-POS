@@ -101,7 +101,7 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE bank_accounts ADD COLUMN account_type TEXT DEFAULT 'CHECKING'`),
       parseAddCol(`ALTER TABLE bank_accounts ADD COLUMN bank_address TEXT`),
       parseAddCol(`ALTER TABLE bank_accounts ADD COLUMN recipient_address TEXT`),
-      // bank_payouts â€” add provider_ref for Wise tracking
+      // bank_payouts â€” add provider_ref for payout tracking
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN provider_ref TEXT`),
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN provider TEXT`),
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP`),

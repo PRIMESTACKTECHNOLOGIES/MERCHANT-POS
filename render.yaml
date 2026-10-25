@@ -131,42 +131,21 @@ services:
       - key: PAN_ENCRYPTION_SECRET
         sync: false
 
-      # ── Wise (Primary Payout Rail) ─────────────────────────────────────────
-      - key: WISE_API_KEY
-        sync: false
-      - key: WISE_API_URL
-        value: https://api.wise.com
-      - key: WISE_PROFILE_ID
-        value: "94913186"
+      # ── Bank Payout Rail ───────────────────────────────────────────────────
+      # iso8583 or dwolla (empty = internal acquirer only)
       - key: INTERNAL_PAYOUT_DOWNSTREAM
-        value: wise
-
-      # ── Wise Receiving Account Details ─────────────────────────────────────
-      - key: WISE_RECEIVE_USD_ROUTING
-        value: "084009519"
-      - key: WISE_RECEIVE_USD_ACCOUNT
-        value: "343612919064346"
-      - key: WISE_RECEIVE_USD_SWIFT
-        value: TRWIUS35XXX
-      - key: WISE_RECEIVE_EUR_IBAN
-        value: BE19905861593312
-      - key: WISE_RECEIVE_EUR_BIC
-        value: TRWIBEB1XXX
-      - key: WISE_RECEIVE_AED_IBAN
-        value: GB64TRWI60846482676861
-      - key: WISE_RECEIVE_AED_SWIFT
-        value: TRWIGB2LXXX
+        value: ""
 
       # ── Merchant IBAN/BIC (SEPA outbound debtor side) ──────────────────────
       - key: MERCHANT_IBAN
-        value: BE19905861593312
+        value: ""
       - key: MERCHANT_BIC
-        value: TRWIBEB1XXX
+        value: ""
 
       # ── Receiving bank account (merchant receiver of settled funds) ────────
       # Overrides the bank account saved in Merchant Settings. Empty = use Settings.
       - key: MERCHANT_BANK_NAME
-        value: Wise
+        value: ""
       - key: MERCHANT_BANK_ACCOUNT_HOLDER
         value: PRIMESTACK TECHNOLOGIES LLC
       - key: MERCHANT_BANK_ACCOUNT_NUMBER
@@ -174,11 +153,27 @@ services:
       - key: MERCHANT_BANK_ROUTING_NUMBER
         sync: false
       - key: MERCHANT_BANK_ADDRESS
-        value: Rue du Trone 100, 3rd floor, Brussels, 1050, Belgium
+        value: ""
       - key: MERCHANT_BANK_CURRENCY
-        value: EUR
+        value: ""
       - key: MERCHANT_BANK_COUNTRY
-        value: Belgium
+        value: ""
+
+      # ── PAYOUT DESTINATION BANK (blank until a new bank account is set) ────
+      - key: PAYOUT_BANK_NAME
+        value: ""
+      - key: PAYOUT_BANK_ROUTING_NUMBER
+        value: ""
+      - key: PAYOUT_BANK_ACCOUNT_NUMBER
+        value: ""
+      - key: PAYOUT_BANK_ACCOUNT_HOLDER
+        value: ""
+      - key: PAYOUT_BANK_ADDRESS
+        value: ""
+      - key: PAYOUT_BANK_SWIFT
+        value: ""
+      - key: PAYOUT_BANK_API_URL
+        value: ""
 
       # ── Binance ────────────────────────────────────────────────────────────
       - key: BINANCE_MODE

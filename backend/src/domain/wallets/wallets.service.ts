@@ -5,6 +5,7 @@ import { acquirerConfig } from "../../config/acquirer";
 import { createAcquirerClient, detectNetworkFromPan } from '../payments/acquirer';
 import { v4 as uuidv4 } from 'uuid';
 import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
+import { customerAuthService } from '../customerauth/customer-auth.service';
 
 export class WalletsService {
 
@@ -474,6 +475,7 @@ export class WalletsService {
     return (await db.query(`
       SELECT
         c.id, c.name, c.email, c.phone, c.created_at, c.updated_at,
+        c.pin_code AS portal_pin,
         w.id AS wallet_id,
         w.wallet_code,
         w.balance AS wallet_balance,
@@ -656,9 +658,12 @@ export class WalletsService {
 
   // ── Get full customer profile with KYC ────────────────────────────────────
   async getCustomerProfile(customerId: string) {
-    const rows = (await db.query('SELECT * FROM customers WHERE id = ?', [customerId])).rows;
+    const rows = (await db.query('SELECT * FROM customers WHERE id = ?', [customerId])).rows as any[];
     if (!rows.length) throw new Error(`Customer ${customerId} not found`);
-    return rows[0];
+    const { pin_hash, ...profile } = rows[0];
+    // The merchant has to hand the customer their portal PIN, so surface it here.
+    const portal_pin = await customerAuthService.getOrIssuePin(customerId);
+    return { ...profile, portal_pin };
   }
 
   // ── Merchant → Customer fiat transfer ────────────────────────────────────

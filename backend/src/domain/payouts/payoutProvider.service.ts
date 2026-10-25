@@ -1,14 +1,11 @@
-﻿/**
+/**
  * Payout Provider Service
  * ─────────────────────────────────────────────────────────────────────────────
  * YOUR INTERNAL ACQUIRER is the PROVIDER — licensed, self-hosted, Protocol 201.3.
- * Wise is the RAIL (transport layer) — it moves money after internal accounting.
  *
  * BANK_PAYOUT_PROVIDER=internal  → your acquirer is the provider
- * INTERNAL_PAYOUT_DOWNSTREAM=wise → Wise is the rail
  */
 
-import { wiseCollectAndSend } from './wiseCollect.service';
 import { submitDwollaPayout } from './dwollaOriginator.client';
 import { acquirerConfig } from '../../config/acquirer';
 import { Iso8583Codec } from '../payments/acquirer/iso8583.codec';
@@ -47,46 +44,6 @@ export interface BankPayoutResult {
   providerReference?: string;
   status:             string;
   raw?:               any;
-}
-
-async function submitViaWiseRail(request: BankPayoutRequest): Promise<BankPayoutResult> {
-  const ccy     = (request.currency || 'USD').toUpperCase();
-  const account = request.bankAccount;
-  const ref     = request.reference || request.payoutId;
-  const bic     = ccy === 'USD'
-    ? (account.routing_number?.trim() || account.swift_code?.trim() || '')
-    : (account.swift_code?.trim() || account.routing_number?.trim() || '');
-
-  const result = await wiseCollectAndSend({
-    amount:        request.amount,
-    currency:      ccy,
-    targetBic:     bic,
-    targetAccount: account.account_number || account.iban || '',
-    targetName:    account.account_holder || '',
-    targetAddressLines: request.bankAccount.bank_address
-      ? [request.bankAccount.bank_address]
-      : undefined,
-    targetCountry: request.bankAccount.country,
-    targetCity: request.bankAccount.city,
-    targetPostCode: request.bankAccount.post_code,
-    reference:     ref.slice(0, 35),
-    merchantId:    request.merchantId,
-  });
-
-  return {
-    success:           result.success,
-    provider:          'internal',
-    rail:              'wise',
-    providerReference: result.transferId,
-    status:            result.success ? (result.status || 'SUBMITTED').toUpperCase() : 'FAILED',
-    raw: {
-      wise_transfer_id:  result.transferId,
-      wise_uetr:         result.uetr,
-      wise_status:       result.status,
-      wise_balance_used: result.wiseBalance,
-      message:           result.message,
-    },
-  };
 }
 
 async function submitViaDwolla(request: BankPayoutRequest): Promise<BankPayoutResult> {
@@ -188,17 +145,12 @@ async function submitViaIso8583Rail(request: BankPayoutRequest): Promise<BankPay
 export async function submitBankPayout(request: BankPayoutRequest): Promise<BankPayoutResult> {
   const provider   = (process.env.BANK_PAYOUT_PROVIDER       || 'internal').trim().toLowerCase();
   const downstream = (process.env.INTERNAL_PAYOUT_DOWNSTREAM || '').trim().toLowerCase();
-  const wiseKey    = process.env.WISE_API_KEY?.trim();
 
   if (
     (provider === 'internal' || provider === 'primestack' || provider === 'external')
     && (downstream === 'iso8583' || downstream === 'iso8583-tcp' || downstream === 'vaultbank_iso8583')
   ) {
     return submitViaIso8583Rail(request);
-  }
-
-  if ((provider === 'internal' || provider === 'primestack') && downstream === 'wise' && wiseKey) {
-    return submitViaWiseRail(request);
   }
 
   if (
@@ -213,7 +165,7 @@ export async function submitBankPayout(request: BankPayoutRequest): Promise<Bank
       success:  true,
       provider: 'internal',
       status:   'PENDING_RAIL',
-      raw:      { note: 'Settlement instruction recorded. Set INTERNAL_PAYOUT_DOWNSTREAM=wise to activate Wise rail.' },
+      raw:      { note: 'Settlement instruction recorded. Set INTERNAL_PAYOUT_DOWNSTREAM=iso8583 or dwolla to activate a bank rail.' },
     };
   }
 
@@ -259,25 +211,4 @@ export async function submitBankPayout(request: BankPayoutRequest): Promise<Bank
   };
 }
 
-export async function getWiseDiagnostics(): Promise<any> {
-  const wiseKey = process.env.WISE_API_KEY?.trim();
-  if (!wiseKey) return { configured: false, message: 'WISE_API_KEY not set in .env' };
-  try {
-    const { getWiseBalance } = await import('./wiseCollect.service');
-    const [usd, eur] = await Promise.all([
-      getWiseBalance('USD').catch(() => 0),
-      getWiseBalance('EUR').catch(() => 0),
-    ]);
-    return {
-      configured: true,
-      role:       'rail',
-      provider:   'internal',
-      balances: [{ currency: 'USD', amount: usd }, { currency: 'EUR', amount: eur }],
-      note: 'Wise is the RAIL. Your internal acquirer (Protocol 201.3) is the PROVIDER.',
-    };
-  } catch (e: any) {
-    return { configured: false, error: e.message };
-  }
-}
-
-export default { submitBankPayout, getWiseDiagnostics };
+export default { submitBankPayout };

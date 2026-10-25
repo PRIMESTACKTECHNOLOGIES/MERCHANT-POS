@@ -524,7 +524,7 @@ export class PayoutsService {
         throw new Error(`Target vault account ${targetVaultId} currency mismatch`);
       }
 
-      const creditReference = `WISE-CREDIT-${payoutId}`;
+      const creditReference = `BANK-CREDIT-${payoutId}`;
       const existingCredit = await db.query(
         `SELECT id FROM ledger_transactions WHERE reference = ? LIMIT 1`,
         [creditReference],
@@ -553,7 +553,7 @@ export class PayoutsService {
               currency: String(row.currency).toUpperCase(),
               source_type: 'bank',
               source_reference: payoutId,
-              description: `Wise sweep debit for ${payoutId}`,
+              description: `Bank sweep debit for ${payoutId}`,
             },
             {
               account_code: targetCode,
@@ -562,7 +562,7 @@ export class PayoutsService {
               currency: String(row.currency).toUpperCase(),
               source_type: 'bank',
               source_reference: external_reference || payoutId,
-              description: `Wise vault credit for ${payoutId}`,
+              description: `Bank vault credit for ${payoutId}`,
             },
           ],
         });

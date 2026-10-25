@@ -10,11 +10,10 @@
  *   GET /api/batch-file/summary   → JSON summary of what will be in the file
  *
  * Merchant (beneficiary / receiver of funds):
- *   PRIMESTACK TECHNOLOGIES LLC
- *   Wise US / Column Bank
- *   Routing: 084009519
- *   Account: 343612919064346
- *   SWIFT:   TRWIUS35XXX
+ *   Bank details are configured through environment variables
+ *   (PAYOUT_BANK_NAME, PAYOUT_BANK_ROUTING_NUMBER, PAYOUT_BANK_ACCOUNT_NUMBER,
+ *   PAYOUT_BANK_ADDRESS, PAYOUT_BANK_SWIFT) and are blank until a destination
+ *   bank is configured.
  *
  * Customer (payer / sender of funds) details are pre-filled from:
  *   - Default: EXPLORE RESIN HANDICRAFTS / RAK Bank UAE
@@ -30,11 +29,11 @@ const router = Router();
 const MERCHANT = {
   name:           'PRIMESTACK TECHNOLOGIES LLC',
   accountType:    'Deposit',
-  routingNumber:  '084009519',          // Wise US / Column Bank (ACH/wire)
-  accountNumber:  '343612919064346',
-  bankName:       'Column Bank (via Wise US Inc)',
-  bankAddress:    'Wise US Inc, 108 W 13th St, Wilmington, DE 19801, United States',
-  swiftBic:       'TRWIUS35XXX',
+  routingNumber:  process.env.PAYOUT_BANK_ROUTING_NUMBER || '',
+  accountNumber:  process.env.PAYOUT_BANK_ACCOUNT_NUMBER || '',
+  bankName:       process.env.PAYOUT_BANK_NAME || '',
+  bankAddress:    process.env.PAYOUT_BANK_ADDRESS || '',
+  swiftBic:       process.env.PAYOUT_BANK_SWIFT || '',
   currency:       'USD',
 };
 
@@ -130,7 +129,7 @@ router.get('/summary', async (req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /csv  — Wise Batch Payment CSV (exact Wise format)
+// GET /csv  — Batch Payment CSV (exact provider format)
 // Upload through the configured bank provider's batch-payment workflow.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/csv', async (req: Request, res: Response) => {
@@ -152,7 +151,7 @@ router.get('/csv', async (req: Request, res: Response) => {
     const refNo    = `PSTK-${Date.now()}`;
     const now      = new Date().toISOString().slice(0, 10);
 
-    // ── Wise Batch CSV exact column order ─────────────────────────────────
+    // ── Batch CSV exact column order ─────────────────────────────────────
     // Keep the generated batch format aligned with the configured provider.
     // Columns:
     //   name, recipientEmail, paymentReference, receiverType,
@@ -162,7 +161,7 @@ router.get('/csv', async (req: Request, res: Response) => {
     //   addressCountry, addressCity, addressFirstLine,
     //   addressState, transferPurpose
 
-    const WISE_HEADER = [
+    const CSV_HEADER = [
       'name',
       'recipientEmail',
       'paymentReference',
@@ -208,9 +207,9 @@ router.get('/csv', async (req: Request, res: Response) => {
         `""`,                            // nationality
         `""`,                            // dateOfBirth
         `"US"`,                          // addressCountry
-        `"Wilmington"`,                  // addressCity
-        `"108 W 13th St"`,               // addressFirstLine
-        `"DE"`,                          // addressState
+        `""`,                            // addressCity
+        `""`,                            // addressFirstLine
+        `""`,                            // addressState
         `"SERVICES"`,                    // transferPurpose
       ].join(',');
     });
@@ -233,15 +232,15 @@ router.get('/csv', async (req: Request, res: Response) => {
       `""`,
       `""`,
       `"US"`,
-      `"Wilmington"`,
-      `"108 W 13th St"`,
-      `"DE"`,
+      `""`,
+      `""`,
+      `""`,
       `"SERVICES"`,
     ].join(',');
 
-    const csvLines = [WISE_HEADER, ...rows];
+    const csvLines = [CSV_HEADER, ...rows];
     const csvContent = csvLines.join('\r\n');
-    const filename = `wise_batch_${now}_${refNo}.csv`;
+    const filename = `batch_${now}_${refNo}.csv`;
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

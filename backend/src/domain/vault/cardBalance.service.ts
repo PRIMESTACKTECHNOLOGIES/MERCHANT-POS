@@ -44,7 +44,7 @@ async function ensureTables() {
       type             TEXT NOT NULL,   -- CREDIT | DEBIT | RESERVE | RELEASE
       amount           REAL NOT NULL,   -- always positive; sign determined by type
       balance_after    REAL NOT NULL,
-      channel          TEXT,            -- bank_wire | wise | crypto | transak | cash | card_to_card | pos_debit
+      channel          TEXT,            -- bank_wire | crypto | transak | cash | card_to_card | pos_debit
       provider_ref     TEXT,            -- external transaction ID from real fund source
       external_ref     TEXT,            -- our reference (wire ref, tx hash, etc.)
       note             TEXT,
@@ -128,7 +128,7 @@ export async function getCardBalance(cardId: string, currency: string): Promise<
  * @param cardId      e.g. 'usd', 'eur', or custom card ID
  * @param currency    ISO currency code
  * @param amount      amount in major units (e.g. 100.00)
- * @param channel     funding channel (bank_wire | wise | crypto | transak | cash | card_to_card)
+ * @param channel     funding channel (bank_wire | crypto | transak | cash | card_to_card)
  * @param providerRef external reference from the funding provider
  * @param externalRef our reference (wire ref, tx hash, etc.)
  * @param note        optional note
@@ -149,7 +149,7 @@ export async function creditCard(
   const now = new Date().toISOString();
 
   // Idempotency: a credit is keyed on the provider's own reference. Replaying the
-  // same Wise transfer, on-chain tx hash or wire reference must never credit twice.
+  // same provider transfer, on-chain tx hash or wire reference must never credit twice.
   if (providerRef) {
     const dup = (await db.query(
       `SELECT * FROM vault_card_txns
@@ -337,7 +337,7 @@ export async function exportCardAccountsForSettlement(): Promise<Record<string, 
  *
  * There is deliberately no seeding path here. An operator card can only hold
  * real money, and real money only arrives through a verified funding rail
- * (bank wire, Wise, USDT on-chain, on-ramp, gateway checkout). Nothing is ever
+ * (bank wire, USDT on-chain, on-ramp, gateway checkout). Nothing is ever
  * created at startup.
  */
 export async function ensureOperatorCards(): Promise<void> {

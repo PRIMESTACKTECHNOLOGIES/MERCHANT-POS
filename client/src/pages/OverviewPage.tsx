@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { 
   fetchTerminals, 
   fetchTransactions, 
@@ -43,6 +43,10 @@ interface StatCardProps {
   icon: React.ReactNode;
   color: string;
   subtext?: string;
+  /** Real series behind the number (e.g. the 7-day sales already computed for the chart). */
+  series?: number[];
+  /** Real 0-100 ratio, drawn as an animated meter. Omitted when no honest ratio exists. */
+  meter?: number;
 }
 
 // Dashboard KPIs below are computed from real API terminal/transaction data, not hardcoded placeholders.
@@ -52,31 +56,154 @@ const enhanceTerminalData = (t: Terminal): TerminalUI => {
 
 // --- Components ---
 
-const StatCard = ({ title, value, trend, trendUp, icon, color, subtext }: StatCardProps) => (
-  <div className="card stat-card group relative overflow-hidden bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all duration-300">
-    <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity transform group-hover:scale-110 duration-500">
-      {icon}
-    </div>
-    <div className="flex justify-between items-start mb-4 relative z-10">
-      <div className="text-sm font-medium text-gray-500">{title}</div>
-      <div className={`p-2 rounded-lg bg-opacity-10 transition-colors`} style={{ backgroundColor: `${color}15`, color: color }}>
-        {icon}
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+
+/**
+ * Animates only the numeric part of a KPI value, keeping the surrounding text
+ * ("$", "/3", "%") intact. A refresh then reads as a figure counting to its new
+ * value instead of the text silently swapping.
+ */
+const useCountUp = (value: string | number) => {
+  const text = String(value);
+  const match = text.match(/-?[\d,]+(?:\.\d+)?/);
+  const target = match ? Number(match[0].replace(/,/g, '')) : 0;
+  const decimals = match && match[0].includes('.') ? match[0].split('.')[1].length : 0;
+  const grouped = !!match && (match[0].includes(',') || target >= 10000);
+
+  const [shown, setShown] = useState(0);
+  const fromRef = useRef(0);
+
+  useEffect(() => {
+    if (!match || prefersReducedMotion()) {
+      fromRef.current = target;
+      setShown(target);
+      return;
+    }
+    const from = fromRef.current;
+    const startedAt = performance.now();
+    let frame = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startedAt) / 900);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setShown(from + (target - from) * eased);
+      if (t < 1) frame = requestAnimationFrame(step);
+      else fromRef.current = target;
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+
+  if (!match) return text;
+  return text.replace(
+    match[0],
+    grouped
+      ? shown.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      : shown.toFixed(decimals),
+  );
+};
+
+const TILT_DEGREES = 9;
+
+const StatCard = ({ title, value, trend, trendUp, icon, color, subtext, series, meter }: StatCardProps) => {
+  const shellRef = useRef<HTMLDivElement>(null);
+  const shownValue = useCountUp(value);
+  // Deterministic per-card offset so twelve shine sweeps don't march in lockstep.
+  const accent = {
+    '--accent': color,
+    '--shine-delay': `${(title.charCodeAt(0) % 7) * 0.7}s`,
+  } as React.CSSProperties;
+
+  // Pointer position drives the rotation; setting it on the node keeps this off
+  // the React render path, so the tilt never costs a re-render.
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = shellRef.current;
+    if (!el || e.pointerType !== 'mouse' || prefersReducedMotion()) return;
+    const rect = el.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    el.style.setProperty('--ry', `${(x - 0.5) * TILT_DEGREES * 2}deg`);
+    el.style.setProperty('--rx', `${(0.5 - y) * TILT_DEGREES * 2}deg`);
+  };
+
+  const handlePointerLeave = () => {
+    const el = shellRef.current;
+    if (!el) return;
+    el.style.setProperty('--rx', '0deg');
+    el.style.setProperty('--ry', '0deg');
+  };
+
+  const peak = series && series.length ? Math.max(...series) : 0;
+
+  return (
+    <div
+      ref={shellRef}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+      style={accent}
+      className="stat-card-3d"
+    >
+      {/* Decoration layer, clipped to the card shape: drifting glow, orbit ring, shine sweep. */}
+      <div className="stat-card-fx">
+        <div className="stat-card-glow" />
+        <div className="stat-card-orbit" />
+        <div className="stat-card-shine" />
       </div>
-    </div>
-    <div className="text-2xl font-bold text-gray-900 mb-1 relative z-10">{value}</div>
-    {trend && (
-      <div className={`text-xs font-medium flex items-center relative z-10 ${trendUp ? 'text-green-600' : 'text-red-500'}`}>
-        {trendUp ? (
-          <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" /></svg>
-        ) : (
-          <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
+
+      {/* The card surface itself. Kept as its own layer so the layers above it can float free. */}
+      <div className="stat-card-face" />
+
+      <div className="stat-card-content p-4 sm:p-5">
+        <div className="flex justify-between items-start mb-4 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="stat-card-live" aria-hidden="true" />
+            <div className="text-sm font-medium text-gray-500 truncate">{title}</div>
+          </div>
+          <div
+            className="stat-card-icon p-2 rounded-lg shrink-0"
+            style={{ backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)`, color }}
+          >
+            {icon}
+          </div>
+        </div>
+
+        <div className="stat-card-value text-xl sm:text-2xl font-bold text-gray-900 mb-1 tabular-nums break-words">{shownValue}</div>
+
+        {trend && (
+          <div className={`text-xs font-medium flex items-center ${trendUp ? 'text-green-600' : 'text-red-500'}`}>
+            {trendUp ? (
+              <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" /></svg>
+            ) : (
+              <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
+            )}
+            {trend}
+          </div>
         )}
-        {trend}
+        {subtext && <div className="text-xs text-gray-400 mt-1">{subtext}</div>}
+
+        {series && series.length > 1 && (
+          <div className="stat-card-spark" aria-hidden="true">
+            {series.map((v, i) => (
+              <span
+                key={i}
+                style={{
+                  height: `${peak > 0 ? Math.max(8, (v / peak) * 100) : 8}%`,
+                  animationDelay: `${i * 45}ms, ${1 + i * 0.12}s`,
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        {typeof meter === 'number' && (
+          <div className="stat-card-meter" aria-hidden="true">
+            <i style={{ '--fill': `${Math.max(0, Math.min(100, meter))}%` } as React.CSSProperties} />
+          </div>
+        )}
       </div>
-    )}
-    {subtext && <div className="text-xs text-gray-400 mt-1 relative z-10">{subtext}</div>}
-  </div>
-);
+    </div>
+  );
+};
 
 const SmoothAreaChart = ({ data }: { data: { day: string; value: number }[] }) => {
   if (!data || data.length === 0) return null;
@@ -108,7 +235,7 @@ const SmoothAreaChart = ({ data }: { data: { day: string; value: number }[] }) =
   const areaPath = `${dPath} L 100,100 L 0,100 Z`;
 
   return (
-    <div className="w-full h-72 relative">
+    <div className="w-full h-56 sm:h-72 relative">
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
         <defs>
           <linearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
@@ -146,7 +273,7 @@ const SmoothAreaChart = ({ data }: { data: { day: string; value: number }[] }) =
           );
         })}
       </svg>
-      <div className="flex justify-between mt-4 text-xs font-medium text-gray-400 px-2">
+      <div className="flex justify-between mt-4 text-[10px] sm:text-xs font-medium text-gray-400 px-1 sm:px-2">
         {data.map((d, i) => <span key={i}>{d.day}</span>)}
       </div>
     </div>
@@ -539,13 +666,13 @@ export const OverviewPage = () => {
     <div className="space-y-8 animate-fade-in pb-12">
       
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Dashboard Overview</h1>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">Dashboard Overview</h1>
           <p className="text-sm text-gray-500 mt-1">Welcome back, Merchant Admin — here's your business pulse.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-500 bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <span className="hidden sm:inline-flex text-sm text-gray-500 bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm whitespace-nowrap">
             {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </span>
           <button 
@@ -666,7 +793,7 @@ export const OverviewPage = () => {
       )}
 
       {/* Quick Actions Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3 sm:gap-4">
         {[
           { label: 'New Charge', path: '/pos', icon: 'credit-card', color: 'from-blue-500 to-blue-600' },
           { label: 'Add Product', path: '/inventory', icon: 'box', color: 'from-emerald-500 to-emerald-600' },
@@ -698,13 +825,14 @@ export const OverviewPage = () => {
       </div>
 
       {/* KPI Cards Grid — Row 1: Core Payment KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-5">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 sm:gap-5">
         <StatCard 
           title="Total Sales" 
           value={new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(currentSales)}
           trend={transactions.length > 0 ? formatDelta(salesDelta) : 'No data'}
           trendUp={salesDelta >= 0}
           subtext={`${currentTxns.length} txns · vs ${previousTxns.length} prev.`}
+          series={chartData.map(d => d.value)}
           color="var(--accent-primary)"
           icon={<svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
         />
@@ -732,6 +860,7 @@ export const OverviewPage = () => {
           trend={transactions.length > 0 ? formatDelta(approvalDelta) : '0% Rate'}
           trendUp={approvalDelta >= 0}
           subtext={transactions.length > 0 ? `${Math.round((successfulTxns / transactions.length) * 100)}% lifetime rate` : 'No data yet'}
+          meter={transactions.length > 0 ? (successfulTxns / transactions.length) * 100 : 0}
           color="#10b981"
           icon={<svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
         />
@@ -740,6 +869,7 @@ export const OverviewPage = () => {
           value={declinedTxns}
           trend={transactions.length > 0 ? `${Math.round((declinedTxns / transactions.length) * 100)}% Rate` : '0% Rate'}
           trendUp={false} 
+          meter={transactions.length > 0 ? (declinedTxns / transactions.length) * 100 : 0}
           color="#ef4444"
           icon={<svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
         />
@@ -748,6 +878,7 @@ export const OverviewPage = () => {
           value={`${activeTerminals}/${terminals.length}`}
           trend={terminals.length === 0 ? 'No terminals' : activeTerminals === terminals.length ? 'All Online' : `${terminals.length - activeTerminals} offline`}
           trendUp={activeTerminals === terminals.length}
+          meter={terminals.length > 0 ? (activeTerminals / terminals.length) * 100 : 0}
           color="#3b82f6"
           icon={<svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>}
         />
@@ -762,7 +893,7 @@ export const OverviewPage = () => {
       </div>
 
       {/* KPI Cards Grid — Row 2: Inventory, Wallets, Settlements, Crypto */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-5">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 sm:gap-5">
         {/* Inventory Value */}
         <StatCard 
           title="Inventory Value" 
@@ -770,6 +901,7 @@ export const OverviewPage = () => {
           trend={`${inventoryCount} SKUs`}
           trendUp={true}
           subtext={lowStockCount > 0 || outOfStockCount > 0 ? `${lowStockCount} low · ${outOfStockCount} out` : 'Stock healthy'}
+          meter={inventoryCount > 0 ? ((inventoryCount - lowStockCount - outOfStockCount) / inventoryCount) * 100 : 0}
           color="#0891b2"
           icon={<svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} points="3.27 6.96 12 12.01 20.73 6.96" /><line strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} x1="12" y1="22.08" x2="12" y2="12" /></svg>}
         />
@@ -800,6 +932,7 @@ export const OverviewPage = () => {
           trend={`${activeCryptoCoins} active${cryptoCoinCount > 0 ? ` / ${cryptoCoinCount} wallets` : ''}`}
           trendUp={totalCryptoValueUSD > 0}
           subtext={totalCryptoValueUSD > 0 ? 'Live prices from exchange' : 'Buy from Wallets → Crypto'}
+          meter={cryptoCoinCount > 0 ? (activeCryptoCoins / cryptoCoinCount) * 100 : 0}
           color="#f97316"
           icon={<svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>}
         />
@@ -819,7 +952,7 @@ export const OverviewPage = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Large Analytics Chart */}
-        <div className="card lg:col-span-2 shadow-sm border border-gray-100 bg-white rounded-xl p-6">
+        <div className="card lg:col-span-2 shadow-sm border border-gray-100 bg-white rounded-xl p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
             <div>
               <h2 className="text-lg font-bold text-gray-900">Revenue Analytics</h2>
@@ -844,7 +977,7 @@ export const OverviewPage = () => {
         <div className="space-y-6">
           
           {/* Insights Card */}
-          <div className="card shadow-sm border border-gray-100 h-fit bg-white rounded-xl p-6">
+          <div className="card shadow-sm border border-gray-100 h-fit bg-white rounded-xl p-4 sm:p-6">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-lg font-bold text-gray-900">Merchant Insights</h2>
               <button className="text-gray-400 hover:text-blue-600">
@@ -1071,22 +1204,22 @@ export const OverviewPage = () => {
                 </div>
                 <div className="space-y-3">
                    {transactions.slice(0, 3).map((txn, i) => (
-                      <div key={i} className="flex items-center justify-between border-b border-gray-50 pb-2 last:border-0 last:pb-0">
-                         <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${i === 0 ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
+                      <div key={i} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-2 last:border-0 last:pb-0">
+                         <div className="flex items-center gap-3 min-w-0">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${i === 0 ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
                                {txn.currency?.[0] || '$'}
                             </div>
-                            <div>
+                            <div className="min-w-0">
                                <div className="text-xs font-semibold text-gray-900">Purchase</div>
                                <div className="text-[10px] text-gray-500">{new Date(txn.txnTimestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                                {(txn.readerSource || txn.cardBrand) && (
-                                 <div className="text-[10px] text-emerald-600 font-medium">
+                                 <div className="text-[10px] text-emerald-600 font-medium truncate">
                                    {txn.readerSource === 'NFC_CONTACTLESS' ? 'NFC' : txn.readerSource === 'EMV_CHIP' ? 'EMV' : txn.cardBrand || 'Card'}
                                  </div>
                                )}
                             </div>
                          </div>
-                         <div className="text-sm font-bold text-gray-900">
+                         <div className="text-sm font-bold text-gray-900 shrink-0 tabular-nums">
                             {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(txn.amountMinor / 100)}
                          </div>
                       </div>
@@ -1105,7 +1238,7 @@ export const OverviewPage = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Terminal Performance */}
-        <div className="card shadow-sm border border-gray-100 bg-white rounded-xl p-6">
+        <div className="card shadow-sm border border-gray-100 bg-white rounded-xl p-4 sm:p-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-lg font-bold text-gray-900">Terminal Status</h2>
             <Link to="/terminals" className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline">View All</Link>
@@ -1122,19 +1255,19 @@ export const OverviewPage = () => {
               const terminalTotal = terminalTxns.reduce((sum, t) => sum + t.amountMinor, 0) / 100;
               
               return (
-                <div key={term.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-all duration-200 border border-transparent hover:border-gray-100 cursor-pointer group">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-2.5 h-2.5 rounded-full ${
+                <div key={term.id} className="flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-gray-50 transition-all duration-200 border border-transparent hover:border-gray-100 cursor-pointer group">
+                  <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                       term.status === 'ONLINE' ? 'bg-green-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' :
                       term.status === 'OFFLINE' ? 'bg-amber-500' :
                       term.status === 'ERROR' ? 'bg-red-500' : 'bg-blue-500'
                     }`}></div>
-                    <div>
-                      <div className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{term.name}</div>
-                      <div className="text-xs text-gray-500 font-mono">{term.terminalId}</div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors truncate">{term.name}</div>
+                      <div className="text-xs text-gray-500 font-mono truncate">{term.terminalId}</div>
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <div className="text-xs font-bold text-gray-900">
                       {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(terminalTotal)}
                     </div>
@@ -1147,13 +1280,13 @@ export const OverviewPage = () => {
         </div>
 
         {/* Recent Transactions */}
-        <div className="card lg:col-span-2 shadow-sm border border-gray-100 bg-white rounded-xl p-6">
+        <div className="card lg:col-span-2 shadow-sm border border-gray-100 bg-white rounded-xl p-4 sm:p-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-lg font-bold text-gray-900">Recent Transactions</h2>
             <Link to="/transactions" className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline">View All</Link>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="-mx-2 sm:mx-0 overflow-x-auto">
+            <table className="w-full min-w-[680px] text-left border-collapse">
               <thead>
                 <tr className="text-xs text-gray-500 border-b border-gray-100 uppercase tracking-wider font-semibold">
                   <th className="py-3 pl-4">Time</th>

@@ -25,14 +25,14 @@ set "DATABASE_FILE=%PROJECT_ROOT%backend\data\database.sqlite"
 set "RENDER_URL=https://merchant-pos-0nno.onrender.com"
 set "NETLIFY_URL=https://merchantpos.netlify.app"
 
-REM ── Vault Bank Receiving Accounts ────────────────────────────────────────
-set "VAULT_USD_ACCOUNT=343612919064346"
-set "VAULT_USD_ROUTING=084009519"
-set "VAULT_USD_SWIFT=TRWIUS35XXX"
-set "VAULT_EUR_IBAN=BE19905861593312"
-set "VAULT_EUR_BIC=TRWIBEB1XXX"
-set "VAULT_AED_IBAN=GB64TRWI60846482676861"
-set "VAULT_AED_SWIFT=TRWIGB2LXXX"
+REM ── Vault Bank Receiving Accounts (blank until a new bank is configured) ──
+set "VAULT_USD_ACCOUNT="
+set "VAULT_USD_ROUTING="
+set "VAULT_USD_SWIFT="
+set "VAULT_EUR_IBAN="
+set "VAULT_EUR_BIC="
+set "VAULT_AED_IBAN="
+set "VAULT_AED_SWIFT="
 
 title PRIMESTACK POS 201.3 — Launcher
 
@@ -56,15 +56,12 @@ echo.
 echo   USD  Account    : %VAULT_USD_ACCOUNT%
 echo   USD  Routing    : %VAULT_USD_ROUTING%
 echo   USD  SWIFT      : %VAULT_USD_SWIFT%
-echo   USD  Bank       : Column National Association (via Wise)
 echo.
 echo   EUR  IBAN       : %VAULT_EUR_IBAN%
 echo   EUR  BIC        : %VAULT_EUR_BIC%
-echo   EUR  Bank       : Wise Payments Europe S.A., Brussels
 echo.
 echo   AED  IBAN       : %VAULT_AED_IBAN%
 echo   AED  SWIFT      : %VAULT_AED_SWIFT%
-echo   AED  Bank       : Wise Payments Limited, London
 echo.
 echo   Account Holder  : PRIMESTACK TECHNOLOGIES LLC
 echo.

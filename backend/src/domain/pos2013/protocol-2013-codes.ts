@@ -67,7 +67,6 @@ export enum SettlementEngineModule {    // 15
   BATCH_RECONCILE = 4,
 }
 export enum PayoutEngineModule {        // 16
-  WISE_BANK      = 1,
   BANK_WIRE      = 2,
   CRYPTO_ONCHAIN = 3,
   CARD_PAYOUT    = 4,
@@ -229,9 +228,6 @@ export const P2013 = {
   SETTLEMENT_RECONCILE_FAILED: '150503' as ProtocolCode,
 
   // ─── Payout Engine (16) ─────────────────────────────────────────────────
-  PAYOUT_WISE_STARTED:        '160101' as ProtocolCode,
-  PAYOUT_WISE_SUCCESS:        '160102' as ProtocolCode,
-  PAYOUT_WISE_FAILED:         '160103' as ProtocolCode,
   PAYOUT_BANK_WIRE_STARTED:   '160201' as ProtocolCode,
   PAYOUT_BANK_WIRE_SUCCESS:   '160202' as ProtocolCode,
   PAYOUT_CRYPTO_STARTED:      '160301' as ProtocolCode,

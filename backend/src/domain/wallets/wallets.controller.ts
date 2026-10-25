@@ -157,7 +157,7 @@ export class WalletsController {
 
   async createCustomer(req: Request, res: Response) {
     try {
-      const { name, email, phone, merchantId } = req.body || {};
+      const { name, email, phone, merchantId, pin } = req.body || {};
       const trimmedName = (name || '').trim();
       if (!trimmedName) return res.status(400).json({ error: 'Name is required' });
       const safeMerchant = merchantId ? String(merchantId).trim() : null;
@@ -173,6 +173,13 @@ export class WalletsController {
       );
 
       const wallet = await walletsService.getOrCreateWallet(id);
+
+      // Optional: issue a customer-portal PIN at creation time.
+      if (pin !== undefined && pin !== null && String(pin).trim() !== '') {
+        const { customerAuthService } = await import('../customerauth/customer-auth.service');
+        await customerAuthService.setPin(id, String(pin));
+      }
+
       const rows = (await db.query('SELECT * FROM customers WHERE id = ?', [id])).rows;
       const customer = rows[0];
       if (!customer) return res.status(500).json({ error: 'Customer record not found after insert' });
@@ -730,6 +737,40 @@ export class WalletsController {
       res.json(await walletsService.getCustomerProfile(customerId));
     } catch (e: any) {
       res.status(e.message.includes('not found') ? 404 : 500).json({ error: e.message });
+    }
+  }
+
+  // ── Customer portal PIN (merchant-issued) ──────────────────────────────────
+  async setCustomerPin(req: Request, res: Response) {
+    try {
+      const { customerId } = req.params;
+      const { pin } = req.body || {};
+      if (!customerId) return res.status(400).json({ error: 'customerId is required' });
+      if (!pin) return res.status(400).json({ error: 'pin is required' });
+      const { customerAuthService } = await import('../customerauth/customer-auth.service');
+      res.json(await customerAuthService.setPin(customerId, String(pin)));
+    } catch (e: any) {
+      res.status(e.message.includes('not found') ? 404 : 400).json({ error: e.message });
+    }
+  }
+
+  // Give every customer profile a PIN (each one unique), then return the whole
+  // list so the merchant can hand them out. Customers that already have a PIN keep it.
+  async issueAllCustomerPins(_req: Request, res: Response) {
+    try {
+      const { customerAuthService } = await import('../customerauth/customer-auth.service');
+      const { db } = await import('../../config/db');
+      const issued = await customerAuthService.ensureAllCustomerPins();
+      const rows = (await db.query(
+        'SELECT id, name, pin_code FROM customers ORDER BY created_at DESC'
+      )).rows as any[];
+      res.json({
+        ok: true,
+        issued,
+        customers: rows.map((r) => ({ id: r.id, name: r.name, pin: r.pin_code || null })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message || 'Failed to issue customer PINs' });
     }
   }
 

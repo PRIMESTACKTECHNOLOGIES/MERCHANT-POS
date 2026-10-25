@@ -1,5 +1,7 @@
 import { parseTlv } from './emv-tlv-parser';
 import { fallbackAids, resolveScheme } from '../../services/emv/emvAidRegistry';
+import { identifyAtr } from './atr-registry';
+import type { AtrIdentity } from './atr-registry';
 
 interface ReaderLike {
   reader: { name: string };
@@ -12,6 +14,8 @@ export type ACR122UCardFamily = 'MIFARE_CLASSIC' | 'EMV_ISO14443_4' | 'UNKNOWN';
 export interface ACR122UCardData {
   uid: string;
   atr: string;
+  /** Payment-card identity resolved from the ATR (domain/payments/atr-registry). */
+  atrIdentity?: AtrIdentity | null;
   type: string;
   /** Card family resolved via Get Data (FF CA) before any APDU branching. */
   cardFamily?: ACR122UCardFamily;
@@ -376,7 +380,10 @@ export class ACR122UReaderService {
    *   - ATS returned  → ISO 14443-4 / EMV contactless  → use ISO 7816-4 APDUs.
    *   - No ATS        → MIFARE Classic                  → use FF 82 / FF 86 / FF B0.
    */
-  private async detectCardFamily(reader: any, card: any): Promise<{ family: ACR122UCardFamily; ats: string }> {
+  private async detectCardFamily(
+    reader: any,
+    card: any,
+  ): Promise<{ family: ACR122UCardFamily; ats: string; identity: AtrIdentity | null }> {
     let ats = '';
 
     // 1) Get ATS via Get Data (FF CA 01 00 00). ISO 14443-4 cards answer 9000 + ATS.
@@ -389,23 +396,31 @@ export class ACR122UReaderService {
       /* Get Data unsupported — fall through to heuristics */
     }
 
+    // A registered ATR tells us what the card actually is, not just how it talks.
+    const atr = String(card?.atr || '').toUpperCase();
+    const identity = identifyAtr(atr);
+
     if (ats) {
-      return { family: 'EMV_ISO14443_4', ats };
+      return { family: 'EMV_ISO14443_4', ats, identity };
     }
 
     // 2) Fall back to the card tech hint reported by nfc-pcsc and the ATR.
     const typeHint = String(card?.type || '').toLowerCase();
-    const atr = String(card?.atr || '').toUpperCase();
-    if (/iso ?14443-?4|iso ?7816/.test(typeHint) || this.atrIndicatesIso14434(atr)) {
-      return { family: 'EMV_ISO14443_4', ats };
+    // An exact registry hit means a known payment (or payment-scheme) card. Such a
+    // card always carries a card application — it is never a MIFARE memory card —
+    // so it must not be misrouted to the FF 82/FF 86/FF B0 path. Prefix-only hits
+    // are too weak to decide routing on and are ignored here.
+    if (/iso ?14443-?4|iso ?7816/.test(typeHint) || this.atrIndicatesIso14434(atr)
+      || identity?.match === 'exact') {
+      return { family: 'EMV_ISO14443_4', ats, identity };
     }
 
     // 3) A UID with no ATS and no ISO 14443-4 hint is a MIFARE Classic card.
     if (/mifare/.test(typeHint) || card?.uid) {
-      return { family: 'MIFARE_CLASSIC', ats };
+      return { family: 'MIFARE_CLASSIC', ats, identity };
     }
 
-    return { family: 'UNKNOWN', ats };
+    return { family: 'UNKNOWN', ats, identity };
   }
 
   /** ATR heuristic: ISO 14443-4 cards carry tag indicators 0x78/0x80 in the ATR. */
@@ -797,6 +812,7 @@ export class ACR122UReaderService {
     // ── Card-type detection (FF CA) — MUST run before choosing a standard ───
     const detected = await this.detectCardFamily(reader, card);
     result.cardFamily = detected.family;
+    result.atrIdentity = detected.identity;
     if (detected.ats) {
       result.ats = detected.ats;
     }

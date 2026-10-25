@@ -264,7 +264,7 @@ export function SettlementsPage() {
       .then(d => {
         const accounts = d.accounts || [];
         const def = accounts.find((a: any) =>
-          /wise|column|transferwise/i.test(String(a.bank_name || '')) &&
+          /column/i.test(String(a.bank_name || '')) &&
           String(a.currency || '').toUpperCase() === 'USD'
         ) || accounts.find((a: any) => a.is_default) || accounts[0];
         if (def) setMerchantBankAccount(def);

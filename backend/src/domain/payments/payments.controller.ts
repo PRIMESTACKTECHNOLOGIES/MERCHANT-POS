@@ -227,6 +227,7 @@ export class PaymentsController {
           paymentCardReady: false,
           cardFamily: family || 'UNKNOWN',
           cardType: (card as any).type || null,
+          atrIdentity: (card as any).atrIdentity || null,
           error: (card as any).error || fallback
         });
       }

@@ -8,10 +8,11 @@ import { app } from "./app";
 import { initTables } from "./domain/setup/init_tables";
 import { initWsServer } from "./realtime/wsServer";
 import { startDeferredBroadcastWorker, stopDeferredBroadcastWorker } from "./workers/deferredBroadcast.worker";
-import { flushDb } from "./config/db";
+import { flushDbAsync } from "./config/db";
 import { startVaultReconciliationWorker, stopVaultReconciliationWorker } from "./workers/vaultReconciliation.worker";
 import { startVaultLiquidityWorker, stopVaultLiquidityWorker } from "./workers/vaultLiquidity.worker";
 import { ensureOperatorCards } from "./domain/vault/cardBalance.service";
+import { customerAuthService } from "./domain/customerauth/customer-auth.service";
 
 const PORT = parseInt(
   (process.env.PORT_OVERRIDE || process.env.PORT || '7000').toString(),
@@ -30,6 +31,13 @@ console.log('[server] DB path:', dbPath);
 
 const start = async () => {
   await initTables();
+  // Issue a portal PIN to every customer that does not have one yet.
+  try {
+    const issued = await customerAuthService.ensureAllCustomerPins();
+    if (issued > 0) console.log(`[Auth] Issued portal PINs to ${issued} customer(s)`);
+  } catch (e: any) {
+    console.error('[Auth] ensureAllCustomerPins failed:', e?.message || e);
+  }
   // Ensure operator card balance rows exist as ZERO-balance rows only.
   // Nothing is ever seeded — real money arrives only via a verified rail.
   try {
@@ -68,11 +76,11 @@ const start = async () => {
   startVaultLiquidityWorker();
 
   // Graceful shutdown
-  const shutdown = () => {
+  const shutdown = async () => {
     stopDeferredBroadcastWorker();
     stopVaultReconciliationWorker();
     stopVaultLiquidityWorker();
-    flushDb();
+    await flushDbAsync();
     server.close(() => process.exit(0));
   };
   process.once('SIGTERM', shutdown);

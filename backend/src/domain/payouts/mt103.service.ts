@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MT103 SWIFT Wire Generator
  * ─────────────────────────────────────────────────────────────────────────────
  * Generates ISO 15022 MT103 Single Customer Credit Transfer messages.
@@ -249,7 +249,7 @@ export function buildMt103FromPayout(params: {
   return {
     // Sender — your PRIMESTACK / internal acquirer details
     senderBic:     process.env.MT103_SENDER_BIC    || 'PRSTUS33XXX',
-    senderAccount: process.env.MT103_SENDER_ACCOUNT || '343612919064346',
+    senderAccount: process.env.MT103_SENDER_ACCOUNT || '',
     senderName:    process.env.MT103_SENDER_NAME    || 'PRIMESTACK TECHNOLOGIES LLC',
     senderAddressLines: (process.env.MT103_SENDER_ADDRESS || 'BUSINESS BAY,DUBAI, UAE').split(','),
 

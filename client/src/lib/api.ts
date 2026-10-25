@@ -57,6 +57,8 @@ export interface Customer {
   wallet_id?: string;
   wallet_code?: string;
   wallet_balance?: number;
+  /** Portal login PIN issued to this customer (shown to the merchant). */
+  portal_pin?: string | null;
   // KYC / identity
   id_type?: string;
   id_number?: string;
@@ -1260,6 +1262,20 @@ export async function deleteCustomer(customerId: string, confirmationName: strin
   });
   const data = await res.json().catch(() => ({} as any));
   if (!res.ok) throw new Error(data.error || 'Customer deletion failed');
+  return data;
+}
+
+export interface CustomerPinEntry {
+  id: string;
+  name: string;
+  pin: string | null;
+}
+
+/** Make sure every customer profile has a PIN, and return all of them for handout. */
+export async function issueAllCustomerPins(): Promise<{ ok: boolean; issued: number; customers: CustomerPinEntry[] }> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/customers/pins/issue-all`, { method: 'POST' });
+  const data = await res.json().catch(() => ({} as any));
+  if (!res.ok) throw new Error(data.error || 'Failed to issue customer PINs');
   return data;
 }
 

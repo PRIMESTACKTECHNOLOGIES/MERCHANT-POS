@@ -13,7 +13,6 @@
  *
  * Top-up endpoints (JWT required):
  *   POST /bank-wire                — Channel 1: SWIFT / SEPA / ACH wire
- *   POST /wise                     — Channel 2: Wise incoming transfer
  *   POST /crypto                   — Channel 3: USDT on-chain (TRC-20/BEP-20/ERC-20)
  *   POST /transak                  — Channel 4: Transak on-ramp (manual confirm)
  *   POST /cash                     — Channel 5: Cash deposit (operator-confirmed)
@@ -26,7 +25,6 @@ import {
   topupViaBankWire,
   confirmBankWireTopup,
   listPendingBankWires,
-  topupViaWise,
   topupViaCrypto,
   topupViaTransak,
   topupViaCash,
@@ -225,23 +223,23 @@ const toLoaderAccounts = (rows: BankAccountRow[]): LoaderAccount[] =>
 
 /**
  * The company's own receiving accounts, configured once in the environment as
- * WISE_RECEIVE_<CCY>_*. They belong to Primestack rather than to a merchant, so
+ * VAULT_RECEIVE_<CCY>_*. They belong to Primestack rather than to a merchant, so
  * they are not stored per merchant — but the loader sheet still has to print
  * the real IBAN / account number, never a description of which details to send.
  */
 function envReceiveAccounts(): BankAccountRow[] {
   const currencies = new Set<string>();
   for (const key of Object.keys(process.env)) {
-    const match = /^WISE_RECEIVE_([A-Z]{3})_/.exec(key);
+    const match = /^VAULT_RECEIVE_([A-Z]{3})_/.exec(key);
     if (match) currencies.add(match[1]);
   }
   const accounts: BankAccountRow[] = [];
   for (const currency of currencies) {
-    const get = (suffix: string) => (process.env[`WISE_RECEIVE_${currency}_${suffix}`] || '').trim();
+    const get = (suffix: string) => (process.env[`VAULT_RECEIVE_${currency}_${suffix}`] || '').trim();
     const accountHolder = get('ACCOUNT_HOLDER');
     if (!accountHolder) continue;
     accounts.push({
-      bank_name: get('BANK') || 'Wise',
+      bank_name: get('BANK') || '',
       account_holder: accountHolder,
       account_number: get('ACCOUNT') || get('ACCOUNT_NUMBER'),
       routing_number: get('ROUTING'),
@@ -353,9 +351,6 @@ export function listFundingMethods(bankAccounts: BankAccountRow[] = []): Funding
     };
   };
 
-  const wiseReceiving = toLoaderAccounts(
-    bankAccounts.filter((a) => /wise|transferwise/i.test(String(a.bank_name || ''))),
-  );
   const transakAddress = (process.env.VAULT_TRANSAK_WALLET_ADDRESS || '').trim();
   const cashBranch = (process.env.VAULT_CASH_BRANCH || '').trim();
 
@@ -365,28 +360,6 @@ export function listFundingMethods(bankAccounts: BankAccountRow[] = []): Funding
     wire('wire_ach', 'ACH transfer', 'USD domestic', { transferType: 'ACH' }),
     wire('wire_fedwire', 'Fedwire / RTGS', 'High-value USD / ZAR', { transferType: 'FEDWIRE' }),
     wire('wire_faster', 'Faster Payments', 'GBP domestic', { transferType: 'FASTER_PAYMENTS' }),
-
-    {
-      id: 'wise', title: 'Wise transfer', subtitle: 'Any Wise-supported currency', group: 'wallet', badge: 'Verified',
-      endpoint: '/api/vault/cardtopup/wise',
-      verifiedAgainst: 'Transfer fetched live from the Wise API; a transfer that is not completed is rejected.',
-      available: envSet('WISE_API_KEY'),
-      unavailableReason: envSet('WISE_API_KEY') ? undefined : 'Requires WISE_API_KEY to be set on this server.',
-      provideToLoader: [
-        'The vault Wise account details (account holder, account number or IBAN, and the currency) so they can send from their own Wise balance.',
-        'The exact amount and currency to send.',
-        'A reference you invent and hand over, so the transfer can be matched to this card.',
-        'The request to send you the Wise transfer ID once it is marked completed — a transfer still pending is rejected.',
-      ],
-      receiving: wiseReceiving,
-      receivingNote: wiseReceiving.length
-        ? undefined
-        : 'No Wise account is registered for this merchant yet — add it under Bank accounts so the loader has somewhere to send.',
-      fields: [
-        { name: 'transferId', label: 'Wise transfer ID', type: 'text', required: true, placeholder: 'e.g. 1234567890' },
-        { name: 'amount', label: 'Amount', type: 'number', required: true, placeholder: '0.00' },
-      ],
-    },
 
     crypto({
       id: 'usdt_tron', title: 'USDT — TRON (TRC-20)', subtitle: 'TRC-20 deposit',
@@ -580,33 +553,6 @@ router.get('/bank-wire/pending', async (_req: Request, res: Response) => {
   try {
     const wires = await listPendingBankWires();
     return res.json({ ok: true, count: wires.length, wires });
-  } catch (err: any) {
-    return handleErr(res, err);
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CHANNEL 2 — WISE
-// ═══════════════════════════════════════════════════════════════════════════
-/**
- * POST /api/card-topup/wise
- * Body: { cardId, currency, amount, transferId, note? }
- */
-router.post('/wise', async (req: Request, res: Response) => {
-  try {
-    const { cardId, currency, amount, transferId, note } = req.body || {};
-
-    if (!cardId || !currency || !amount || !transferId) {
-      return res.status(400).json({ ok: false, error: 'cardId, currency, amount and transferId are required' });
-    }
-
-    const result = await topupViaWise({
-      cardId: String(cardId), currency: String(currency),
-      amount: Number(amount), transferId: String(transferId),
-      note: note ? String(note) : undefined,
-    });
-
-    return res.status(result.ok ? 200 : 400).json(result);
   } catch (err: any) {
     return handleErr(res, err);
   }

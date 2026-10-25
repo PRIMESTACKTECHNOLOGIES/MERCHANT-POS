@@ -440,6 +440,7 @@ export default function CustomerWalletProfilePage() {
                   <div className="cwp-tbox cwp-scroll">
                     <h2 className="cwp-h2">// Account Info</h2>
                     <p className="cwp-p">ID: <span style={{ color: 'var(--green)', fontFamily: 'monospace', fontSize: 10 }}>{customer.id}</span></p>
+                    <p className="cwp-p">Portal PIN: <span style={{ color: 'var(--acid)', fontFamily: 'monospace', letterSpacing: 2 }}>{customer.portal_pin || 'N/A'}</span></p>
                     <p className="cwp-p">Phone: <span style={{ color: 'var(--green)' }}>{customer.phone || 'N/A'}</span></p>
                     <p className="cwp-p">KYC: <span style={{ color: kycStatusColor[kycStatus] || 'var(--muted)' }}>{kycStatus}</span></p>
                     <p className="cwp-p">Risk: <span style={{ color: riskColor[riskLevel] || 'var(--muted)' }}>{riskLevel}</span></p>
@@ -535,6 +536,12 @@ export default function CustomerWalletProfilePage() {
                 <div className="cwp-kyc-section">
                   <div className="cwp-kyc-title">▸ STATUS</div>
                   <div className="cwp-kyc-grid">
+                    <div className="cwp-kyc-field">
+                      <span className="cwp-kyc-label">Portal PIN</span>
+                      <span className="cwp-kyc-val" style={{ color: 'var(--acid)', fontFamily: 'monospace', letterSpacing: 3 }}>
+                        {customer.portal_pin || 'not issued'}
+                      </span>
+                    </div>
                     <div className="cwp-kyc-field">
                       <span className="cwp-kyc-label">KYC Status</span>
                       {kycEdit ? (

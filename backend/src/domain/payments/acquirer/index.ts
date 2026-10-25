@@ -1,6 +1,8 @@
 import { HttpAcquirerClient } from './http-acquirer.client';
+import { PspAcquirerClient } from './psp-acquirer.client';
 import { VaultBankAcquirerClient } from './vault-bank-acquirer.client';
 import { Iso8583AcquirerClient } from './iso8583-acquirer.client';
+import { acquirerConfig } from '../../../config/acquirer';
 import { CardNetwork } from './schemeNetwork';
 import { SchemeRoute, resolveRoute } from './schemeRouting';
 import { AcquirerAuthRequest, AcquirerAuthResponse, AcquirerCaptureRequest, AcquirerCaptureResponse } from './acquirer.types';
@@ -40,6 +42,12 @@ function httpBaseUrl(route: SchemeRoute): string | undefined {
  * connection keeps the local vault-bank pipe protocol.
  */
 export function createAcquirerClient(network?: CardNetwork): AcquirerClient {
+  // A configured PSP outranks every scheme route: it is the only transport that
+  // actually collects real funds, so nothing may fall back past it.
+  if (acquirerConfig.pspBaseUrl) {
+    return new PspAcquirerClient();
+  }
+
   const route = resolveRoute(network ?? 'OTHER');
 
   if (!route.dedicated) {

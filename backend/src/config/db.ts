@@ -49,12 +49,67 @@ let _flushTimer: any = null;   // debounce timer for disk flush
 let _flushCount = 0;           // count writes between flushes
 let _inTransaction = false;    // true between BEGIN and COMMIT/ROLLBACK
 let _txnStartedAt = 0;         // epoch ms of the open transaction
+let _seq = 0;                  // bumped on every write, so a background flush knows it is stale
+let _writeInFlight: Promise<void> | null = null; // non-null while an async flush is running
 
 /**
  * Safety valve: if a caller opens a transaction and never ends it, we still
  * flush after this long so writes can never be stranded in RAM forever.
  */
 const TXN_FLUSH_CAP_MS = 15000;
+
+/**
+ * Local-development flush tuning. 0 (the default) keeps the original behaviour:
+ * every write statement rewrites the whole DB file synchronously.
+ *
+ * Set DB_FLUSH_DEBOUNCE_MS when the DB file sits on a slow disk (this project is
+ * developed off a removable USB drive that writes at <1 MB/s, so one 20 MB
+ * rewrite takes ~30s). Bursts of writes are then coalesced into a single flush
+ * that runs in the background, instead of one freeze-the-event-loop write per
+ * statement. Must stay unset in production.
+ */
+const FLUSH_DEBOUNCE_MS = Math.max(0, Number(process.env.DB_FLUSH_DEBOUNCE_MS) || 0);
+
+/**
+ * Every flush writes to a sibling temp file first and then renames it over the
+ * real DB. writeFile alone truncates the target, so a kill or power loss during
+ * the write leaves a half-written — i.e. corrupt — database behind. rename() is
+ * atomic, so the DB file is always either the old or the new complete image.
+ */
+const DB_TMP_PATH = `${DB_PATH}.tmp`;
+
+/** Rewrite the whole DB file on the calling thread. */
+function flushToDiskSync() {
+  const data: Uint8Array = _db.export();
+  fs.writeFileSync(DB_TMP_PATH, Buffer.from(data));
+  fs.renameSync(DB_TMP_PATH, DB_PATH);
+  _dirty = false;
+}
+
+/**
+ * Rewrite the DB file off the main thread so a slow disk cannot stall the HTTP
+ * server. Writes made while the flush is running are picked up by the loop, so
+ * the file always converges on the newest state.
+ */
+function startBackgroundFlush() {
+  if (_writeInFlight || !_db) return;
+  _writeInFlight = (async () => {
+    try {
+      while (_dirty) {
+        const seq = _seq;
+        const data: Uint8Array = _db.export();
+        await fs.promises.writeFile(DB_TMP_PATH, Buffer.from(data));
+        await fs.promises.rename(DB_TMP_PATH, DB_PATH);
+        // Only clear the flag if nothing was written during the await.
+        if (seq === _seq) _dirty = false;
+      }
+    } catch (e) {
+      console.error('[DB] Flush error:', e);
+    } finally {
+      _writeInFlight = null;
+    }
+  })();
+}
 
 /**
  * Persist in-memory DB to disk — flush immediately on every write to prevent data loss.
@@ -69,9 +124,7 @@ const TXN_FLUSH_CAP_MS = 15000;
 function schedulePersist(force = false) {
   _dirty = true;
   _flushCount++;
-
-  // Always flush immediately — never debounce on Render where process can be killed anytime
-  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+  _seq++;
 
   if (_inTransaction && !force) {
     if (Date.now() - _txnStartedAt < TXN_FLUSH_CAP_MS) return;
@@ -79,11 +132,26 @@ function schedulePersist(force = false) {
     _inTransaction = false;
   }
 
+  // Slow-disk mode (local dev only): collapse a burst of writes into one flush.
+  if (FLUSH_DEBOUNCE_MS > 0 && !force) {
+    if (_flushTimer) return; // a flush is already queued for this burst
+    _flushTimer = setTimeout(() => {
+      _flushTimer = null;
+      schedulePersist(true);
+    }, FLUSH_DEBOUNCE_MS);
+    return;
+  }
+
+  // Always flush immediately — never debounce on Render where process can be killed anytime
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+
   if (_db) {
+    if (FLUSH_DEBOUNCE_MS > 0) {
+      startBackgroundFlush();
+      return;
+    }
     try {
-      const data: Uint8Array = _db.export();
-      fs.writeFileSync(DB_PATH, Buffer.from(data));
-      _dirty = false;
+      flushToDiskSync();
     } catch (e) {
       console.error('[DB] Flush error:', e);
       // Retry once after 100ms
@@ -91,9 +159,7 @@ function schedulePersist(force = false) {
         _flushTimer = null;
         if (_dirty && _db) {
           try {
-            const data: Uint8Array = _db.export();
-            fs.writeFileSync(DB_PATH, Buffer.from(data));
-            _dirty = false;
+            flushToDiskSync();
           } catch (e2) {
             console.error('[DB] Flush retry error:', e2);
           }
@@ -106,11 +172,25 @@ function schedulePersist(force = false) {
 /** Flush immediately (called on graceful shutdown) */
 export function flushDb() {
   if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+  // A background flush may be rewriting the file right now; let it finish and
+  // then persist the newest state, so stale bytes can never land last on disk.
+  if (_writeInFlight) { void flushDbAsync(); return; }
   if (_dirty && _db) {
     try {
-      const data: Uint8Array = _db.export();
-      fs.writeFileSync(DB_PATH, Buffer.from(data));
-      _dirty = false;
+      flushToDiskSync();
+    } catch (e) {
+      console.error('[DB] Flush error on shutdown:', e);
+    }
+  }
+}
+
+/** Await any in-flight background flush, then persist the newest state. */
+export async function flushDbAsync(): Promise<void> {
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+  try { if (_writeInFlight) await _writeInFlight; } catch { /* logged by the flush itself */ }
+  if (_dirty && _db) {
+    try {
+      flushToDiskSync();
     } catch (e) {
       console.error('[DB] Flush error on shutdown:', e);
     }
@@ -238,6 +318,7 @@ async function getDb(): Promise<any> {
     email TEXT,
     phone TEXT,
     wallet_code TEXT,
+    pin_hash TEXT,
     id_type TEXT,
     id_number TEXT,
     id_expiry TEXT,
@@ -874,7 +955,7 @@ async function getDb(): Promise<any> {
                WHERE currency = vault_accounts.currency AND status = 'COMPLETED'
              ), 0),
              updated_at = ?
-       WHERE id IN ('PROC-VAULT-USD-002','PROC-VAULT-EUR-001','VAULT-WISE-EUR-001')
+       WHERE id IN ('PROC-VAULT-USD-002','PROC-VAULT-EUR-001')
     `, [NOW_ISO]);
   } catch (_) {}
 
@@ -1035,6 +1116,9 @@ async function getDb(): Promise<any> {
     ['vault_payouts',             'updated_at TEXT'],
     ['customer_wallets',           'wallet_code TEXT'],
     ['merchant_pos_settlements',   'settled_at TEXT'],
+    // Links a customer wallet credit to the settlement that produced it, so the
+    // settlement worker can tell "already funded" from "funded twice".
+    ['wallet_transactions',        'settlement_id TEXT'],
     ['merchant_crypto_withdrawals','network TEXT'],
     ['crypto_transactions',        'provider_mode TEXT'],
     ['pos2013_transactions',       'updated_at TEXT DEFAULT CURRENT_TIMESTAMP'],
@@ -1163,6 +1247,8 @@ async function getDb(): Promise<any> {
   }
 
   const walletCardGuarantees: Array<[string, string]> = [
+    // Customer portal login PIN (bcrypt hash) — added for the customer self-service dashboard.
+    ['customers', 'pin_hash TEXT'],
     ['customer_wallets', 'card_id TEXT'],
     ['customer_wallets', 'offline_balance REAL NOT NULL DEFAULT 0'],
     ['customer_wallets', 'offline_limit REAL NOT NULL DEFAULT 0'],

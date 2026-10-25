@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { io, type Socket } from 'socket.io-client';
 import './WalletsPage.css';
 import {
-  getCustomers, createCustomer, updateCustomerKYC,
+  getCustomers, createCustomer, updateCustomerKYC, deleteCustomer, issueAllCustomerPins,
   fetchSettings,
   getWalletBalance, getWalletTransactions, getCustomerWalletBalances, topupWalletWithCard, debitWallet,
   walletTransfer,
@@ -18,6 +18,7 @@ import {
   transakSendUserOtp, transakVerifyUserOtp, transakGetUserLimits, transakGetUserDetails, transakRefreshUserAccessToken, transakLogoutUser, transakOnboardUser, transakVerifyWalletAddress,
   checkBackendHealth,
   type Customer, type WalletBalance, type WalletTransaction, type CustomerWalletBalance,
+  type CustomerPinEntry,
   type BankAccount, type BankPayout,
   type CryptoWallet, type CryptoTransaction, type MerchantWallet, type MerchantWalletTransaction, type BankTransferTransaction,
   type MerchantBankAccount, type MerchantPayout,
@@ -142,6 +143,9 @@ export const WalletsPage = () => {
   const [selId, setSelId] = useState<string|null>(null);
   const socketRef = useRef<Socket | null>(null);
   const [loadingCust, setLoadingCust] = useState(true);
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
+  const [allPins, setAllPins] = useState<CustomerPinEntry[] | null>(null);
+  const [pinsBusy, setPinsBusy] = useState(false);
   const [balance, setBalance] = useState<WalletBalance>({ balance:0, currency:'USD' });
   const [walletTxns, setWalletTxns] = useState<WalletTransaction[]>([]);
   // Customer wallets are multi-currency too. Choosing a currency here swaps the
@@ -498,6 +502,43 @@ export const WalletsPage = () => {
 
   // Handlers
   // Handlers
+  // Delete a customer straight from the list (same guards as the profile page).
+  const handleDeleteCustomer = async (c: Customer) => {
+    const confirmation = window.prompt(
+      `Type the exact customer name to permanently delete "${c.name}". Customers with funds or financial history cannot be deleted.`
+    );
+    if (confirmation === null) return;
+    setDeleteBusyId(c.id);
+    try {
+      await deleteCustomer(c.id, confirmation);
+      setCustomers(prev => prev.filter(x => x.id !== c.id));
+      setSelId(prev => (prev === c.id ? null : prev));
+      addNotification('Customer Deleted', `${c.name} was permanently deleted.`, 'success');
+    } catch (e: any) {
+      addNotification('Delete Failed', e.message || 'Customer deletion failed', 'error');
+    } finally {
+      setDeleteBusyId(null);
+    }
+  };
+
+  // Guarantee every customer profile has a PIN, then show them all for handout.
+  const handleIssueAllPins = async () => {
+    setPinsBusy(true);
+    try {
+      const res = await issueAllCustomerPins();
+      setAllPins(res.customers || []);
+      addNotification(
+        'Customer PINs',
+        res.issued > 0 ? `${res.issued} missing PIN(s) issued.` : 'Every customer already has a PIN.',
+        'success'
+      );
+    } catch (e: any) {
+      addNotification('PIN Issue Failed', e.message || 'Could not issue customer PINs', 'error');
+    } finally {
+      setPinsBusy(false);
+    }
+  };
+
   const handleCreateCustomer = () => act(async () => {
     const snapF = { ...f };
     const formName  = (snapF.name  || '').trim();
@@ -1229,18 +1270,38 @@ export const WalletsPage = () => {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Customer list */}
         <div className="lg:col-span-1 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-          <h2 className="font-bold text-gray-700 mb-3 text-xs uppercase tracking-wide">Customers</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-gray-700 text-xs uppercase tracking-wide">Customers</h2>
+            <button
+              type="button"
+              onClick={handleIssueAllPins}
+              disabled={pinsBusy}
+              title="Give every customer profile a PIN"
+              className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-50"
+            >
+              {pinsBusy ? '…' : 'ISSUE PINs'}
+            </button>
+          </div>
           {loadingCust
             ? [1,2,3].map(i=><div key={i} className="h-10 bg-gray-100 rounded animate-pulse mb-1"/>)
             : customers.length === 0
             ? <p className="text-sm text-gray-400 text-center py-4">No customers yet</p>
             : customers.map(c => (
-              <div key={c.id} className={`rounded-lg mb-1 text-sm transition-all ${selId===c.id?'bg-blue-50 border border-blue-200':'border border-transparent hover:bg-gray-50'}`}>
+              <div key={c.id} className={`relative rounded-lg mb-1 text-sm transition-all ${selId===c.id?'bg-blue-50 border border-blue-200':'border border-transparent hover:bg-gray-50'}`}>
                 <button onClick={() => setSelId(c.id)}
-                  className="w-full text-left p-3">
+                  className="w-full text-left p-3 pr-9">
                   <div className={`font-semibold ${selId===c.id?'text-blue-700':'text-gray-700'}`}>{c.name?.trim() || <span className="text-red-500 italic">(Unnamed Customer)</span>}</div>
                   {c.email && <div className="text-xs text-gray-400">{c.email}</div>}
                   {c.phone && <div className="text-xs text-gray-400">📞 {c.phone}</div>}
+                </button>
+                <button
+                  type="button"
+                  title="Delete customer"
+                  onClick={() => handleDeleteCustomer(c)}
+                  disabled={deleteBusyId === c.id}
+                  className="absolute top-2 right-2 rounded-md border border-transparent px-2 py-1 text-xs font-semibold text-red-500 hover:bg-red-50 hover:border-red-200 disabled:opacity-50"
+                >
+                  {deleteBusyId === c.id ? '…' : '✕'}
                 </button>
                 {selId===c.id && (
                   <div className="px-3 pb-2">
@@ -1253,6 +1314,26 @@ export const WalletsPage = () => {
               </div>
             ))
           }
+          {allPins && (
+            <div className="mt-3 border-t border-gray-200 pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Portal PINs</span>
+                <button
+                  type="button"
+                  onClick={() => setAllPins(null)}
+                  className="text-[11px] text-gray-400 hover:text-gray-600"
+                >close</button>
+              </div>
+              <div className="max-h-56 overflow-auto space-y-1">
+                {allPins.map(p => (
+                  <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate text-gray-600">{p.name?.trim() || '(Unnamed Customer)'}</span>
+                    <span className="font-mono tracking-widest text-gray-900">{p.pin || 'N/A'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {sel ? (
@@ -1284,7 +1365,7 @@ export const WalletsPage = () => {
                 {merchantCurrencyWallets.length > 0 && (
                   <div className="mt-6">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Currency balances</div>
-                    <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
                       <table className="min-w-full text-left text-sm">
                         <thead>
                           <tr className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
@@ -1343,7 +1424,7 @@ export const WalletsPage = () => {
                 {customerCurrencyWallets.length > 0 && (
                   <div className="mt-4">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Currency balances</div>
-                    <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
+                    <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200">
                       <table className="min-w-full text-left text-sm">
                         <thead>
                           <tr className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
@@ -1424,7 +1505,7 @@ export const WalletsPage = () => {
                       <div className="mt-1 text-xs text-slate-500">Use <span className="font-semibold">🏦 Merchant Bank Payout</span> above to send settled funds to a bank account.</div>
                     </div>
                   : <div className="overflow-hidden rounded-xl border border-slate-200">
-                      <div className="max-h-[540px] overflow-y-auto">
+                      <div className="max-h-[540px] overflow-y-auto overflow-x-auto">
                         <table className="w-full text-left text-sm">
                           <thead className="sticky top-0 bg-gradient-to-br from-slate-50 to-slate-100/70 text-[11px] uppercase tracking-[0.18em] text-slate-600 z-10 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
                             <tr>
@@ -1757,7 +1838,7 @@ export const WalletsPage = () => {
                     </div>
                     <div className="text-xs text-slate-400">Atomic Â· Offline-hardened Â· Ledger-attested</div>
                   </div>
-                  <div className="grid grid-cols-5 gap-2 items-center">
+                  <div className="grid grid-cols-1 gap-2 items-center sm:grid-cols-3 lg:grid-cols-5">
                     {[
                       {label:'Customer Card', sub:'Debit / Credit', icon:'ðŸ’³', amt:null, color:'from-sky-500/20 to-sky-500/5', border:'border-sky-400/30'},
                       {label:'Top-Up Engine', sub:'Auth â†’ Ledger', icon:'âš¡', amt:null, color:'from-violet-500/20 to-violet-500/5', border:'border-violet-400/30'},
@@ -1888,8 +1969,8 @@ export const WalletsPage = () => {
                       </button>
                     </div>
                   ) : (
-                    <div className="divide-y divide-slate-50">
-                      <div className="grid grid-cols-12 gap-2 px-5 py-2.5 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 bg-slate-50/50">
+                    <div className="divide-y divide-slate-50 overflow-x-auto">
+                      <div className="grid min-w-[720px] grid-cols-12 gap-2 px-5 py-2.5 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 bg-slate-50/50">
                         <div className="col-span-3">Asset</div>
                         <div className="col-span-3 text-right">Balance</div>
                         <div className="col-span-2 text-right">Spot Rate</div>
@@ -1900,7 +1981,7 @@ export const WalletsPage = () => {
                         const price = coinPriceMap[w.crypto_coin] || 0;
                         const value = Number(w.balance) * price;
                         return (
-                          <div key={w.id || `vault-${index}`} className="grid grid-cols-12 gap-2 px-5 py-3.5 items-center hover:bg-slate-50/50 transition">
+                          <div key={w.id || `vault-${index}`} className="grid min-w-[720px] grid-cols-12 gap-2 px-5 py-3.5 items-center hover:bg-slate-50/50 transition">
                             <div className="col-span-3 flex items-center gap-3">
                               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-900 to-slate-700 flex items-center justify-center text-white text-lg shadow-sm">
                                 <CoinLogo coin={w.crypto_coin} size={32}/>
@@ -2115,7 +2196,7 @@ export const WalletsPage = () => {
                     {inp('address_line1','Address Line 1')}
                     {inp('address_line2','Address Line 2')}
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     {inp('city','City')}
                     {inp('postal_code','Postal Code')}
                     {inp('country','Country')}

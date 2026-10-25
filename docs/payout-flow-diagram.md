@@ -18,7 +18,7 @@ flowchart TD
     J --> K[Debit merchant wallet]
     K --> L[Payout helper]
     L --> M[Payout provider service]
-    M --> N[Wise / external bank provider]
+    M --> N[External bank provider]
     N --> O[Funds sent to bank destination]
 
     subgraph Files

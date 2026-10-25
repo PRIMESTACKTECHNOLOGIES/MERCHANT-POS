@@ -24,6 +24,19 @@ export interface MerchantWalletBalance {
   balance: number;
 }
 
+// merchant_settings predates created_at and older databases never had it, while the
+// profile queries below need it. Add it on first use so every database self-heals.
+let profileColumnsEnsured: Promise<void> | null = null;
+function ensureProfileColumns(): Promise<void> {
+  if (!profileColumnsEnsured) {
+    profileColumnsEnsured = db
+      .query(`ALTER TABLE merchant_settings ADD COLUMN created_at TEXT`)
+      .then(() => undefined)
+      .catch(() => undefined); // column already present, or table missing — ignore
+  }
+  return profileColumnsEnsured;
+}
+
 export interface MerchantProfile {
   merchantId: string;
   merchantName: string;
@@ -102,12 +115,13 @@ export class MerchantsService {
   }
 
   async listMerchantProfiles(): Promise<MerchantProfile[]> {
+    await ensureProfileColumns();
     const settings = await db.query(
       `SELECT merchant_id, merchant_name, support_email, test_mode, license_number, tax_id,
               merchant_address, merchant_phone, bank_name, bank_account_holder, bank_iban, bank_swift_code,
-              created_at, updated_at
+              COALESCE(created_at, updated_at) AS created_at, updated_at
          FROM merchant_settings
-        ORDER BY created_at ASC`
+        ORDER BY COALESCE(created_at, updated_at) ASC`
     );
 
     const wallets = await db.query(
@@ -148,10 +162,11 @@ export class MerchantsService {
   }
 
   async getMerchantProfile(merchantId: string): Promise<MerchantProfile> {
+    await ensureProfileColumns();
     const res = await db.query(
       `SELECT merchant_id, merchant_name, support_email, test_mode, license_number, tax_id,
               merchant_address, merchant_phone, bank_name, bank_account_holder, bank_iban, bank_swift_code,
-              created_at, updated_at
+              COALESCE(created_at, updated_at) AS created_at, updated_at
          FROM merchant_settings WHERE merchant_id = ?`,
       [merchantId]
     );

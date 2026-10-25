@@ -20,14 +20,14 @@ export interface BankPayoutResult {
 export async function submitBankPayout(request: BankPayoutRequest): Promise<BankPayoutResult> {
   const provider = (process.env.BANK_PAYOUT_PROVIDER || 'external').trim().toLowerCase();
   const apiUrl = process.env.BANK_PAYOUT_API_URL?.trim();
-  const apiKey = process.env.BANK_PAYOUT_API_KEY?.trim() || process.env.WISE_API_KEY?.trim();
+  const apiKey = process.env.BANK_PAYOUT_API_KEY?.trim();
 
   if (!apiUrl) {
     throw new Error('BANK_PAYOUT_API_URL is required for live payouts.');
   }
 
   if (!apiKey) {
-    throw new Error('BANK_PAYOUT_API_KEY or WISE_API_KEY is required for live payouts.');
+    throw new Error('BANK_PAYOUT_API_KEY is required for live payouts.');
   }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

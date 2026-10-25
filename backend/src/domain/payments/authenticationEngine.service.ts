@@ -7,7 +7,6 @@
  *   • ISO 8583 0100/0200 — missing DE12, DE25, DE43; CVV in correct field
  *   • SEPA pain.001      — complete GrpHdr + Dbtr side + execution date
  *   • SWIFT MT103        — correct :32A: date, :23B:, :71A:, :50K: with account
- *   • Wise API           — full address for all corridors, not hardcoded Delaware
  *   • Inbound credits    — cryptographic proof required before any wallet credit
  *
  * Every method is pure (no side effects) — callers apply the enriched payload.
@@ -23,7 +22,7 @@ const MERCHANT_CITY   = process.env.MERCHANT_CITY?.trim()    || 'Wilmington';
 const MERCHANT_COUNTRY= process.env.MERCHANT_COUNTRY?.trim() || 'US';
 const MERCHANT_MCC    = process.env.MCC?.trim()              || '5999';
 const MERCHANT_IBAN   = process.env.MERCHANT_IBAN?.trim()    || process.env.VAULT_IBAN?.trim()        || '';
-const MERCHANT_BIC    = process.env.MERCHANT_BIC?.trim()     || process.env.VAULT_BIC?.trim()         || 'TRWIUS35XXX';
+const MERCHANT_BIC    = process.env.MERCHANT_BIC?.trim()     || process.env.VAULT_BIC?.trim()         || '';
 const PROCESSOR_ID    = process.env.PROCESSOR_KEY_ID?.trim() || 'PRIMESTACK-B4C329F83258';
 const ISSUER_SECRET   = process.env.ISSUER_SECRET_KEY?.trim()|| 'PRIMESTACK-ISSUER-KEY-9f3a2b1c8d4e5f6a';
 
@@ -211,7 +210,7 @@ export function buildFullSepaXml(
   const debtorBic  = xmlEsc(opts.debtorBic  || MERCHANT_BIC);
 
   if (!debtorIban) {
-    throw new Error('SEPA requires MERCHANT_IBAN — set it in .env (e.g. BE19905861593312)');
+    throw new Error('SEPA requires MERCHANT_IBAN — set it in .env');
   }
 
   const pmtInfId = `PMT-${msgId}`;
@@ -387,155 +386,6 @@ export function buildMt103Batch(transactions: Mt103Transaction[]): string {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 4. WISE RECIPIENT ENRICHMENT
-// ════════════════════════════════════════════════════════════════════════════
-
-export interface WiseRecipientInput {
-  targetName:       string;
-  targetAccount:    string;    // account number or IBAN
-  targetBic:        string;    // ABA routing (USD) or SWIFT/BIC (others)
-  currency:         string;
-  targetCountry?:   string;
-  targetCity?:      string;
-  targetPostCode?:  string;
-  targetState?:     string;
-  targetAddress?:   string;
-  legalType?:       'PRIVATE' | 'BUSINESS';
-}
-
-/**
- * Build a complete Wise recipient payload for any corridor.
- *
- * Fixes vs. existing wiseCollect.service.ts:
- *  - USD: no longer hardcoded to Delaware — uses caller-provided address
- *  - EUR: adds full address block (required for many corridors)
- *  - AED (UAE): uses 'emirates' type with IBAN
- *  - GBP: uses 'sort_code' type
- *  - Other: falls back to 'swift_code' with full address
- *  - legalType is now configurable (PRIVATE vs BUSINESS)
- */
-export function buildWiseRecipientPayload(
-  profileId: number,
-  input: WiseRecipientInput
-): Record<string, unknown> {
-  const ccy      = input.currency.toUpperCase();
-  const legalType = input.legalType || 'BUSINESS';
-  const country  = (input.targetCountry || deriveCountryFromCurrency(ccy)).toUpperCase();
-  const city     = input.targetCity    || 'N/A';
-  const postCode = input.targetPostCode || '00000';
-  const state    = input.targetState   || '';
-  const address  = input.targetAddress || input.targetName;
-
-  const base = {
-    profile:           profileId,
-    accountHolderName: input.targetName,
-    currency:          ccy,
-    legalType,
-    details:           {} as Record<string, unknown>,
-  };
-
-  switch (ccy) {
-    case 'USD': {
-      // US ACH / Wire — requires ABA routing + address with state
-      base.details = {
-        abartn:        input.targetBic,
-        accountNumber: input.targetAccount,
-        accountType:   'CHECKING',
-        address: {
-          country,
-          state:     state || 'NY',    // default NY, not hardcoded Delaware
-          city:      city  || 'New York',
-          firstLine: address,
-          postCode:  postCode || '10001',
-        },
-      };
-      return { ...base, type: 'aba' };
-    }
-
-    case 'EUR': {
-      // SEPA — IBAN + optional BIC
-      base.details = {
-        IBAN: input.targetAccount,
-        ...(input.targetBic ? { BIC: input.targetBic } : {}),
-        address: { country, city, firstLine: address, postCode },
-      };
-      return { ...base, type: 'iban' };
-    }
-
-    case 'GBP': {
-      // UK — sort code or IBAN
-      const isIban = /^GB\d{2}[A-Z]{4}/i.test(input.targetAccount);
-      if (isIban) {
-        base.details = { IBAN: input.targetAccount };
-        return { ...base, type: 'iban' };
-      }
-      // Sort code format: 12-3456 or 123456
-      const sortCode = input.targetBic.replace(/\D/g, '');
-      base.details = {
-        sortCode,
-        accountNumber: input.targetAccount,
-        address: { country: 'GB', city, firstLine: address, postCode },
-      };
-      return { ...base, type: 'sort_code' };
-    }
-
-    case 'AED': {
-      // UAE — emirates type, IBAN required
-      base.details = {
-        IBAN: input.targetAccount,
-        address: { country: 'AE', city: city || 'Dubai', firstLine: address, postCode },
-      };
-      return { ...base, type: 'emirates' };
-    }
-
-    case 'SGD': {
-      base.details = {
-        accountNumber: input.targetAccount,
-        bankCode:      input.targetBic,
-        address: { country: 'SG', city: city || 'Singapore', firstLine: address, postCode },
-      };
-      return { ...base, type: 'singapore' };
-    }
-
-    case 'INR': {
-      base.details = {
-        ifscCode:      input.targetBic,
-        accountNumber: input.targetAccount,
-      };
-      return { ...base, type: 'indian' };
-    }
-
-    case 'MYR': {
-      base.details = {
-        accountNumber: input.targetAccount,
-        bankCode:      input.targetBic,
-        address: { country: 'MY', city: city || 'Kuala Lumpur', firstLine: address, postCode },
-      };
-      return { ...base, type: 'malaysian' };
-    }
-
-    default: {
-      // Generic SWIFT — international wire
-      base.details = {
-        swiftCode:     input.targetBic,
-        accountNumber: input.targetAccount,
-        address: { country, city, firstLine: address, postCode },
-      };
-      return { ...base, type: 'swift_code' };
-    }
-  }
-}
-
-function deriveCountryFromCurrency(ccy: string): string {
-  const map: Record<string, string> = {
-    USD:'US', EUR:'DE', GBP:'GB', AED:'AE', SGD:'SG',
-    INR:'IN', MYR:'MY', JPY:'JP', CNY:'CN', AUD:'AU',
-    CAD:'CA', CHF:'CH', HKD:'HK', ZAR:'ZA',
-  };
-  return map[ccy.toUpperCase()] || 'US';
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // 5. INBOUND CREDIT AUTHENTICATION
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -681,7 +531,7 @@ export function generateCreditProof(
 // ════════════════════════════════════════════════════════════════════════════
 
 export interface OutboundPaymentInstruction {
-  type:           'SEPA' | 'SWIFT' | 'ACH' | 'WISE' | 'CRYPTO' | 'ISO8583';
+  type:           'SEPA' | 'SWIFT' | 'ACH' | 'CRYPTO' | 'ISO8583';
   amount:         number;
   currency:       string;
   reference:      string;
@@ -740,18 +590,6 @@ export function enrichOutboundPayment(instruction: OutboundPaymentInstruction): 
       }
       break;
     }
-    case 'WISE': {
-      if (!instruction.beneficiaryName?.trim())    missingFields.push('beneficiaryName');
-      if (!instruction.beneficiaryAccount?.trim())  missingFields.push('beneficiaryAccount');
-      if (!instruction.beneficiaryBic?.trim())      missingFields.push('beneficiaryBic (ABA routing or SWIFT/BIC)');
-      if (instruction.currency === 'USD' && !instruction.beneficiaryState) {
-        warnings.push('USD Wise transfer: beneficiaryState not provided — will default to NY');
-      }
-      if (!['USD','EUR','GBP','AED','SGD','INR','MYR'].includes(instruction.currency)) {
-        warnings.push(`Currency ${instruction.currency} uses generic SWIFT corridor on Wise — verify recipient details`);
-      }
-      break;
-    }
     case 'ISO8583': {
       if (!instruction.beneficiaryAccount) warnings.push('No PAN provided for ISO 8583');
       if (!instruction.merchantId)         warnings.push('No merchantId — DE42 will use default');
@@ -799,8 +637,6 @@ export const authenticationEngine = {
   // SWIFT
   buildMt103Message,
   buildMt103Batch,
-  // Wise
-  buildWiseRecipientPayload,
   // Inbound
   authenticateInboundCredit,
   generateCreditProof,

@@ -6,7 +6,6 @@
  *
  * Channels:
  *   1. BANK_WIRE     — SWIFT / SEPA / ACH incoming bank transfer
- *   2. WISE          — Wise transfer (incoming to Wise balance)
  *   3. CRYPTO        — USDT/TRON on-chain deposit (TRC-20, BEP-20, ERC-20)
  *   4. TRANSAK       — Transak fiat on-ramp (card/bank → crypto → card)
  *   5. CASH          — Cash deposit confirmed by operator
@@ -220,70 +219,6 @@ async function ensureWireConfirmationsTable(): Promise<void> {
     sender_name TEXT, sender_bank TEXT, transfer_type TEXT, confirmed_at TEXT, note TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING', confirmed_by TEXT, created_at TEXT
   )`).catch(() => {});
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// CHANNEL 2 — WISE INCOMING TRANSFER
-// ─────────────────────────────────────────────────────────────────────────────
-// Customer sends funds to the Wise account. We verify the transfer via
-// Wise API (GET /v1/transfers/{id}) before crediting the card.
-// ═════════════════════════════════════════════════════════════════════════════
-export interface WiseTopupInput {
-  cardId:      string;
-  currency:    string;
-  amount:      number;
-  transferId:  string;   // Wise transfer ID
-  note?:       string;
-}
-
-export async function topupViaWise(input: WiseTopupInput): Promise<TopupResult> {
-  const wiseApiKey = (process.env.WISE_API_KEY || '').trim();
-  const wiseApiUrl = (process.env.WISE_API_URL || 'https://api.wise.com').replace(/\/+$/, '');
-  if (!wiseApiKey) {
-    return { ok: false, channel: 'wise', cardId: input.cardId, currency: input.currency,
-      amount: input.amount, providerRef: input.transferId, balanceAfter: 0,
-      message: 'WISE_API_KEY not configured', error: 'WISE_NOT_CONFIGURED' };
-  }
-  if (!input.transferId?.trim() || input.amount <= 0) {
-    return { ok: false, channel: 'wise', cardId: input.cardId, currency: input.currency,
-      amount: input.amount, providerRef: '', balanceAfter: 0,
-      message: 'transferId and positive amount are required', error: 'VALIDATION_ERROR' };
-  }
-
-  // Verify with Wise API
-  try {
-    const resp = await axios.get(`${wiseApiUrl}/v1/transfers/${input.transferId}`, {
-      headers: { Authorization: `Bearer ${wiseApiKey}` },
-      timeout: 10000,
-    });
-    const transfer = resp.data;
-    const status   = String(transfer.status || '').toUpperCase();
-    const confirmedStatuses = ['OUTGOING_PAYMENT_SENT', 'FUNDS_CONVERTED', 'PROCESSING', 'COMPLETED'];
-    if (!confirmedStatuses.some(s => status.includes(s))) {
-      return { ok: false, channel: 'wise', cardId: input.cardId, currency: input.currency,
-        amount: input.amount, providerRef: input.transferId, balanceAfter: 0,
-        message: `Wise transfer status is ${status} — not yet confirmed`, error: 'TRANSFER_NOT_CONFIRMED' };
-    }
-    const wiseAmount = Number(transfer.targetValue || transfer.sourceValue || 0);
-    if (Math.abs(wiseAmount - input.amount) > 0.02) {
-      return { ok: false, channel: 'wise', cardId: input.cardId, currency: input.currency,
-        amount: input.amount, providerRef: input.transferId, balanceAfter: 0,
-        message: `Amount mismatch: Wise shows ${wiseAmount}, requested ${input.amount}`, error: 'AMOUNT_MISMATCH' };
-    }
-  } catch (err: any) {
-    return { ok: false, channel: 'wise', cardId: input.cardId, currency: input.currency,
-      amount: input.amount, providerRef: input.transferId, balanceAfter: 0,
-      message: `Wise verification failed: ${err.message}`, error: 'WISE_VERIFICATION_FAILED' };
-  }
-
-  const txn = await creditCard(input.cardId, input.currency, input.amount, 'wise',
-    input.transferId, `WISE:${input.transferId}`, input.note);
-  await syncToSettlement(input.cardId, input.currency, input.amount, input.transferId);
-  const bal = await getCardBalance(input.cardId, input.currency);
-
-  return { ok: true, channel: 'wise', cardId: input.cardId, currency: input.currency,
-    amount: input.amount, providerRef: input.transferId, balanceAfter: bal.balance,
-    message: `Wise transfer ${input.transferId} verified and credited to card`, txnId: txn.id };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

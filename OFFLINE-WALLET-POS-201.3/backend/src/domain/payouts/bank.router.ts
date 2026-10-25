@@ -15,11 +15,11 @@ router.post('/merchant/:merchantId/payout/bank', async (req, res) => {
 
   const payoutProvider = process.env.BANK_PAYOUT_PROVIDER?.trim().toLowerCase();
   const payoutApiUrl = process.env.BANK_PAYOUT_API_URL?.trim();
-  const payoutApiKey = process.env.BANK_PAYOUT_API_KEY?.trim() || process.env.WISE_API_KEY?.trim();
+  const payoutApiKey = process.env.BANK_PAYOUT_API_KEY?.trim();
 
   if (payoutProvider !== 'external' || !payoutApiUrl || !payoutApiKey) {
     return res.status(501).json({
-      error: 'Bank payout is not enabled for production. Configure BANK_PAYOUT_PROVIDER=external, BANK_PAYOUT_API_URL, and BANK_PAYOUT_API_KEY/WISE_API_KEY with a real payout provider endpoint.'
+      error: 'Bank payout is not enabled for production. Configure BANK_PAYOUT_PROVIDER=external, BANK_PAYOUT_API_URL, and BANK_PAYOUT_API_KEY with a real payout provider endpoint.'
     });
   }
 

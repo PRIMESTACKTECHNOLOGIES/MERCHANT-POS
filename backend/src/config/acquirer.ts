@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Acquirer Configuration
  * ─────────────────────────────────────────────────────────────────────────────
  * Env vars:
@@ -27,6 +27,10 @@ export interface AcquirerConfig {
   host:             string;
   port?:            number;
   apiKey?:          string;
+  // Licensed PSP/acquirer REST API — when set, it replaces the vault-bank pipe
+  // and is the only transport that collects real funds.
+  pspBaseUrl?:      string;
+  pspApiKey?:       string;
   protocol:         'iso8583-tcp' | 'http-json';
   merchantId:       string;
   merchantAccount?: string;
@@ -79,6 +83,8 @@ function buildAcquirerConfig(): AcquirerConfig {
     host:            (process.env.ACQUIRER_HOST?.trim() || '').replace(/^(tcp|tls):\/\//, ''),
     port:            process.env.ACQUIRER_PORT            ? Number(process.env.ACQUIRER_PORT)            : undefined,
     apiKey:          process.env.ACQUIRER_API_KEY?.trim()                          || undefined,
+    pspBaseUrl:      process.env.PSP_BASE_URL?.trim()                              || undefined,
+    pspApiKey:       process.env.PSP_API_KEY?.trim()                               || undefined,
     protocol:        (process.env.ACQUIRER_PROTOCOL as any)                        || 'http-json',
     merchantId:      process.env.ACQUIRER_MERCHANT_ACCOUNT?.trim()                 || process.env.PROCESSOR_MERCHANT_ID?.trim() || 'MRC-1001',
     merchantAccount: process.env.ACQUIRER_MERCHANT_ACCOUNT?.trim()                 || process.env.PROCESSOR_MERCHANT_ID?.trim() || 'MRC-1001',
@@ -130,6 +136,7 @@ export const processorConfig: ProcessorConfig = {
 };
 
 export function isAcquirerConfigured(): boolean {
+  if (acquirerConfig.pspBaseUrl) return true;
   return !!acquirerConfig.host && acquirerConfig.host.length > 0;
 }
 
