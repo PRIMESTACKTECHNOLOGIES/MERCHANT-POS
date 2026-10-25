@@ -5,6 +5,7 @@ import App from "./App";
 import { ToastProvider } from "./components/ui/Toast";
 import { registerAutoSync } from "./lib/offline-sync";
 import { installClientSecurityGuard } from "./lib/security-guard";
+import "./i18n";
 import "./index.css";
 
 // ── Boot-time crash reporter ───────────────────────────────────────────────
@@ -50,7 +51,7 @@ declare global {
 (function attachWipeFn() {
   const KNOWN_KEYS = [
     'token','jwt_token','user','settings','merchantConfig','login_session',
-    'pos_theme','pos_notifications','payment_methods_v2','terminal_currency',
+    'pos_theme','pos_language','pos_notifications','payment_methods_v2','terminal_currency',
     'dashboard_transactions','offline_transactions','dashboard_last_stan',
     'last_stan','emv_last_stan','emv_offline_queue','emv-offline-transactions',
     'emv-pending-transactions','pos_offline_ops','pos_offline_ledger',

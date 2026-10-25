@@ -309,6 +309,34 @@ body {
   stroke-width: 1.8px;
 }
 
+/* ── Right-to-left support (Hebrew / Arabic / Urdu / Persian) ───────────
+   `dir` is set on <html> by src/i18n/index.ts. Browsers mirror inline flow
+   automatically; only the physically-positioned shell pieces need help. */
+[dir="rtl"] .sidebar {
+  border-right: none;
+  border-left: 1px solid var(--border-subtle);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.02);
+}
+
+/* Closed mobile drawer slides in from the opposite edge. */
+[dir="rtl"] .sidebar.fixed {
+  left: auto;
+  right: 0;
+}
+[dir="rtl"] .sidebar.-translate-x-full {
+  transform: translateX(100%);
+}
+
+[dir="rtl"] .nav-link:hover {
+  transform: translateX(-2px);
+}
+
+/* Keep the language dropdown inside the viewport on the mirrored header. */
+[dir="rtl"] .language-panel {
+  left: auto;
+  right: 0;
+}
+
 /* Header Styles */
 /* The element carries its own height/background/sticky utilities; this rule
    only supplies the fluid, safe-area-aware gutters that utilities can't express. */

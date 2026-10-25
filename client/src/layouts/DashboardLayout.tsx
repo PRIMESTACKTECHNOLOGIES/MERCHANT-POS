@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Sidebar } from "../components/Sidebar";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { NotificationMenu } from "../components/NotificationMenu";
 import { SettingsMenu } from "../components/SettingsMenu";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 
 interface Props {
   children: ReactNode;
@@ -10,6 +12,7 @@ interface Props {
 
 export const DashboardLayout = ({ children }: Props) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const { t } = useTranslation();
 
   return (
     <div className="dashboard-root font-sans text-main bg-app flex min-h-[100dvh] lg:h-screen lg:overflow-hidden">
@@ -20,7 +23,7 @@ export const DashboardLayout = ({ children }: Props) => {
           <button 
             className="lg:hidden -ml-2 p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0"
             onClick={() => setIsSidebarOpen(true)}
-            aria-label="Open navigation"
+            aria-label={t("shell.header.openNavigation")}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -30,7 +33,7 @@ export const DashboardLayout = ({ children }: Props) => {
           {/* Left side: Logo & Search */}
           <div className="header-left flex items-center gap-4 flex-1 min-w-0">
              <div className="logo hidden lg:block mr-2 shrink-0">
-                <h2 className="text-xl font-bold text-gray-800 tracking-tight">POS Portal</h2>
+                <h2 className="text-xl font-bold text-gray-800 tracking-tight">{t("shell.header.brand")}</h2>
              </div>
              {/* Compact brand for phones/tablets, where the full logo and the
                  search field are dropped to keep the header on one line. */}
@@ -43,7 +46,7 @@ export const DashboardLayout = ({ children }: Props) => {
                <svg xmlns="http://www.w3.org/2000/svg" className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 transition-colors group-focus-within:text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                <input 
                  type="text" 
-                 placeholder="Search transactions, terminals, batches..." 
+                 placeholder={t("shell.header.searchPlaceholder")} 
                  className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 border border-transparent rounded-xl text-sm focus:bg-white focus:border-blue-200 focus:ring-4 focus:ring-blue-50/50 transition-all duration-200 outline-none placeholder-gray-400"
                />
              </div>
@@ -52,6 +55,9 @@ export const DashboardLayout = ({ children }: Props) => {
           {/* Right side: Actions & Profile */}
           <div className="header-actions flex items-center gap-1 sm:gap-2 lg:gap-4 shrink-0">
             <div className="icons flex items-center gap-0.5 sm:gap-2">
+              {/* Language */}
+              <LanguageSwitcher variant="icon" />
+
               {/* Notifications */}
               <NotificationMenu />
               

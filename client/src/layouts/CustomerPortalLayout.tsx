@@ -1,19 +1,22 @@
 import { useEffect, useRef } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { clearCustomerSession, getCustomerProfile } from "../lib/customerApi";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 
 /** Sign the customer out automatically after this much inactivity. */
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 /** User interactions that count as "activity" and reset the idle timer. */
 const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll", "mousemove"] as const;
 
+/** `label` is a key inside the `portal` namespace of the locale files. */
 const NAV = [
-  { to: "/portal/overview", label: "Overview", icon: "M3 12l9-9 9 9M5 10v10h14V10" },
-  { to: "/portal/send", label: "Send", icon: "M12 19V5M5 12l7-7 7 7" },
-  { to: "/portal/receive", label: "Receive", icon: "M12 5v14M5 12l7 7 7-7" },
-  { to: "/portal/pay", label: "Pay", icon: "M3 10h18M7 15h4M3 6h18v12H3z" },
-  { to: "/portal/c2m", label: "C2M", icon: "M3 21V7l6 4 6-4v10l6-4v8z" },
-  { to: "/portal/profile", label: "Profile", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM4 21a8 8 0 0116 0" },
+  { to: "/portal/overview", label: "overview", icon: "M3 12l9-9 9 9M5 10v10h14V10" },
+  { to: "/portal/send", label: "send", icon: "M12 19V5M5 12l7-7 7 7" },
+  { to: "/portal/receive", label: "receive", icon: "M12 5v14M5 12l7 7 7-7" },
+  { to: "/portal/pay", label: "pay", icon: "M3 10h18M7 15h4M3 6h18v12H3z" },
+  { to: "/portal/c2m", label: "c2m", icon: "M3 21V7l6 4 6-4v10l6-4v8z" },
+  { to: "/portal/profile", label: "profile", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM4 21a8 8 0 0116 0" },
 ];
 
 function NavIcon({ path }: { path: string }) {
@@ -36,6 +39,7 @@ function NavIcon({ path }: { path: string }) {
 
 export function CustomerPortalLayout() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const profile = getCustomerProfile();
   const idleTimer = useRef<number | null>(null);
 
@@ -66,7 +70,7 @@ export function CustomerPortalLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const displayName = profile?.name || "Customer";
+  const displayName = profile?.name || t("portal.customer");
   const walletCode = profile?.wallet_code || "";
 
   return (
@@ -75,11 +79,12 @@ export function CustomerPortalLayout() {
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-blue-600 flex items-center justify-center font-bold shrink-0">C</div>
           <div className="leading-tight min-w-0">
-            <div className="text-sm font-semibold truncate">Customer Portal</div>
-            <div className="text-[11px] text-slate-400 truncate">Personal wallet access</div>
+            <div className="text-sm font-semibold truncate">{t("auth.customerPortalTitle")}</div>
+            <div className="text-[11px] text-slate-400 truncate">{t("portal.personalWalletAccess")}</div>
           </div>
         </div>
-        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
+          <LanguageSwitcher variant="icon" className="text-slate-300 hover:bg-slate-800" />
           <div className="text-right leading-tight hidden sm:block">
             <div className="text-sm font-medium">{displayName}</div>
             {walletCode && <div className="text-[11px] text-slate-400 font-mono">{walletCode}</div>}
@@ -88,7 +93,7 @@ export function CustomerPortalLayout() {
             onClick={handleLogout}
             className="text-xs sm:text-sm px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 transition whitespace-nowrap"
           >
-            Sign out
+            {t("portal.signOut")}
           </button>
         </div>
       </header>
@@ -107,7 +112,7 @@ export function CustomerPortalLayout() {
               }
             >
               <NavIcon path={item.icon} />
-              <span className="hidden lg:inline">{item.label}</span>
+              <span className="hidden lg:inline">{t(`portal.${item.label}`)}</span>
             </NavLink>
           ))}
         </aside>
@@ -133,7 +138,7 @@ export function CustomerPortalLayout() {
             }
           >
             <NavIcon path={item.icon} />
-            <span className="leading-none">{item.label}</span>
+            <span className="leading-none">{t(`portal.${item.label}`)}</span>
           </NavLink>
         ))}
       </nav>

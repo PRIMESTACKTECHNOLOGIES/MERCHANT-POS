@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { login } from "../lib/api";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 
 const SESSION_KEY = "pos_session_remember";
 const IS_VAULT_BANK_DASHBOARD = import.meta.env.VITE_APP_MODE === "vault-bank";
@@ -16,6 +18,7 @@ export const LoginPage = () => {
   const [rememberMe, setRememberMe] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const routeState = location.state as LoginLocationState | null;
   const from = routeState?.from?.pathname || (IS_VAULT_BANK_DASHBOARD ? "/vault-bank" : "/");
 
@@ -52,7 +55,7 @@ export const LoginPage = () => {
 
       navigate(from, { replace: true });
     } catch (err: any) {
-      setError(err.message || "Invalid credentials");
+      setError(err.message || t("auth.loginFailed"));
     } finally {
       setLoading(false);
     }
@@ -172,6 +175,11 @@ export const LoginPage = () => {
         }
       `}</style>
 
+      {/* Language selector — available before sign-in */}
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 20 }}>
+        <LanguageSwitcher variant="icon" className="bg-white shadow-md border border-gray-200" />
+      </div>
+
       {/* Root */}
       <div style={{
         background: "white",
@@ -289,7 +297,7 @@ export const LoginPage = () => {
                 color: "#1a1a2e",
                 textAlign: "center",
               }}>
-                VAULT BANK PAYMENT SOLUTION
+                {t("auth.vaultBankTitle")}
               </h1>
             </div>
 
@@ -313,7 +321,7 @@ export const LoginPage = () => {
                     color: "#3c4257",
                     marginBottom: 24,
                   }}>
-                    Sign in to your account
+                    {t("auth.signInToAccount")}
                   </span>
 
                   {/* Error message */}
@@ -339,14 +347,14 @@ export const LoginPage = () => {
 
                     {/* Username field */}
                     <div style={{ marginBottom: 24 }}>
-                      <label htmlFor="username" className="login-form-label">Username</label>
+                      <label htmlFor="username" className="login-form-label">{t("auth.username")}</label>
                       <input
                         id="username"
                         type="text"
                         autoComplete="username"
                         required
                         className="login-field-input"
-                        placeholder="Enter username"
+                        placeholder={t("auth.enterUsername")}
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                       />
@@ -355,9 +363,9 @@ export const LoginPage = () => {
                     {/* Password field */}
                     <div style={{ marginBottom: 24 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                        <label htmlFor="password" className="login-form-label" style={{ margin: 0 }}>Password</label>
+                        <label htmlFor="password" className="login-form-label" style={{ margin: 0 }}>{t("auth.password")}</label>
                         <a href="#" style={{ fontSize: 13, color: "rgb(84, 105, 212)", textDecoration: "none" }}>
-                          Forgot your password?
+                          {t("auth.forgotPassword")}
                         </a>
                       </div>
                       <div className="password-wrapper">
@@ -367,7 +375,7 @@ export const LoginPage = () => {
                           autoComplete="current-password"
                           required
                           className="login-field-input"
-                          placeholder="Enter your password"
+                          placeholder={t("auth.enterPassword")}
                           style={{ paddingRight: 40 }}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
@@ -377,7 +385,7 @@ export const LoginPage = () => {
                           className="password-toggle-btn"
                           onClick={() => setShowPassword(v => !v)}
                           tabIndex={-1}
-                          title={showPassword ? "Hide password" : "Show password"}
+                          title={showPassword ? t("auth.hidePassword") : t("auth.showPassword")}
                         >
                           {showPassword ? (
                             <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -403,7 +411,7 @@ export const LoginPage = () => {
                           checked={rememberMe}
                           onChange={(e) => setRememberMe(e.target.checked)}
                         />
-                        Stay signed in for a week
+                        {t("auth.staySignedIn")}
                       </label>
                     </div>
 
@@ -420,9 +428,9 @@ export const LoginPage = () => {
                               <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                               <path style={{ opacity: 0.75 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                             </svg>
-                            Signing in…
+                            {t("auth.signingIn")}
                           </>
-                        ) : "Continue"}
+                        ) : t("auth.continue")}
                       </button>
                     </div>
 

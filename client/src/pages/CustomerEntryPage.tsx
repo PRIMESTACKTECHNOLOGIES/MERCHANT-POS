@@ -14,6 +14,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { redeemPaymentCode } from '../lib/api';
 import { processEMVOffline } from '../lib/emv/emv-pos-bridge';
 import { getErrorMessage } from '../utils/errorMessage';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Mode = 'select' | 'card' | 'code' | 'processing' | 'approved' | 'declined';
@@ -184,6 +185,11 @@ export function CustomerEntryPage() {
         <span style={styles.headerAmount}>
           {currency} {amount > 0 ? amount.toFixed(2) : '—'}
         </span>
+      </div>
+
+      {/* Language selector */}
+      <div style={{ position: 'fixed', top: 12, right: 12, zIndex: 50 }}>
+        <LanguageSwitcher variant="icon" className="bg-white shadow-md border border-gray-200" />
       </div>
 
       {/* ══ SELECT MODE ══ */}

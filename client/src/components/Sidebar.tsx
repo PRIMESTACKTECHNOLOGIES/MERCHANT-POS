@@ -1,5 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useDarkMode } from "../hooks/useDarkMode";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 
 const Icons = {
   POS: () => (
@@ -95,6 +97,7 @@ const Icons = {
 export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose?: () => void }) => {
   const navigate = useNavigate();
   const { dark, toggle } = useDarkMode();
+  const { t } = useTranslation();
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     "nav-link" + (isActive ? " active" : "");
@@ -139,8 +142,8 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
               <Icons.POS />
             </div>
             <div className="flex flex-col items-start">
-              <span className="text-sm leading-tight">PAYMENT PROCESSOR</span>
-              <span className="text-[10px] opacity-70 font-medium">101.1 · 101.6 · 201.3 · Normal</span>
+              <span className="text-sm leading-tight">{t("shell.nav.paymentProcessor").toUpperCase()}</span>
+              <span className="text-[10px] opacity-70 font-medium">{t("shell.nav.processorTag")}</span>
             </div>
           </NavLink>
         </div>
@@ -148,73 +151,76 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
         <nav className="sidebar-nav">
           <NavLink to="/overview" className={linkClass} onClick={() => onClose?.()}>
             <Icons.Overview />
-            Dashboard
+            {t("shell.nav.dashboard")}
           </NavLink>
         <NavLink to="/terminals" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Terminals />
-          Terminals
+          {t("shell.nav.terminals")}
         </NavLink>
         <NavLink to="/merchant-profiles" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Merchants />
-          Merchant Profiles
+          {t("shell.nav.merchantProfiles")}
         </NavLink>
         <NavLink to="/transactions" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Transactions />
-          Transactions
+          {t("shell.nav.transactions")}
         </NavLink>
         <NavLink to="/batches" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Batches />
-          Batches
+          {t("shell.nav.batches")}
         </NavLink>
         <NavLink to="/settlements" className={linkClass}>
           <Icons.Settlements />
-          Settlement Reports
+          {t("shell.nav.settlements")}
         </NavLink>
         <NavLink to="/wallets" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Wallet />
-          Customer Wallets
+          {t("shell.nav.customerWallets")}
         </NavLink>
         <NavLink to="/merchant-wallet" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Wallet />
-          Merchant Wallet
+          {t("shell.nav.merchantWallet")}
         </NavLink>
         <NavLink to="/hot-wallet" className={linkClass} onClick={() => onClose?.()}>
           <Icons.HotWallet />
-          Hot Wallet
+          {t("shell.nav.hotWallet")}
         </NavLink>
         <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '8px 16px' }}></div>
 
         <NavLink to="/settings" className={linkClass}>
           <Icons.Settings />
-          Merchant Settings
+          {t("shell.nav.settings")}
         </NavLink>
         <NavLink to="/developer" className={linkClass}>
           <Icons.ApiKeys />
-          Developer API Keys
+          {t("shell.nav.developer")}
         </NavLink>
         <NavLink to="/payment-methods" className={linkClass}>
           <Icons.PaymentMethods />
-          Payment Methods
+          {t("shell.nav.paymentMethods")}
         </NavLink>
         <NavLink to="/offline-transactions" className={linkClass}>
           <Icons.OfflineViewer />
-          Offline Transaction Viewer
+          {t("shell.nav.offlineTransactions")}
         </NavLink>
         <NavLink to="/device-security" className={linkClass}>
           <Icons.Security />
-          Device Security & Keys
+          {t("shell.nav.deviceSecurity")}
         </NavLink>
         <NavLink to="/receipts" className={linkClass}>
           <Icons.Receipt />
-          Receipts
+          {t("shell.nav.receipts")}
         </NavLink>
         <NavLink to="/vault-bank" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Wallet />
-          Vault Bank
+          {t("shell.nav.vaultBank")}
         </NavLink>
       </nav>
       
       <div style={{ marginTop: 'auto', padding: '0 16px 16px' }}>
+        {/* Language Selector */}
+        <LanguageSwitcher variant="sidebar" />
+
         {/* Dark / Light Mode Toggle */}
         <button
           onClick={toggle}
@@ -222,7 +228,7 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
           style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', marginBottom: '4px' }}
         >
           <span style={{ fontSize: '18px', lineHeight: 1 }}>{dark ? '☀️' : '🌙'}</span>
-          <span style={{ flex: 1, textAlign: 'left' }}>{dark ? 'Light Mode' : 'Dark Mode'}</span>
+          <span style={{ flex: 1, textAlign: 'left' }}>{dark ? t("shell.theme.light") : t("shell.theme.dark")}</span>
           {/* Toggle pill */}
           <span style={{
             display: 'inline-flex',
@@ -254,7 +260,7 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
           style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)' }}
         >
           <Icons.Logout />
-          Logout
+          {t("shell.logout")}
         </button>
       </div>
     </aside>

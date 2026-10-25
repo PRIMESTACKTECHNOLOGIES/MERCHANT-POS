@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 
 // --- Icons ---
 const Icons = {
@@ -84,6 +86,7 @@ const StepIndicator = ({ currentStep, totalSteps }: { currentStep: number; total
 
 export const OnboardingPage = () => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<OnboardingData>({
@@ -122,9 +125,12 @@ export const OnboardingPage = () => {
       <div className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 sticky top-0 z-50 shadow-sm">
         <div className="flex items-center gap-2">
            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">M</div>
-           <span className="font-bold text-gray-900 tracking-tight">MerchantPortal</span>
+           <span className="font-bold text-gray-900 tracking-tight">{t("onboarding.brand")}</span>
         </div>
-        <a href="#" className="text-sm font-medium text-gray-500 hover:text-gray-900">Need help?</a>
+        <div className="flex items-center gap-3">
+          <LanguageSwitcher variant="icon" />
+          <a href="#" className="text-sm font-medium text-gray-500 hover:text-gray-900">{t("onboarding.needHelp")}</a>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -139,18 +145,18 @@ export const OnboardingPage = () => {
           
           <div className="mb-8 text-center">
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              {step === 1 && "Tell us about your business"}
-              {step === 2 && "Setup your payouts"}
-              {step === 3 && "Configure your terminal"}
-              {step === 4 && "Developer Settings"}
-              {step === 5 && "Review & Complete"}
+              {step === 1 && t("onboarding.step1Title")}
+              {step === 2 && t("onboarding.step2Title")}
+              {step === 3 && t("onboarding.step3Title")}
+              {step === 4 && t("onboarding.step4Title")}
+              {step === 5 && t("onboarding.step5Title")}
             </h1>
             <p className="text-gray-500 text-sm">
-              {step === 1 && "We need some basic information to verify your account."}
-              {step === 2 && "Where should we send your daily settlements?"}
-              {step === 3 && "Customize how your POS terminal behaves offline."}
-              {step === 4 && "Optional: Configure API access for custom integrations."}
-              {step === 5 && "You're all set! Review your details below."}
+              {step === 1 && t("onboarding.step1Subtitle")}
+              {step === 2 && t("onboarding.step2Subtitle")}
+              {step === 3 && t("onboarding.step3Subtitle")}
+              {step === 4 && t("onboarding.step4Subtitle")}
+              {step === 5 && t("onboarding.step5Subtitle")}
             </p>
           </div>
 
