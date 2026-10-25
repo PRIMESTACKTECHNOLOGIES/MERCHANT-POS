@@ -14,7 +14,6 @@ import { batchesRouter } from "./domain/batches/batches.router";
 import { batchesController } from "./domain/batches/batches.controller";
 import { terminalsController } from "./domain/terminals/terminals.controller";
 import { paymentsRouter } from "./domain/payments/payments.router";
-import { cardAuthRouter } from "./domain/payments/cardAuth.router";
 import { receiptsRouter } from "./domain/receipts/receipts.router";
 import { walletsRouter } from "./domain/wallets/wallets.router";
 import cryptoWalletsRouter from "./routes/crypto-wallets.router";
@@ -350,9 +349,6 @@ app.post("/merchant/v1/api/payment2013/verify", batchesController.verifyCredenti
 
 // â”€â”€ Payment router with card reader and processor endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app.use("/merchant/v1/payments", paymentsRouter);
-
-// â”€â”€ Card Authorization â€” protocol validation (101.1 / 101.6 / 201.3) â”€â”€â”€â”€â”€
-app.use("/api/card-auth", cardAuthRouter);
 
 // â”€â”€ Public funding webhook endpoint
 app.use('/webhooks', fundingWebhookRouter);
