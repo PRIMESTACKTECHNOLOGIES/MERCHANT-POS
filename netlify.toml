@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Netlify build config for the CUSTOMER WALLET PORTAL (portal-only bundle).
+#
+# Create the Netlify site against this repository and leave the site's
+# "Base directory" EMPTY. Netlify reads netlify.toml from the base directory,
+# so an empty base means this file is used. (The legacy merchant-dashboard site
+# is a different Netlify site whose base is `client`, so it keeps using
+# client/netlify.toml and is unaffected by this file.)
+#
+# Build & deploy settings can stay on "read from netlify.toml".
+# ─────────────────────────────────────────────────────────────────────────────
+
+[build]
+  command = "cd client && npm ci && npm run build:portal"
+  publish = "client/dist-portal"
+
+[build.environment]
+  # REQUIRED. The portal is static on Netlify but its API lives on Render.
+  # Without this, resolveApiBaseUrl() falls back to the Netlify origin and every
+  # /api/customer-auth and /api/customer-portal call 404s.
+  VITE_API_URL = "https://merchant-pos-0nno.onrender.com"
+
+# SPA fallback so deep links (/portal/login, /portal/overview, ...) resolve.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"

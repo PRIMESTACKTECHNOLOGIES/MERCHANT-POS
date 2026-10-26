@@ -2,6 +2,7 @@
 export default {
   content: [
     "./index.html",
+    "./portal-root/**/*.{html,js,ts,jsx,tsx}",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
