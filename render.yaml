@@ -147,10 +147,12 @@ services:
 
       # ── Receiving bank account (merchant receiver of settled funds) ────────
       # Overrides the bank account saved in Merchant Settings. Empty = use Settings.
-      # Account holder / IBAN / BIC are card-and-bank data: set them in the Render
-      # dashboard (sync: false) so they are never committed to the repository.
+      # Every field here is bank data: all are sync: false so they are set in the
+      # Render dashboard and never committed to the repository. A literal
+      # value: "" would let Render overwrite the dashboard entry on each deploy
+      # (and would drop the payout currency back to USD).
       - key: MERCHANT_BANK_NAME
-        value: ""
+        sync: false
       - key: MERCHANT_BANK_ACCOUNT_HOLDER
         sync: false
       - key: MERCHANT_BANK_IBAN
@@ -162,11 +164,11 @@ services:
       - key: MERCHANT_BANK_ROUTING_NUMBER
         sync: false
       - key: MERCHANT_BANK_ADDRESS
-        value: ""
+        sync: false
       - key: MERCHANT_BANK_CURRENCY
-        value: ""
+        sync: false
       - key: MERCHANT_BANK_COUNTRY
-        value: ""
+        sync: false
 
       # ── MT103 outbound wire (ordering institution leg) ─────────────────────
       - key: MT103_SENDER_ACCOUNT
