@@ -67,12 +67,13 @@ interface ReceiptData {
   fee?: number;
 }
 
-// Merchant information (can be loaded from config)
+// Merchant information. Left empty by default so no demo identity is baked in;
+// callers that have access to merchant settings can supply values via additionalData.
 const MERCHANT_INFO = {
-  name: 'JUKRUTI LOGISTICS PTY LTD',
-  address: '9 Houtkapper Str, Olifantshoek\nNorthern Cape, 8450\nSouth Africa',
-  phone: '060-7289532 / 078-9550649',
-  email: 'Jukrutidumba@gmail.com',
+  name: '',
+  address: '',
+  phone: '',
+  email: '',
 };
 
 /**

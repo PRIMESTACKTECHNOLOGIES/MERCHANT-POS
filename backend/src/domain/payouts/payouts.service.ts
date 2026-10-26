@@ -184,11 +184,11 @@ export class PayoutsService {
       case 'MT103': {
         const sourceBic = String(source_acc?.bic || process.env.MT103_SENDER_BIC || '').toUpperCase().replace(/\s+/g, '');
         const mtInput: Mt103Payout = {
-          senderBic: /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(sourceBic) ? sourceBic : 'PRSTUS33XXX',
+          senderBic: /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(sourceBic) ? sourceBic : '',
           senderAccount: source_acc?.iban || process.env.MT103_SENDER_ACCOUNT || source_acc?.id || payout.source_account_id,
-          senderName: source_acc?.bank_name || process.env.MT103_SENDER_NAME || 'Protocol 201.3 Settlement Bank',
+          senderName: source_acc?.bank_name || process.env.MT103_SENDER_NAME || '',
           senderAddressLines: source_acc ? [source_acc.bank_name, source_acc.iban || ''].filter(Boolean) :
-            (process.env.MT103_SENDER_ADDRESS || 'BUSINESS BAY,DUBAI, UAE').split(','),
+            (process.env.MT103_SENDER_ADDRESS || '').split(',').filter(Boolean),
           beneficiaryBic: dest.swift_bic || '',
           beneficiaryAccount: dest.iban || dest.account_number || '',
           beneficiaryName: dest.account_name || dest.account_holder || '',
@@ -273,8 +273,8 @@ export class PayoutsService {
           messageId: `RTGS${payout.id.replace(/[^A-Z0-9]/gi, '').slice(0, 28).toUpperCase()}`,
           uetr,
           valueDate: new Date().toISOString().slice(0, 10),
-          senderBic: source_acc?.bic || process.env.RTGS_SENDER_BIC || 'PRSTUS33XXX',
-          senderName: source_acc?.bank_name || process.env.RTGS_SENDER_NAME || 'Protocol 201.3 Settlement Bank',
+          senderBic: source_acc?.bic || process.env.RTGS_SENDER_BIC || '',
+          senderName: source_acc?.bank_name || process.env.RTGS_SENDER_NAME || '',
           senderAccount: source_acc?.iban || source_acc?.id || payout.source_account_id,
           beneficiaryBic: dest.swift_bic || '',
           beneficiaryName: dest.account_name || dest.account_holder || '',

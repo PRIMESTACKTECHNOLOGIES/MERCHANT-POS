@@ -12,7 +12,10 @@ const parseAddCol = (sql: string): [string, string, string] => {
 /** True when `table` exists and already has a column named `col` (case-insensitive). */
 const tableHasColumn = async (table: string, col: string): Promise<boolean> => {
   try {
-    const res: any = await db.query(`PRAGMA table_info("${table}")`);
+    // `PRAGMA table_info` is routed through the adapter's write path and returns no
+    // rows, so the table-valued function form is used instead — it is a SELECT.
+    const literal = table.replace(/'/g, "''");
+    const res: any = await db.query(`SELECT name FROM pragma_table_info('${literal}')`);
     const rows: any[] = res?.rows ?? [];
     if (!rows.length) return false;
     return rows.some((r: any) => String(r.name || '').toLowerCase() === col.toLowerCase());
@@ -141,6 +144,12 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN provider_ref TEXT`),
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN provider TEXT`),
       parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP`),
+      parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN fee REAL DEFAULT 0.00`),
+      parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN net_amount REAL`),
+      parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN merchant_id TEXT`),
+      parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN note TEXT`),
+      parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN scheduled_at TEXT`),
+      parseAddCol(`ALTER TABLE bank_payouts ADD COLUMN completed_at TEXT`),
       // wallet_transactions â€” native currency column (AED stays AED, USD stays USD)
       parseAddCol(`ALTER TABLE wallet_transactions ADD COLUMN currency TEXT DEFAULT 'USD'`),
       // merchant_wallet_transactions â€” native currency column
@@ -148,6 +157,12 @@ export const initTables = async () => {
       // payout_instructions â€” bank_name (older databases created this table before
       // the column existed; GET /api/vault/payouts selects it and 500s without it)
       parseAddCol(`ALTER TABLE payout_instructions ADD COLUMN bank_name TEXT`),
+      // payout_instructions.provider_ref — written by the vault-dashboard backfill INSERT;
+      // databases created before the column existed fail with "no column named provider_ref".
+      parseAddCol(`ALTER TABLE payout_instructions ADD COLUMN provider_ref TEXT`),
+      // merchant_crypto_withdrawals — databases created from the older customer-facing
+      // shape lack merchant_id, so CREATE INDEX idx_mcw_merchant_status fails.
+      parseAddCol(`ALTER TABLE merchant_crypto_withdrawals ADD COLUMN merchant_id TEXT`),
       // customer_crypto_wallets_v2 â€” HD derivation index for BIP-44 wallet generation
       parseAddCol(`ALTER TABLE customer_crypto_wallets_v2 ADD COLUMN derivation_index INTEGER`),
     ];
@@ -155,7 +170,8 @@ export const initTables = async () => {
     for (const [table, col, sql] of migrations) {
       try {
         if (!table || !col) continue;
-        const pragma = await db.query(`PRAGMA table_info("${table}")`);
+        const literal = table.replace(/'/g, "''");
+        const pragma = await db.query(`SELECT name FROM pragma_table_info('${literal}')`);
         const rows: any[] = pragma?.rows ?? [];
         const colLower = col.toLowerCase();
         const exists = rows.some((r: any) => String(r.name || '').toLowerCase() === colLower);

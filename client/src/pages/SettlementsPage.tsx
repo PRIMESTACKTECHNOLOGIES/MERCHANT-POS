@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { CardSkeleton, TableSkeleton } from "../components/ui/Skeleton";
 import { cashoutBraintree, fetchBatches, fetchSettings, getMerchantBalance, merchantBankPayout } from "../lib/api";
 import { useToast } from "../components/ui/toastContext";
@@ -241,6 +242,13 @@ const BatchDrawer = ({ batch, onClose, cashoutLoading, onCashout }: BatchDrawerP
 // --- Main Page Component ---
 
 export function SettlementsPage() {
+  // Routed in from Merchant Profiles → row "Payout" as
+  // /settlements?payout=<merchantId>&currency=<CCY>. Without params the page
+  // keeps its previous single-merchant USD behaviour.
+  const [searchParams] = useSearchParams();
+  const payoutMerchantId = searchParams.get("payout") || "MRC-1001";
+  const requestedCurrency = (searchParams.get("currency") || "USD").toUpperCase();
+
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'batches' | 'settlement'>('batches');
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -249,30 +257,45 @@ export function SettlementsPage() {
   const [cashoutLoading, setCashoutLoading] = useState(false);
   const [payoutLoading, setPayoutLoading] = useState(false);
   const [payoutAmount, setPayoutAmount] = useState('');
+  const [payoutCurrency, setPayoutCurrency] = useState(requestedCurrency);
   const [showPayoutModal, setShowPayoutModal] = useState(false);
   const [lastPayoutResult, setLastPayoutResult] = useState<any>(null);
   const [merchantBankAccount, setMerchantBankAccount] = useState<any>(null);
+
+  const payoutHandoffDone = useRef(false);
+
+  const payoutMoney = (value: number) =>
+    `${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${payoutCurrency}`;
+
+  // Keep the payout currency in step with the URL it was opened with.
+  useEffect(() => {
+    setPayoutCurrency(requestedCurrency);
+  }, [requestedCurrency]);
 
   // Load merchant bank account on mount
   useEffect(() => {
     const BASE_URL = resolveApiBaseUrl({ envValue: import.meta.env.VITE_API_URL, currentOrigin: window.location.origin });
     const token = localStorage.getItem('token');
-    fetch(`${BASE_URL}/api/payout/merchant/MRC-1001/bank-accounts`, {
+    fetch(`${BASE_URL}/api/payout/merchant/${encodeURIComponent(payoutMerchantId)}/bank-accounts`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.json())
       .then(d => {
-        const accounts = d.accounts || [];
-        const def = accounts.find((a: any) =>
-          /column/i.test(String(a.bank_name || '')) &&
-          String(a.currency || '').toUpperCase() === 'USD'
-        ) || accounts.find((a: any) => a.is_default) || accounts[0];
+        const accounts: any[] = d.accounts || [];
+        // Prefer a default account in the payout currency so an EUR payout does
+        // not silently target the USD account.
+        const inCurrency = accounts.filter(a => String(a.currency || '').toUpperCase() === requestedCurrency);
+        const def = inCurrency.find(a => a.is_default)
+          || inCurrency.find(a => /column/i.test(String(a.bank_name || '')))
+          || inCurrency[0]
+          || accounts.find(a => a.is_default)
+          || accounts[0];
         if (def) setMerchantBankAccount(def);
       })
       .catch((err) => {
         console.error('[SettlementsPage] Failed to load merchant bank account:', err);
       });
-  }, []);
+  }, [payoutMerchantId, requestedCurrency]);
   const [merchantSettings, setMerchantSettings] = useState<any>(null);
   const [merchantBalance, setMerchantBalance] = useState<number>(0);
   const [merchantBalanceLoading, setMerchantBalanceLoading] = useState(true);
@@ -293,8 +316,8 @@ export function SettlementsPage() {
   const loadMerchantBalance = async () => {
     try {
       setMerchantBalanceLoading(true);
-      console.log('[SettlementsPage] Loading merchant balance for MRC-1001...');
-      const data = await getMerchantBalance('MRC-1001');
+      console.log(`[SettlementsPage] Loading merchant balance for ${payoutMerchantId} (${requestedCurrency})...`);
+      const data = await getMerchantBalance(payoutMerchantId, requestedCurrency);
       console.log('[SettlementsPage] Merchant balance loaded:', data);
       setMerchantBalance(data.balance || 0);
     } catch (err) {
@@ -304,6 +327,17 @@ export function SettlementsPage() {
       setMerchantBalanceLoading(false);
     }
   };
+
+  // Opened from Merchant Profiles → row "Payout": prefill the modal with the
+  // merchant's balance in the requested currency and open it once, so the
+  // operator lands directly on the payout step.
+  useEffect(() => {
+    if (!searchParams.get('payout')) return;
+    if (merchantBalanceLoading || payoutHandoffDone.current) return;
+    payoutHandoffDone.current = true;
+    setPayoutAmount(merchantBalance > 0 ? String(merchantBalance) : '');
+    setShowPayoutModal(true);
+  }, [searchParams, merchantBalanceLoading, merchantBalance]);
 
   const loadSettings = async () => {
     try {
@@ -391,16 +425,16 @@ export function SettlementsPage() {
   const handleInternalPayout = async () => {
     const amt = parseFloat(payoutAmount);
     if (!amt || amt <= 0) { showToast('Enter a valid amount', 'error'); return; }
-    if (amt > merchantBalance) { showToast(`Insufficient balance. Available: $${merchantBalance.toLocaleString()}`, 'error'); return; }
+    if (amt > merchantBalance) { showToast(`Insufficient balance. Available: ${payoutMoney(merchantBalance)}`, 'error'); return; }
     setPayoutLoading(true);
     try {
-      const result = await merchantBankPayout('MRC-1001', { amount: amt, currency: 'USD' });
+      const result = await merchantBankPayout(payoutMerchantId, { amount: amt, currency: payoutCurrency });
       setLastPayoutResult(result);
       setShowPayoutModal(false);
       setPayoutAmount('');
       showToast(`✅ Payout initiated! Ref: ${result.provider_reference || result.payout_id}`, 'success');
       // Refresh balance
-      const updated = await getMerchantBalance('MRC-1001');
+      const updated = await getMerchantBalance(payoutMerchantId, payoutCurrency);
       setMerchantBalance(updated.balance || 0);
     } catch (err: any) {
       showToast(`✗ Payout failed: ${err?.message ?? String(err)}`, 'error');
@@ -587,7 +621,7 @@ export function SettlementsPage() {
             ) : (
               <>
                 <p className="text-4xl font-bold text-green-900">
-                  ${merchantBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {payoutMoney(merchantBalance)}
                 </p>
                 <p className="text-xs text-green-600 mt-2">
                   {merchantBalance > 0 
@@ -605,7 +639,7 @@ export function SettlementsPage() {
         </div>
         <div className="mt-4 pt-4 border-t border-green-200">
           <p className="text-xs text-green-700">
-            <strong>Merchant ID:</strong> MRC-1001 • <strong>Currency:</strong> USD • 
+            <strong>Merchant ID:</strong> {payoutMerchantId} • <strong>Currency:</strong> {payoutCurrency} • 
             <strong className="ml-2">Last Update:</strong> {new Date().toLocaleString()}
           </p>
           {/* ── One-click payout through the internal acquirer ── */}
@@ -619,7 +653,7 @@ export function SettlementsPage() {
             </button>
             {lastPayoutResult && (
               <span className="text-xs text-green-700 font-medium">
-                ✅ Last payout: ${Number(lastPayoutResult.amount || 0).toLocaleString()} · Ref: {lastPayoutResult.provider_reference || lastPayoutResult.payout_id}
+                ✅ Last payout: {payoutMoney(Number(lastPayoutResult.amount || 0))} · Ref: {lastPayoutResult.provider_reference || lastPayoutResult.payout_id}
               </span>
             )}
           </div>
@@ -631,17 +665,17 @@ export function SettlementsPage() {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
               <div className="bg-gradient-to-r from-green-700 to-green-800 px-6 py-5 text-white">
                 <h3 className="text-xl font-bold">🏦 Pay Out via Internal Acquirer</h3>
-                <p className="text-green-200 text-sm mt-1">{merchantBankAccount?.account_holder || 'PRIMESTACK TECHNOLOGIES LLC'} · Account {merchantBankAccount?.account_number || '343612919064346'}</p>
+                <p className="text-green-200 text-sm mt-1">{merchantBankAccount?.account_holder || '—'} · Account {merchantBankAccount?.account_number || '—'}</p>
               </div>
               <div className="p-6 space-y-4">
                 <div className="bg-green-50 border border-green-200 rounded-xl p-4">
                   <div className="text-xs text-green-600 uppercase tracking-wider font-semibold">Available Balance</div>
                   <div className="text-3xl font-extrabold text-green-900 mt-1">
-                    ${merchantBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {payoutMoney(merchantBalance)}
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">Amount to Pay Out (USD)</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">Amount to Pay Out ({payoutCurrency})</label>
                   <div className="relative">
                     <input
                       type="number"
@@ -663,8 +697,8 @@ export function SettlementsPage() {
                 </div>
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm space-y-1">
                   <div className="flex justify-between"><span className="text-slate-500">Bank</span><span className="font-semibold">{merchantBankAccount?.bank_name || 'Replacement provider'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Account</span><span className="font-mono font-semibold">{merchantBankAccount?.account_number || '343612919064346'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Holder</span><span className="font-semibold">{merchantBankAccount?.account_holder || 'PRIMESTACK TECHNOLOGIES LLC'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Account</span><span className="font-mono font-semibold">{merchantBankAccount?.account_number || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Holder</span><span className="font-semibold">{merchantBankAccount?.account_holder || '—'}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Routing</span><span className="font-mono font-semibold">{merchantBankAccount?.routing_number || 'Not configured'}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">SWIFT</span><span className="font-mono font-semibold">{merchantBankAccount?.swift_code || 'Not configured'}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Provider</span><span className="font-semibold text-green-700">Internal Acquirer (Protocol 201.3) · Configured bank rail</span></div>
@@ -683,7 +717,7 @@ export function SettlementsPage() {
                   disabled={payoutLoading || !payoutAmount || parseFloat(payoutAmount) <= 0}
                   className="flex-1 py-3 rounded-xl bg-green-700 hover:bg-green-800 text-white font-bold disabled:opacity-50 transition"
                 >
-                  {payoutLoading ? '⏳ Processing...' : `Pay Out $${parseFloat(payoutAmount || '0').toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+                  {payoutLoading ? '⏳ Processing...' : `Pay Out ${payoutMoney(parseFloat(payoutAmount || '0'))}`}
                 </button>
               </div>
             </div>

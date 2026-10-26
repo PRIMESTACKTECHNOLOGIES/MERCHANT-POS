@@ -13,15 +13,15 @@ import { createHash } from 'crypto';
 
 export interface Mt103Payout {
   // Sender (your side)
-  senderBic:          string;   // e.g. PRSTUS33XXX (PRIMESTACK)
+  senderBic:          string;   // ordering institution BIC, e.g. ABCDUS33XXX
   senderAccount:      string;   // settlement account
-  senderName:         string;   // PRIMESTACK TECHNOLOGIES LLC
+  senderName:         string;   // ordering institution name
   senderAddressLines: string[]; // ['BUSINESS BAY', 'DUBAI, UAE']
 
   // Beneficiary (receiving side)
   beneficiaryBic:          string;   // 
   beneficiaryAccount:      string;   // 
-  beneficiaryName:         string;   // JUKRUTI LOGISTICS PTY LTD
+  beneficiaryName:         string;   // beneficiary account holder name
   beneficiaryAddressLines: string[]; // ['9 HOUTKAPPER STR', 'OLIFANTSHOEK 8450', 'SOUTH AFRICA']
 
   // Payment details
@@ -247,11 +247,14 @@ export function buildMt103FromPayout(params: {
   ].join('');
 
   return {
-    // Sender — your PRIMESTACK / internal acquirer details
-    senderBic:     process.env.MT103_SENDER_BIC    || 'PRSTUS33XXX',
+    // Sender — ordering institution, configured via the MT103_SENDER_* env vars.
+    // Deliberately no defaults: validateMt103Payout() rejects a missing BIC or
+    // name, so a misconfigured deployment fails loudly instead of emitting a
+    // wire that names a placeholder bank.
+    senderBic:     process.env.MT103_SENDER_BIC     || '',
     senderAccount: process.env.MT103_SENDER_ACCOUNT || '',
-    senderName:    process.env.MT103_SENDER_NAME    || 'PRIMESTACK TECHNOLOGIES LLC',
-    senderAddressLines: (process.env.MT103_SENDER_ADDRESS || 'BUSINESS BAY,DUBAI, UAE').split(','),
+    senderName:    process.env.MT103_SENDER_NAME    || '',
+    senderAddressLines: (process.env.MT103_SENDER_ADDRESS || '').split(',').filter(Boolean),
 
     // Beneficiary — from the bank account record
     beneficiaryBic:     params.bankAccount?.swift_code     || '',

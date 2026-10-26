@@ -33,13 +33,14 @@ set "VAULT_EUR_IBAN="
 set "VAULT_EUR_BIC="
 set "VAULT_AED_IBAN="
 set "VAULT_AED_SWIFT="
+set "ACCOUNT_HOLDER="
 
 title PRIMESTACK POS 201.3 — Launcher
 
 cls
 echo.
 echo ================================================================
-echo   PRIMESTACK TECHNOLOGIES LLC — POS 201.3 SYSTEM LAUNCHER
+echo   PRIMESTACK POS 201.3 — SYSTEM LAUNCHER
 echo ================================================================
 echo.
 echo   Live Site       : %NETLIFY_URL%
@@ -63,7 +64,7 @@ echo.
 echo   AED  IBAN       : %VAULT_AED_IBAN%
 echo   AED  SWIFT      : %VAULT_AED_SWIFT%
 echo.
-echo   Account Holder  : PRIMESTACK TECHNOLOGIES LLC
+echo   Account Holder  : %ACCOUNT_HOLDER%
 echo.
 echo ================================================================
 echo.
@@ -233,7 +234,7 @@ echo   ------------------------------------------
 echo   USD Account     : %VAULT_USD_ACCOUNT%  Routing: %VAULT_USD_ROUTING%
 echo   EUR IBAN        : %VAULT_EUR_IBAN%
 echo   AED IBAN        : %VAULT_AED_IBAN%
-echo   Account Holder  : PRIMESTACK TECHNOLOGIES LLC
+echo   Account Holder  : %ACCOUNT_HOLDER%
 echo.
 echo   LOGIN CREDENTIALS
 echo   -----------------

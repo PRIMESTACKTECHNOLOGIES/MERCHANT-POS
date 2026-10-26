@@ -144,10 +144,16 @@ services:
 
       # ── Receiving bank account (merchant receiver of settled funds) ────────
       # Overrides the bank account saved in Merchant Settings. Empty = use Settings.
+      # Account holder / IBAN / BIC are card-and-bank data: set them in the Render
+      # dashboard (sync: false) so they are never committed to the repository.
       - key: MERCHANT_BANK_NAME
         value: ""
       - key: MERCHANT_BANK_ACCOUNT_HOLDER
-        value: PRIMESTACK TECHNOLOGIES LLC
+        sync: false
+      - key: MERCHANT_BANK_IBAN
+        sync: false
+      - key: MERCHANT_BANK_SWIFT_CODE
+        sync: false
       - key: MERCHANT_BANK_ACCOUNT_NUMBER
         sync: false
       - key: MERCHANT_BANK_ROUTING_NUMBER
@@ -158,6 +164,16 @@ services:
         value: ""
       - key: MERCHANT_BANK_COUNTRY
         value: ""
+
+      # ── MT103 outbound wire (ordering institution leg) ─────────────────────
+      - key: MT103_SENDER_ACCOUNT
+        sync: false
+      - key: MT103_SENDER_BIC
+        sync: false
+      - key: MT103_SENDER_NAME
+        sync: false
+      - key: MT103_SENDER_ADDRESS
+        sync: false
 
       # ── PAYOUT DESTINATION BANK (blank until a new bank account is set) ────
       - key: PAYOUT_BANK_NAME
@@ -291,6 +307,27 @@ services:
       - key: ALLOW_LEGACY_CUSTOMER_CRYPTO_WITHDRAW_RAIL
         value: "1"
 
+      # ── CORS ───────────────────────────────────────────────────────────────
+      - key: ALLOWED_ORIGINS
+        value: https://merchantpos.netlify.app,https://merchant-pos-0nno.onrender.com,http://localhost:7001,http://127.0.0.1:7001
+
+      # ── Protocol 101.1 Voice Authorization (fail-closed verification) ──────
+      # The POS verifies the merchant's phone-auth code against the vault bank.
+      - key: VOICE_AUTH_VERIFY_URL
+        value: https://vault-bank-6jcj.onrender.com/api/vault-bank/voice-auth/verify
+      - key: VOICE_AUTH_VERIFY_API_KEY
+        sync: false
+      - key: VOICE_AUTH_VERIFY_SECRET
+        sync: false
+      - key: VOICE_AUTH_VERIFY_TIMEOUT_MS
+        value: "8000"
+      - key: VOICE_AUTH_HMAC_SECRET
+        sync: false
+      - key: VOICE_AUTH_EXPIRY_HOURS
+        value: "48"
+      - key: VOICE_AUTH_ALLOW_UNVERIFIED
+        value: "false"
+
   # ── VAULT BANK SETTLEMENT SERVER ─────────────────────────────────────────────
   - type: web
     name: vault-bank
@@ -324,6 +361,8 @@ services:
       - key: VAULT_BANK_API_KEY
         sync: false
       - key: VAULT_BANK_SECRET_KEY
+        sync: false
+      - key: VAULT_BANK_VOICE_AUTH_SECRET
         sync: false
       - key: OPERATOR_CARD_USD_HOLDER
         value: AJI ALOSIOUS

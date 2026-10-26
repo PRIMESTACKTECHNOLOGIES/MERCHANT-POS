@@ -17,7 +17,7 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 
 // ── Merchant/terminal identity (read from env so receipts carry real data) ────
-const MERCHANT_NAME   = process.env.MERCHANT_NAME?.trim()    || process.env.PROCESSOR_NAME?.trim()    || 'PRIMESTACK TECHNOLOGIES LLC';
+const MERCHANT_NAME   = process.env.MERCHANT_NAME?.trim()    || process.env.PROCESSOR_NAME?.trim()    || '';
 const MERCHANT_CITY   = process.env.MERCHANT_CITY?.trim()    || 'Wilmington';
 const MERCHANT_COUNTRY= process.env.MERCHANT_COUNTRY?.trim() || 'US';
 const MERCHANT_MCC    = process.env.MCC?.trim()              || '5999';

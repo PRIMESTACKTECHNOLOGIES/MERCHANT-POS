@@ -159,7 +159,7 @@ export async function executeInternalPayout(req: InternalPayoutRequest): Promise
           account_type: instruction.destination_account_type,
         },
         protocol: '201.3',
-        acquirer: 'JUKRUTI-INTERNAL',
+        acquirer: process.env.ACQUIRER_NAME?.trim() || 'INTERNAL',
       }, { headers, timeout: 15000 });
 
       callbackResponse = response.data;

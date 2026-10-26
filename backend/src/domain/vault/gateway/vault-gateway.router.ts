@@ -16,6 +16,7 @@ import { verifyVaultApiKey } from './middleware/verifyApiKey';
 import { verifyVaultHmac } from './middleware/verifySignature';
 import { vaultRateLimiter } from './middleware/rateLimiter';
 import { submitDwollaPayout } from '../../payouts/dwollaOriginator.client';
+import { verifyVoiceAuthCode } from '../../payments/voiceAuthCode';
 import { settlementEngine } from '../settlement/SettlementEngine';
 
 const router = Router();
@@ -98,6 +99,85 @@ router.get('/settlement/:id', async (req, res) => {
     return res.json({ success: true, settlement });
   } catch (error: any) {
     return fail(res, 500, error?.message || 'Failed to load settlement');
+  }
+});
+
+/**
+ * Protocol 101.1 — verify a verbal authorization code.
+ *
+ * The vault bank is the issuer: it derives the 6-digit code from the card, the
+ * amount, the merchant and the UTC day with VAULT_BANK_VOICE_AUTH_SECRET, so the
+ * POS never holds the issuing secret — it only asks whether the code the merchant
+ * read off the phone is real. Recording an approval also makes the code
+ * single-use per merchant.
+ *
+ * This route answers an authorization question only; it never touches a vault
+ * balance.
+ */
+router.post('/voice-auth/verify', async (req, res) => {
+  const authCode = String(req.body?.auth_code ?? '').trim();
+  const panLast4 = String(req.body?.pan_last4 ?? '').replace(/\D/g, '').slice(-4);
+  const amountMinor = Number(req.body?.amount_minor);
+  const currency = String(req.body?.currency || '').toUpperCase();
+  const merchantId = String(req.body?.merchant_id ?? '').trim();
+
+  if (!/^\d{4,6}$/.test(authCode)) return fail(res, 400, 'auth_code must be 4-6 digits');
+  if (!panLast4) return fail(res, 400, 'pan_last4 is required');
+  if (!Number.isFinite(amountMinor) || amountMinor <= 0) return fail(res, 400, 'amount_minor must be a positive number');
+  if (!/^[A-Z]{3}$/.test(currency)) return fail(res, 400, 'currency must be a 3-letter code');
+  if (!merchantId) return fail(res, 400, 'merchant_id is required');
+
+  const secret = (process.env.VAULT_BANK_VOICE_AUTH_SECRET || '').trim();
+  if (!secret) return fail(res, 503, 'VAULT_BANK_VOICE_AUTH_SECRET is not configured on the vault bank');
+
+  try {
+    if (!verifyVoiceAuthCode({ code: authCode, pan: panLast4, amountMinor, currency, merchantId }, secret)) {
+      return res.json({
+        success: true,
+        approved: false,
+        code: 'CODE_MISMATCH',
+        reason: `Code ${authCode} does not match card ****${panLast4} for ${(amountMinor / 100).toFixed(2)} ${currency} at merchant ${merchantId} today`,
+      });
+    }
+
+    const reference = `VA-VOICE-${uuidv4().slice(0, 8).toUpperCase()}`;
+    try {
+      await db.query(
+        `INSERT INTO vault_voice_auth_codes
+           (id, auth_code, merchant_id, pan_last4, amount_minor, currency, terminal_id, stan, reference, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(), authCode, merchantId, panLast4, amountMinor, currency,
+          String(req.body?.terminal_id || ''), req.body?.stan ? String(req.body.stan) : null,
+          reference, new Date().toISOString(),
+        ],
+      );
+    } catch (error: any) {
+      const message = String(error?.message || '');
+      if (/UNIQUE|constraint/i.test(message)) {
+        return res.json({
+          success: true,
+          approved: false,
+          code: 'CODE_ALREADY_USED',
+          reason: `Code ${authCode} has already been used at merchant ${merchantId}`,
+        });
+      }
+      throw error;
+    }
+
+    return res.json({
+      success: true,
+      approved: true,
+      verified: true,
+      code: 'VOICE_AUTH_APPROVED',
+      reference,
+      auth_code: authCode,
+      pan_last4: panLast4,
+      amount_minor: amountMinor,
+      currency,
+    });
+  } catch (error: any) {
+    return fail(res, 400, error.message);
   }
 });
 

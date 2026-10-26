@@ -8,7 +8,7 @@ import { app } from "./app";
 import { initTables } from "./domain/setup/init_tables";
 import { initWsServer } from "./realtime/wsServer";
 import { startDeferredBroadcastWorker, stopDeferredBroadcastWorker } from "./workers/deferredBroadcast.worker";
-import { flushDbAsync } from "./config/db";
+import { flushDbAsync, db } from "./config/db";
 import { startVaultReconciliationWorker, stopVaultReconciliationWorker } from "./workers/vaultReconciliation.worker";
 import { startVaultLiquidityWorker, stopVaultLiquidityWorker } from "./workers/vaultLiquidity.worker";
 import { ensureOperatorCards } from "./domain/vault/cardBalance.service";
@@ -31,6 +31,25 @@ console.log('[server] DB path:', dbPath);
 
 const start = async () => {
   await initTables();
+
+  // Repair the wallet-to-bank payout table. `CREATE TABLE IF NOT EXISTS` cannot add
+  // columns to a database whose `bank_payouts` was created from an older shape, and
+  // the payout path writes fee / net_amount / merchant_id / provider / provider_ref —
+  // without them the endpoint answers 500 "no column named fee".
+  for (const _bpCol of [
+    `ALTER TABLE bank_payouts ADD COLUMN fee REAL DEFAULT 0.00`,
+    `ALTER TABLE bank_payouts ADD COLUMN net_amount REAL`,
+    `ALTER TABLE bank_payouts ADD COLUMN merchant_id TEXT`,
+    `ALTER TABLE bank_payouts ADD COLUMN note TEXT`,
+    `ALTER TABLE bank_payouts ADD COLUMN provider TEXT`,
+    `ALTER TABLE bank_payouts ADD COLUMN provider_ref TEXT`,
+    `ALTER TABLE bank_payouts ADD COLUMN scheduled_at TEXT`,
+    `ALTER TABLE bank_payouts ADD COLUMN completed_at TEXT`,
+    `ALTER TABLE bank_payouts ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP`,
+  ]) {
+    try { await db.query(_bpCol); } catch (_e) { /* column already present */ }
+  }
+
   // Issue a portal PIN to every customer that does not have one yet.
   try {
     const issued = await customerAuthService.ensureAllCustomerPins();

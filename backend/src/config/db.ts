@@ -422,7 +422,6 @@ async function getDb(): Promise<any> {
     `CREATE TABLE IF NOT EXISTS crypto_transactions (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, crypto_coin TEXT NOT NULL, transaction_type TEXT NOT NULL DEFAULT 'buy', fiat_amount REAL NOT NULL DEFAULT 0, crypto_amount REAL NOT NULL DEFAULT 0, fiat_currency TEXT NOT NULL DEFAULT 'USD', exchange_rate REAL NOT NULL DEFAULT 0, source TEXT, provider_mode TEXT, status TEXT NOT NULL DEFAULT 'completed', reference TEXT, tx_hash TEXT, is_mock INTEGER DEFAULT 0, meta TEXT, binance_order_id TEXT, fills_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS wallet_transfers (id TEXT PRIMARY KEY, sender_customer_id TEXT NOT NULL, receiver_customer_id TEXT NOT NULL, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', note TEXT, status TEXT NOT NULL DEFAULT 'COMPLETED', created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS bank_accounts (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, bank_name TEXT, account_holder TEXT, account_number TEXT, routing_number TEXT, iban TEXT, swift_code TEXT, currency TEXT DEFAULT 'USD', is_default INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
-    `CREATE TABLE IF NOT EXISTS bank_payouts (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, bank_account_id TEXT, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL DEFAULT 'PENDING', reference TEXT, note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS merchant_bank_accounts (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, bank_name TEXT, account_holder TEXT, account_number TEXT, routing_number TEXT, iban TEXT, swift_code TEXT, currency TEXT DEFAULT 'USD', is_default INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS merchant_payouts (id TEXT PRIMARY KEY, merchant_id TEXT NOT NULL, bank_account_id TEXT, amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL DEFAULT 'PENDING', reference TEXT, approved_by TEXT, rejected_by TEXT, rejection_reason TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS hot_wallet_transactions (id TEXT PRIMARY KEY, type TEXT NOT NULL, coin TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'mainnet', amount REAL NOT NULL, from_address TEXT, to_address TEXT, tx_hash TEXT, status TEXT NOT NULL DEFAULT 'COMPLETED', reference TEXT, merchant_id TEXT, customer_id TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
@@ -536,6 +535,21 @@ async function getDb(): Promise<any> {
       nonce TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       PRIMARY KEY (api_key, nonce)
+    )`,
+    // Protocol 101.1 codes the vault bank has verified and spent. The unique
+    // constraint is what makes a verbal code single-use per merchant.
+    `CREATE TABLE IF NOT EXISTS vault_voice_auth_codes (
+      id TEXT PRIMARY KEY,
+      auth_code TEXT NOT NULL,
+      merchant_id TEXT NOT NULL,
+      pan_last4 TEXT,
+      amount_minor REAL,
+      currency TEXT,
+      terminal_id TEXT,
+      stan TEXT,
+      reference TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (auth_code, merchant_id)
     )`,
     `CREATE TABLE IF NOT EXISTS vault_payouts (
       id TEXT PRIMARY KEY,
@@ -909,23 +923,32 @@ async function getDb(): Promise<any> {
     try { _db.run(sql); } catch (_) {}
   }
   const NOW_ISO = new Date().toISOString();
-  const gatewayApiKey = process.env.VAULT_BANK_API_KEY?.trim();
-  const gatewaySecretKey = process.env.VAULT_BANK_SECRET_KEY?.trim();
-  if (gatewayApiKey && gatewaySecretKey) {
+  // Register an env-configured gateway key pair. Always ensures the env values
+  // win on every startup so a rotated secret takes effect without a manual reset.
+  const seedVaultKey = (apiKey?: string, secretKey?: string, label = 'environment vault bank') => {
+    if (!apiKey || !secretKey) return;
     try {
       _db.run(
         `INSERT OR IGNORE INTO vault_api_keys
           (id, api_key, secret_key, label, active, created_at)
          VALUES (?, ?, ?, ?, 1, ?)`,
-        [require('uuid').v4(), gatewayApiKey, gatewaySecretKey, 'environment vault bank', NOW_ISO],
+        [require('uuid').v4(), apiKey, secretKey, label, NOW_ISO],
       );
-      // Always ensure the env key is active with the correct secret on every startup
       _db.run(
         `UPDATE vault_api_keys SET active = 1, secret_key = ? WHERE api_key = ?`,
-        [gatewaySecretKey, gatewayApiKey],
+        [secretKey, apiKey],
       );
     } catch (_) {}
-  }
+  };
+  seedVaultKey(process.env.VAULT_BANK_API_KEY?.trim(), process.env.VAULT_BANK_SECRET_KEY?.trim());
+  // Dedicated credential for the Protocol 101.1 voice-auth verify channel, so the
+  // POS can verify codes at /api/vault-bank/voice-auth/verify without holding the
+  // general vault bank key.
+  seedVaultKey(
+    process.env.VOICE_AUTH_VERIFY_API_KEY?.trim(),
+    process.env.VOICE_AUTH_VERIFY_SECRET?.trim(),
+    'voice auth verifier',
+  );
 
   // ── Void the $10M test inbound entry that polluted the vault ledger ─────────
   // This was a voice-auth inbound registration (auth code "770") that was
@@ -1168,6 +1191,22 @@ async function getDb(): Promise<any> {
     ['merchant_crypto_withdrawals', 'fee REAL DEFAULT 0'],
     ['merchant_crypto_withdrawals', 'provider TEXT'],
     ['merchant_crypto_withdrawals', 'provider_reference TEXT'],
+    // Canonical merchant_crypto_withdrawals columns. Databases created from the older
+    // customer-facing shape (customer_id/coin/to_address) are missing these, so
+    // `CREATE INDEX ... (merchant_id, status)` and the crypto payout INSERT both fail.
+    ['merchant_crypto_withdrawals', 'merchant_id TEXT'],
+    ['merchant_crypto_withdrawals', 'amount_usd REAL'],
+    ['merchant_crypto_withdrawals', 'asset TEXT'],
+    ['merchant_crypto_withdrawals', 'address TEXT'],
+    ['merchant_crypto_withdrawals', "status TEXT DEFAULT 'pending_manual'"],
+    ['merchant_crypto_withdrawals', 'ref TEXT'],
+    ['merchant_crypto_withdrawals', 'tx_id TEXT'],
+    ['merchant_crypto_withdrawals', 'tx_url TEXT'],
+    ['merchant_crypto_withdrawals', 'meta TEXT'],
+    ['merchant_crypto_withdrawals', 'created_at TEXT DEFAULT CURRENT_TIMESTAMP'],
+    ['merchant_crypto_withdrawals', 'updated_at TEXT DEFAULT CURRENT_TIMESTAMP'],
+    // payout_instructions.provider_ref — the vault-dashboard backfill INSERT writes it.
+    ['payout_instructions',          'provider_ref TEXT'],
     // vault_card_txns: POSTED | VOIDED — lets an unbacked card credit be voided
     // without deleting the audit row it left behind.
     ['vault_card_txns',             "status TEXT NOT NULL DEFAULT 'POSTED'"],

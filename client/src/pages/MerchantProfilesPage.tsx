@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useToast } from "../components/ui/toastContext";
 import { TableSkeleton } from "../components/ui/Skeleton";
 import { deleteMerchantProfile, fetchMerchantProfiles } from "../lib/api";
@@ -31,10 +32,25 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
   ),
+  Payout: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v13m0 0l-4-4m4 4l4-4M4 19h16" />
+    </svg>
+  ),
 };
 
 const formatMoney = (balance: number, currency: string) =>
   `${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+
+/**
+ * The wallet a payout should be taken from: the currency with the largest
+ * non-zero balance (e.g. the EUR settlement wallet), or null when the merchant
+ * holds nothing.
+ */
+const payoutWalletOf = (profile: MerchantProfile) =>
+  [...profile.wallets]
+    .filter((w) => Number(w.balance) > 0)
+    .sort((a, b) => Number(b.balance) - Number(a.balance))[0] || null;
 
 export const MerchantProfilesPage = () => {
   const [profiles, setProfiles] = useState<MerchantProfile[]>([]);
@@ -44,6 +60,7 @@ export const MerchantProfilesPage = () => {
   const [confirmName, setConfirmName] = useState("");
   const [deleting, setDeleting] = useState(false);
   const { showToast } = useToast();
+  const navigate = useNavigate();
 
   useEffect(() => {
     loadProfiles();
@@ -69,6 +86,14 @@ export const MerchantProfilesPage = () => {
     setConfirmName("");
   };
 
+  // Hands off to the existing payout flow on the Settlements page, telling it
+  // which merchant and which wallet currency to pay out from.
+  const openPayout = (profile: MerchantProfile, currency: string) => {
+    navigate(
+      `/settlements?payout=${encodeURIComponent(profile.merchantId)}&currency=${encodeURIComponent(currency)}`
+    );
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -92,6 +117,56 @@ export const MerchantProfilesPage = () => {
   const canConfirm =
     !!deleteTarget &&
     confirmName.trim().toLowerCase() === deleteTarget.merchantName.trim().toLowerCase();
+
+  // Row actions: Payout hands off to the Settlements flow with this merchant's
+  // funded currency preselected; Delete stays gated by the audit-trail guard.
+  const renderActions = (profile: MerchantProfile) => {
+    const wallet = payoutWalletOf(profile);
+    return (
+      <div className="flex flex-col items-end gap-2">
+        {wallet ? (
+          <button
+            onClick={() => openPayout(profile, wallet.currency)}
+            title={`Pay out ${formatMoney(wallet.balance, wallet.currency)} to the merchant's bank account`}
+            className="inline-flex items-center gap-1.5 text-green-700 hover:text-green-900"
+          >
+            <Icons.Payout />
+            Payout
+          </button>
+        ) : (
+          <span
+            className="inline-flex items-center gap-1.5 text-gray-400 cursor-not-allowed"
+            title="No wallet balance to pay out"
+          >
+            <Icons.Payout />
+            Payout
+          </span>
+        )}
+        {profile.deletable ? (
+          <button
+            onClick={() => openDelete(profile)}
+            className="inline-flex items-center gap-1.5 text-red-600 hover:text-red-900"
+          >
+            <Icons.Trash />
+            Delete
+          </button>
+        ) : (
+          <div className="flex flex-col items-end gap-1">
+            <span
+              className="inline-flex items-center gap-1.5 text-gray-400 cursor-not-allowed"
+              title={`Delete blocked: ${profile.deleteBlockers.join("; ")}`}
+            >
+              <Icons.Lock />
+              Delete
+            </span>
+            <span className="text-[11px] text-amber-700 max-w-[260px] text-right leading-snug">
+              {profile.deleteBlockers.join("; ")}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="p-8 max-w-7xl mx-auto animate-fade-in">
@@ -207,28 +282,7 @@ export const MerchantProfilesPage = () => {
                       )}
                     </td>
                     <td className="px-6 py-4 text-right text-sm font-medium">
-                      {profile.deletable ? (
-                        <button
-                          onClick={() => openDelete(profile)}
-                          className="inline-flex items-center gap-1.5 text-red-600 hover:text-red-900"
-                        >
-                          <Icons.Trash />
-                          Delete
-                        </button>
-                      ) : (
-                        <div className="flex flex-col items-end gap-1">
-                          <span
-                            className="inline-flex items-center gap-1.5 text-gray-400 cursor-not-allowed"
-                            title={`Delete blocked: ${profile.deleteBlockers.join("; ")}`}
-                          >
-                            <Icons.Lock />
-                            Delete
-                          </span>
-                          <span className="text-[11px] text-amber-700 max-w-[260px] text-right leading-snug">
-                            {profile.deleteBlockers.join("; ")}
-                          </span>
-                        </div>
-                      )}
+                      {renderActions(profile)}
                     </td>
                   </tr>
                 ))

@@ -16,18 +16,19 @@
  *   bank is configured.
  *
  * Customer (payer / sender of funds) details are pre-filled from:
- *   - Default: EXPLORE RESIN HANDICRAFTS / RAK Bank UAE
+ *   - Default: PAYOUT_PAYER_* environment variables (blank until configured)
  *   - Can be overridden via query params
  */
 
 import { Router, Request, Response } from 'express';
 import { db } from '../../config/db';
+import { merchantDisplayName } from '../../config/merchantBank';
 
 const router = Router();
 
-// ── Merchant (beneficiary) details — PRIMESTACK TECHNOLOGIES LLC ─────────────
+// ── Merchant (beneficiary) details — configured via PAYOUT_BANK_* env vars ───
 const MERCHANT = {
-  name:           'PRIMESTACK TECHNOLOGIES LLC',
+  name:           merchantDisplayName(),
   accountType:    'Deposit',
   routingNumber:  process.env.PAYOUT_BANK_ROUTING_NUMBER || '',
   accountNumber:  process.env.PAYOUT_BANK_ACCOUNT_NUMBER || '',
@@ -37,15 +38,15 @@ const MERCHANT = {
   currency:       'USD',
 };
 
-// ── Default customer (payer) details — EXPLORE RESIN HANDICRAFTS ─────────────
+// ── Default customer (payer) details — configured via PAYOUT_PAYER_* env vars ─
 const DEFAULT_CUSTOMER = {
-  name:          'EXPLORE RESIN HANDICRAFTS',
-  bankName:      'RAK BANK',
-  bankCountry:   'United Arab Emirates',
-  accountNumber: '0333700319001',
-  iban:          'AE910400000333700319001',
-  branch:        'Umm Hurrair, Dubai',
-  swiftBic:      'RAKBAEADXXX',         // RAK Bank SWIFT code
+  name:          process.env.PAYOUT_PAYER_NAME || '',
+  bankName:      process.env.PAYOUT_PAYER_BANK_NAME || '',
+  bankCountry:   process.env.PAYOUT_PAYER_BANK_COUNTRY || '',
+  accountNumber: process.env.PAYOUT_PAYER_ACCOUNT_NUMBER || '',
+  iban:          process.env.PAYOUT_PAYER_IBAN || '',
+  branch:        process.env.PAYOUT_PAYER_BRANCH || '',
+  swiftBic:      process.env.PAYOUT_PAYER_SWIFT || '',
 };
 
 // ── Fetch all unsettled transactions ─────────────────────────────────────────

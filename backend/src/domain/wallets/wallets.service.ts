@@ -6,6 +6,7 @@ import { createAcquirerClient, detectNetworkFromPan } from '../payments/acquirer
 import { v4 as uuidv4 } from 'uuid';
 import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
 import { customerAuthService } from '../customerauth/customer-auth.service';
+import { submitBankPayout, type BankPayoutResult } from '../payouts/payoutProvider.service';
 
 export class WalletsService {
 
@@ -1572,17 +1573,71 @@ export class WalletsService {
       [uuidv4(), wallet.id, amount, ccy, ref, `Bank payout to ${bankRes.rows[0].bank_name}`]
     );
 
-    // Record payout (PENDING — real payout requires ACH/SEPA integration)
-    await db.query(
-      `INSERT INTO bank_payouts (id, customer_id, bank_account_id, amount, currency, fee, net_amount, status, reference, scheduled_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, datetime('now', '+1 day'))`,
-      [payoutId, customerId, bankAccountId, amount, ccy, fee, netAmount, ref]
-    );
-
     // Get customer details for receipt
     const customerRes = await db.query('SELECT * FROM customers WHERE id = ?', [customerId]);
     const customer = customerRes.rows[0];
     const bankAccount = bankRes.rows[0];
+
+    const merchantId = String(
+      customer?.merchant_id || process.env.MERCHANT_ID || acquirerConfig.merchantId || 'MRC-1001'
+    );
+
+    // Record the instruction before it leaves the building: if the rail call fails
+    // or the process dies mid-flight, the payout is still auditable.
+    await db.query(
+      `INSERT INTO bank_payouts (id, customer_id, merchant_id, bank_account_id, amount, currency, fee, net_amount, status, reference, provider, scheduled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, 'pending', datetime('now', '+1 day'))`,
+      [payoutId, customerId, merchantId, bankAccountId, amount, ccy, fee, netAmount, ref]
+    );
+
+    // Submit the instruction to the configured bank rail (ISO8583-TCP, Dwolla ACH
+    // or an external HTTPS payout API). The rail is selected by
+    // BANK_PAYOUT_PROVIDER + INTERNAL_PAYOUT_DOWNSTREAM in the environment.
+    let railResult: BankPayoutResult;
+    try {
+      railResult = await submitBankPayout({
+        merchantId,
+        payoutId,
+        amount: netAmount,
+        currency: ccy,
+        reference: ref,
+        bankAccount: {
+          bank_name: bankAccount.bank_name,
+          account_holder: bankAccount.account_holder,
+          account_number: bankAccount.account_number,
+          routing_number: bankAccount.routing_number,
+          swift_code: bankAccount.swift_code,
+          iban: bankAccount.iban,
+          account_type: bankAccount.account_type,
+          bank_address: bankAccount.bank_address,
+          country: bankAccount.country,
+          dwolla_funding_source_url: bankAccount.dwolla_funding_source_url,
+        },
+      });
+    } catch (railError: any) {
+      // The rail refused the instruction — give the funds back and surface the
+      // real reason instead of leaving a silently-debited wallet.
+      await db.query('UPDATE customer_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [amount, wallet.id]);
+      await db.query(
+        `INSERT INTO wallet_transactions (id, wallet_id, type, amount, currency, source, reference, description) VALUES (?, ?, 'credit', ?, ?, 'bank_payout_reversal', ?, ?)`,
+        [uuidv4(), wallet.id, amount, ccy, ref, `Reversed bank payout: ${railError?.message || railError}`]
+      );
+      await db.query(`UPDATE bank_payouts SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [payoutId]);
+      throw new Error(`Payout rail rejected the transfer: ${railError?.message || railError}`);
+    }
+
+    const status = railResult.success ? String(railResult.status || 'PENDING') : 'FAILED';
+    const providerRef = railResult.providerReference || null;
+    const eta = railResult.rail
+      ? '1-2 business days'
+      : status === 'PENDING_BANK_CONFIRMATION'
+        ? 'Manual bank transfer — awaiting confirmation'
+        : 'Awaiting bank rail activation (set INTERNAL_PAYOUT_DOWNSTREAM=iso8583 or dwolla)';
+
+    await db.query(
+      `UPDATE bank_payouts SET status = ?, provider = ?, provider_ref = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [status, railResult.provider, providerRef, payoutId]
+    );
 
     const payoutData: any = { 
       success: true, 
@@ -1591,9 +1646,12 @@ export class WalletsService {
       amount, 
       fee, 
       netAmount, 
-      status: 'PENDING', 
-      eta: '1-2 business days', 
+      status, 
+      eta, 
       currency: ccy,
+      provider: railResult.provider,
+      rail: railResult.rail || null,
+      providerReference: providerRef,
       customer,
       bankAccount
     };
@@ -1636,6 +1694,8 @@ Processing Fee:  ${payout.currency} $${Number(payout.fee).toFixed(2)}
 Net Amount:      ${payout.currency} $${Number(payout.netAmount).toFixed(2)}
 
 ETA: ${payout.eta}
+${payout.provider ? `Provider: ${payout.provider}${payout.rail ? ` (${payout.rail})` : ''}` : ''}
+${payout.providerReference ? `Provider Ref: ${payout.providerReference}` : ''}
 
 ═══════════════════════════════════════════
        Thank you for your business!

@@ -45,6 +45,24 @@ async function ensureTable() {
   `);
 }
 
+// ── Resolve the beneficiary account for a wire ────────────────────────────────
+// Prefers a default bank account in the payout currency, so an EUR transfer is
+// not addressed to a USD beneficiary account. Falls back to any default account.
+async function resolveDefaultBankAccount(merchantId: string, currency: string) {
+  const ccy = String(currency || 'USD').toUpperCase();
+  const res = await db.query(
+    `SELECT * FROM bank_accounts WHERE merchant_id = ?
+     ORDER BY
+       CASE WHEN currency = ? AND is_default = 1 THEN 0
+            WHEN currency = ? THEN 1
+            WHEN is_default = 1 THEN 2
+            ELSE 3 END
+     LIMIT 1`,
+    [merchantId, ccy, ccy]
+  );
+  return res.rows[0] || {};
+}
+
 // ── POST /api/payout/mt103/generate ───────────────────────────────────────────
 // Generate MT103 from a merchant payout record
 router.post('/generate', authenticateToken, async (req, res) => {
@@ -77,10 +95,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
       }
     }
     if (!resolvedBank) {
-      const baRes = await db.query(
-        `SELECT * FROM bank_accounts WHERE merchant_id = ? AND is_default = 1 LIMIT 1`, [merchantId]
-      );
-      resolvedBank = baRes.rows[0] || {};
+      resolvedBank = await resolveDefaultBankAccount(merchantId, String(currency || 'USD'));
     }
 
     // Build payout params (allow overrides from body)
@@ -165,12 +180,8 @@ router.post('/generate-from-balance', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: `No ${currency} balance available in merchant wallet` });
     }
 
-    // Get default bank account
-    const baRes = await db.query(
-      `SELECT * FROM bank_accounts WHERE merchant_id = ? AND is_default = 1 LIMIT 1`,
-      [merchantId]
-    );
-    const bankAccount = baRes.rows[0] || {};
+    // Get default bank account for the payout currency
+    const bankAccount = await resolveDefaultBankAccount(merchantId, String(currency).toUpperCase());
 
     const mt103Input = buildMt103FromPayout({
       payoutId:    uuidv4(),

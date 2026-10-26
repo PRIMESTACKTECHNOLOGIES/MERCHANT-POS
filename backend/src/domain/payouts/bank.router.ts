@@ -6,6 +6,16 @@ import { db } from '../../config/db';
 import { submitBankPayout } from './payoutProvider.service';
 import { executeInternalPayout } from './internalPayoutProvider';
 import { authenticateToken } from '../../middleware/auth.middleware';
+import { merchantDisplayName } from '../../config/merchantBank';
+
+/**
+ * Business name printed on payout receipts. Env-driven (MERCHANT_NAME /
+ * MERCHANT_BANK_ACCOUNT_HOLDER / PROCESSOR_NAME) so a deployment never emits a
+ * hardcoded company name; falls back to a neutral generic label.
+ */
+function receiptBrand(): string {
+  return merchantDisplayName() || 'MERCHANT PAYOUT RECEIPT';
+}
 
 function renderPayoutReceiptHtml(po: any, wallet: any, ldg: any, mtx: any): string {
   const meta = JSON.parse(po.meta || '{}');
@@ -45,7 +55,7 @@ function renderPayoutReceiptHtml(po: any, wallet: any, ldg: any, mtx: any): stri
   parts.push('.btns{display:flex;gap:12px;justify-content:flex-end;margin-bottom:16px;}button{border-radius:8px;border:1px solid #1e293b;background:#fff;padding:8px 14px;font-weight:600;cursor:pointer;}button.primary{background:#0f172a;color:#fff;}@media print{.btns{display:none;}body{padding:0;background:#fff;}.wrap{box-shadow:none;border:none;}}');
   parts.push('</style></head><body><div class="wrap">');
   parts.push('<div class="btns"><button onclick="window.print()" class="primary">Print / Save as PDF</button><button onclick="window.close()">Close</button></div>');
-  parts.push('<div class="hdr"><div><div class="logo">JUKRUTI LOGISTICS PTY LTD<span class="sub">MERCHANT PAYOUT RECEIPT &middot; PROTOCOL 201.3</span></div></div><div class="pill">' + statusLabel + '</div></div>');
+  parts.push('<div class="hdr"><div><div class="logo">' + receiptBrand() + '<span class="sub">MERCHANT PAYOUT RECEIPT &middot; PROTOCOL 201.3</span></div></div><div class="pill">' + statusLabel + '</div></div>');
   parts.push('<div class="amount"><div><div class="small">Total Payout Amount</div><div class="big">' + fmt(po.amount, po.currency) + '</div><div class="bigmono">CURRENCY ' + po.currency + ' &middot; ' + String(po.provider || 'manual').toUpperCase() + '</div></div>');
   parts.push('<div style="text-align:right;"><div class="small">Payout ID</div><div class="mono" style="font-size:16px;color:#fff;font-weight:700;">' + po.id + '</div><div class="bigmono">Created ' + fmtDate(po.created_at) + '</div></div></div>');
   parts.push('<div class="sec"><h2>Merchant &amp; Wallet</h2><div class="grid">');
@@ -92,7 +102,7 @@ function renderPayoutReceiptHtml(po: any, wallet: any, ldg: any, mtx: any): stri
     parts.push('1. Card processor runs automatic settlement (1&ndash;3 business days). 2. Check your bank statement for the deposit. 3. Approve payout with your bank reference. 4. Re-download this receipt after approval &mdash; it will update to COMPLETED automatically.');
   }
   parts.push('</div></div>');
-  parts.push('<div class="foot"><div>JUKRUTI LOGISTICS PTY LTD &middot; Merchant ' + po.merchant_id + ' &middot; Offline POS Protocol 201.3</div>');
+  parts.push('<div class="foot"><div>' + receiptBrand() + ' &middot; Merchant ' + po.merchant_id + ' &middot; Offline POS Protocol 201.3</div>');
   parts.push('<div>Generated ' + fmtDate(new Date().toISOString()) + ' &middot; All figures triple-verified (wallet.balance = mwtx NET = ledger AUTHORIZED)</div>');
   parts.push('<div class="sig">RECEIPT HASH: SHA256[' + recHash + '...]</div></div>');
   parts.push('</div></body></html>');
@@ -245,7 +255,7 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
     //       The merchant is withdrawing their own gold-sale proceeds from merchant_wallets to the
     //       saved bank account they own; once the money physically arrives (any channel), the merchant
     //       clicks "Confirm Received in Bank" to close the bookkeeping loop to COMPLETED.
-    await debitMerchantWallet(merchantId, Number(amount), 'payout', 'bank_payout', { bank_account, bank_account_id: resolvedBankAccountId });
+    await debitMerchantWallet(merchantId, Number(amount), 'payout', 'bank_payout', { bank_account, bank_account_id: resolvedBankAccountId }, currency);
 
     const payoutId = uuidv4();
     const initialStatus = isManual ? 'PENDING_BANK_CONFIRMATION' : isInternal ? 'PENDING_RAIL' : 'pending';
@@ -515,7 +525,8 @@ router.post('/payouts/:payoutId/reject', authenticateToken, async (req, res) => 
         Number(row.amount),
         'payout_rejected',
         `reversal:${payoutId}`,
-        { reason, rejectedBy }
+        { reason, rejectedBy },
+        String(row.currency || 'USD')
       );
     } catch (creditErr: any) {
       console.error(`[payout reject] creditMerchantWallet FAILED for ${payoutId}`, creditErr);
@@ -609,7 +620,7 @@ router.get('/payouts/:payoutId/receipt', authenticateToken, async (req, res) => 
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
-      const payload = '═══════════════════════════════════════════════════════════\n  JUKRUTI LOGISTICS PTY LTD — MERCHANT PAYOUT RECEIPT\n═══════════════════════════════════════════════════════════\n\n'
+      const payload = '═══════════════════════════════════════════════════════════\n  ' + receiptBrand() + ' — MERCHANT PAYOUT RECEIPT\n═══════════════════════════════════════════════════════════\n\n'
         + `Payout ID : ${po.id}\nMerchant  : ${po.merchant_id}\nAmount    : ${po.currency} ${Number(po.amount || 0).toFixed(2)}\nStatus    : ${po.status}\nProvider  : ${po.provider || 'manual'}\nCreated   : ${po.created_at}\n\n`
         + strip
         + '\n\n═══════════════════════════════════════════════════════════\n  End of Receipt\n═══════════════════════════════════════════════════════════';

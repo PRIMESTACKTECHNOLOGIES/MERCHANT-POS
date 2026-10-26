@@ -1199,15 +1199,15 @@ export const WalletsPage = () => {
                 // Load saved business information from localStorage
                 const savedBusinessInfo = localStorage.getItem('businessInfo');
                 const businessInfo = savedBusinessInfo ? JSON.parse(savedBusinessInfo) : {
-                  authorizedPersonName: 'Jukruti Jacob Dumba',
-                  authorizationRole: 'Account Signatory',
-                  authorizedEmail: 'Jukrutidumba@gmail.com',
-                  authorizedPhone: '0607289532',
-                  businessName: 'Jukruti Logistics (Pty) Ltd',
-                  businessRegNumber: '2014/215965/07',
-                  businessAddress: '9 Houtkapper Str, Olifantshoek, Northern Cape, 8450, South Africa',
-                  businessPhone: '0607289532',
-                  taxId: '9205076330089'
+                  authorizedPersonName: '',
+                  authorizationRole: '',
+                  authorizedEmail: '',
+                  authorizedPhone: '',
+                  businessName: '',
+                  businessRegNumber: '',
+                  businessAddress: '',
+                  businessPhone: '',
+                  taxId: ''
                 };
                 
                 setF({ 

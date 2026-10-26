@@ -679,11 +679,11 @@ export const DeveloperPage = () => {
 
             {/* Beneficiary preview */}
             <div className="mt-3 grid grid-cols-2 gap-3 bg-white border border-slate-100 rounded-lg p-3 text-xs">
-              <div><span className="text-slate-400">Sender BIC:</span> <span className="font-mono font-bold">PRSTUS33XXX</span></div>
-              <div><span className="text-slate-400">Sender:</span> <span className="font-bold">PRIMESTACK TECHNOLOGIES LLC</span></div>
+              <div><span className="text-slate-400">Sender BIC:</span> <span className="font-mono font-bold">—</span></div>
+              <div><span className="text-slate-400">Sender:</span> <span className="font-bold">—</span></div>
               <div><span className="text-slate-400">Beneficiary BIC:</span> <span className="font-mono font-bold"></span></div>
               <div><span className="text-slate-400">Account:</span> <span className="font-mono font-bold"></span></div>
-              <div><span className="text-slate-400">Beneficiary:</span> <span className="font-bold">JUKRUTI LOGISTICS PTY LTD</span></div>
+              <div><span className="text-slate-400">Beneficiary:</span> <span className="font-bold">—</span></div>
               <div><span className="text-slate-400">Charge:</span> <span className="font-bold">SHA</span></div>
             </div>
 
@@ -792,7 +792,7 @@ export const DeveloperPage = () => {
               <li>Click <strong>📥 Download</strong> to save the .txt file</li>
               <li>Upload the .txt to your bank's SWIFT upload portal or send to your correspondent bank</li>
               <li>Click <strong>✉️ Sent</strong> to mark it as submitted</li>
-              <li>Once bank confirms — funds arrive in beneficiary account (JUKRUTI / ABSA)</li>
+              <li>Once bank confirms — funds arrive in the beneficiary bank account</li>
             </ol>
           </div>
 

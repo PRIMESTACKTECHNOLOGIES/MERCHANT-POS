@@ -45,6 +45,14 @@ export function maskAccount(accountNumber?: string | null, iban?: string | null)
   return last4 ? `**** ${last4}` : '';
 }
 
+/**
+ * Display name of the business, used on receipts, batch files and wire headers.
+ * Env-driven so a deployment never prints a hardcoded company name.
+ */
+export function merchantDisplayName(): string {
+  return firstEnv('MERCHANT_NAME', 'MERCHANT_BANK_ACCOUNT_HOLDER', 'PROCESSOR_NAME');
+}
+
 /** Env-defined receiving bank account (overrides Merchant Settings). */
 export function envReceivingBankAccount() {
   return {

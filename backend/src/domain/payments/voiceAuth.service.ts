@@ -17,13 +17,27 @@
  * Validation rules (acquirer-grade, not toy):
  *   ✓ Auth code format: 4-6 digits only
  *   ✓ Not reused (idempotency — same code cannot be used twice)
- *   ✓ Not expired (48-hour window from registration)
- *   ✓ If inbound registration exists: amount + PAN must match
- *   ✓ If no registration: accept (bank gave code verbally, no pre-registration)
+ *   ✓ Not expired (VOICE_AUTH_EXPIRY_HOURS window, default 48h)
+ *   ✓ If inbound registration exists: amount + PAN + currency must match, and the
+ *     registration itself must still be inside the expiry window
+ *   ✓ If no registration: the code is verified server-side — see VERIFICATION MODES.
+ *     An unverifiable code is REFUSED (fail closed).
+ *
+ * VERIFICATION MODES (Rule 4, no pre-registration):
+ *   1. VOICE_AUTH_VERIFY_URL    — POST the code to the vault bank's
+ *                                 POST /api/vault-bank/voice-auth/verify endpoint,
+ *                                 signed with the vault gateway HMAC contract
+ *                                 (VAULT_BANK_API_KEY / VAULT_BANK_SECRET_KEY)
+ *   2. VOICE_AUTH_HMAC_SECRET   — offline fallback: the code must equal the
+ *                                 6-digit code derived by voiceAuthCode.ts
+ *   3. neither configured       — every code is declined, unless the development-only
+ *                                 VOICE_AUTH_ALLOW_UNVERIFIED=true escape hatch is set
  */
 
 import { db } from '../../config/db';
 import { v4 as uuidv4 } from 'uuid';
+import { signPayload } from '../vault/gateway/auth/hmac';
+import { safeEqual, verifyVoiceAuthCode } from './voiceAuthCode';
 
 export interface VoiceAuthInput {
   authCode:    string;
@@ -67,6 +81,120 @@ async function ensureTable() {
   `).catch(() => {});
 }
 
+// ── Verification configuration ───────────────────────────────────────────────
+// Read per call so an operator can change them without a rebuild.
+function envInt(key: string, fallback: number): number {
+  const n = Number(process.env[key]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function voiceAuthExpiryHours(): number {
+  return envInt('VOICE_AUTH_EXPIRY_HOURS', 48);
+}
+
+function voiceAuthVerifyUrl(): string {
+  return (process.env.VOICE_AUTH_VERIFY_URL || '').trim();
+}
+
+function voiceAuthHmacSecret(): string {
+  return (process.env.VOICE_AUTH_HMAC_SECRET || '').trim();
+}
+
+function voiceAuthAllowUnverified(): boolean {
+  return (process.env.VOICE_AUTH_ALLOW_UNVERIFIED || '').trim().toLowerCase() === 'true';
+}
+
+/** SQLite timestamps are UTC without a zone marker; ISO strings carry their own. */
+function parseTimestamp(value: unknown): number {
+  const raw = String(value ?? '').trim();
+  if (!raw) return NaN;
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(raw) ? raw.replace(' ', 'T') + 'Z' : raw;
+  return Date.parse(iso);
+}
+
+interface FundingServerVerdict {
+  ok: boolean;
+  unavailable: boolean;
+  reason: string;
+  reference?: string;
+}
+
+function voiceAuthVerifyApiKey(): string {
+  return ((process.env.VOICE_AUTH_VERIFY_API_KEY || process.env.VAULT_BANK_API_KEY) || '').trim();
+}
+
+function voiceAuthVerifySecret(): string {
+  return ((process.env.VOICE_AUTH_VERIFY_SECRET || process.env.VAULT_BANK_SECRET_KEY) || '').trim();
+}
+
+/**
+ * Ask the vault bank whether this verbal code is real and unspent.
+ * Speaks the vault gateway contract: x-api-key + x-timestamp + x-nonce, with
+ * HMAC-SHA512 over "<timestamp>.<nonce>.<raw json body>".
+ */
+async function verifyWithFundingServer(code: string, input: VoiceAuthInput, panLast4: string): Promise<FundingServerVerdict> {
+  const url = voiceAuthVerifyUrl();
+  const apiKey = voiceAuthVerifyApiKey();
+  const secret = voiceAuthVerifySecret();
+  if (!apiKey || !secret) {
+    return {
+      ok: false,
+      unavailable: true,
+      reason: 'Voice auth verification needs gateway credentials — set VAULT_BANK_API_KEY / VAULT_BANK_SECRET_KEY (or VOICE_AUTH_VERIFY_API_KEY / VOICE_AUTH_VERIFY_SECRET)',
+    };
+  }
+
+  const payload = JSON.stringify({
+    auth_code: code,
+    pan_last4: panLast4,
+    expiry: String(input.expiry || ''),
+    amount_minor: Number(input.amountMinor),
+    currency: String(input.currency || 'USD').toUpperCase(),
+    merchant_id: String(input.merchantId || ''),
+    terminal_id: String(input.terminalId || ''),
+    stan: input.stan ? String(input.stan) : undefined,
+    request_id: uuidv4(),
+  });
+  const timestamp = String(Date.now());
+  const nonce = uuidv4();
+  const signature = signPayload(secret, `${timestamp}.${nonce}.${payload}`);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), envInt('VOICE_AUTH_VERIFY_TIMEOUT_MS', 8000));
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'x-timestamp': timestamp,
+        'x-nonce': nonce,
+        'x-signature': signature,
+      },
+      body: payload,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let body: any = {};
+    try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
+    if (!res.ok) {
+      return { ok: false, unavailable: false, reason: `Vault bank refused the verification request (HTTP ${res.status})${body?.error ? ` — ${body.error}` : ''}` };
+    }
+    const approved = body?.approved === true || body?.verified === true || String(body?.status || '').toUpperCase() === 'APPROVED';
+    return {
+      ok: approved,
+      unavailable: false,
+      reference: body?.reference || body?.verification_reference || undefined,
+      reason: approved ? '' : String(body?.reason || 'Vault bank did not approve this code'),
+    };
+  } catch (e: any) {
+    const detail = e?.name === 'AbortError' ? 'request timed out' : (e?.message || 'network error');
+    return { ok: false, unavailable: true, reason: `Vault bank unreachable — ${detail}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Validate a voice auth code.
  * Returns success=true if the code can be used for this transaction.
@@ -87,14 +215,14 @@ export async function validateVoiceAuth(input: VoiceAuthInput): Promise<VoiceAut
     };
   }
 
-  // Rule 2 — Auth code must not be reused for same merchant/amount
+  // Rule 2 — Auth code must not be reused for same merchant within the expiry window
   await ensureTable();
   const reuse = await db.query(
     `SELECT id FROM voice_auth_log
      WHERE auth_code = ? AND merchant_id = ? AND status = 'CAPTURED'
-     AND created_at > datetime('now', '-48 hours')
+     AND created_at > datetime('now', ?)
      LIMIT 1`,
-    [code, merchantId]
+    [code, merchantId, `-${voiceAuthExpiryHours()} hours`]
   ).catch(() => ({ rows: [] }));
 
   if (reuse.rows.length > 0) {
@@ -118,6 +246,21 @@ export async function validateVoiceAuth(input: VoiceAuthInput): Promise<VoiceAut
 
   if (inbound.rows.length > 0) {
     const reg = inbound.rows[0] as any;
+
+    // The registration itself expires — VOICE_AUTH_EXPIRY_HOURS from when the bank
+    // registered it. An expired registration cannot authorise a new transaction.
+    const registeredAt = parseTimestamp(reg.created_at);
+    const expiryHours = voiceAuthExpiryHours();
+    if (Number.isFinite(registeredAt) && Date.now() - registeredAt > expiryHours * 60 * 60 * 1000) {
+      return {
+        success: false,
+        reason: `Auth code ${code} was registered ${((Date.now() - registeredAt) / 3600000).toFixed(1)}h ago — the ${expiryHours}h verification window has passed`,
+        reasonCode: 'VOICE_AUTH_EXPIRED',
+        authCode: code,
+        registrationId: String(reg.id),
+      };
+    }
+
     const regAmount = Number(reg.amount || reg.amount_minor || 0);
     const regAmountMinor = regAmount > 1000 ? regAmount : Math.round(regAmount * 100);
 
@@ -166,13 +309,64 @@ export async function validateVoiceAuth(input: VoiceAuthInput): Promise<VoiceAut
     };
   }
 
-  // Rule 4 — No pre-registration found. Accept the code — bank gave it verbally.
-  // Bank has already verified PAN, expiry, cardholder name, amount, and fraud.
-  // We trust the merchant who called the bank.
+  // Rule 4 — No pre-registration. The code must still be verified server-side:
+  // either by the vault bank or by the shared-secret derivation it issued the
+  // code with. An unverifiable code is refused.
+  if (voiceAuthVerifyUrl()) {
+    const verdict = await verifyWithFundingServer(code, input, panLast4);
+    if (!verdict.ok) {
+      return {
+        success: false,
+        reason: verdict.reason,
+        reasonCode: verdict.unavailable ? 'VOICE_AUTH_VERIFY_UNAVAILABLE' : 'VOICE_AUTH_REJECTED_BY_BANK',
+        authCode: code,
+      };
+    }
+    return {
+      success: true,
+      reason: `Voice auth ${code} verified by the vault bank${verdict.reference ? ` (ref ${verdict.reference})` : ''}`,
+      reasonCode: 'VOICE_AUTH_VERIFIED_ONLINE',
+      authCode: code,
+      registrationId: verdict.reference,
+    };
+  }
+
+  if (voiceAuthHmacSecret()) {
+    const issuedFor = { code, pan, amountMinor, currency: ccy, merchantId: String(merchantId || '') };
+    if (verifyVoiceAuthCode(issuedFor, voiceAuthHmacSecret())) {
+      return {
+        success: true,
+        reason: `Voice auth ${code} matched the code issued for this card, amount and merchant`,
+        reasonCode: 'VOICE_AUTH_VERIFIED_HMAC',
+        authCode: code,
+      };
+    }
+    return {
+      success: false,
+      reason: `Auth code ${code} is not the code issued for this card ending ${panLast4}, amount ${(amountMinor / 100).toFixed(2)} ${ccy}, at this merchant.`,
+      reasonCode: 'VOICE_AUTH_CODE_MISMATCH',
+      authCode: code,
+    };
+  }
+
+  if (voiceAuthAllowUnverified()) {
+    console.warn(
+      `[VoiceAuth] ACCEPTING UNVERIFIED 101.1 code ${code} for merchant ${merchantId} — ` +
+      'VOICE_AUTH_ALLOW_UNVERIFIED=true. This must never be enabled in production.'
+    );
+    return {
+      success: true,
+      reason: `Voice auth code ${code} accepted WITHOUT verification (development mode)`,
+      reasonCode: 'VOICE_AUTH_UNVERIFIED_ALLOWED',
+      authCode: code,
+    };
+  }
+
+  // Fail closed: no verification source is configured, so the code cannot be trusted.
   return {
-    success: true,
-    reason: `Voice auth code ${code} accepted — bank verbal authorization recorded`,
-    reasonCode: 'VOICE_AUTH_VALID',
+    success: false,
+    reason: 'Protocol 101.1 codes cannot be verified: set VOICE_AUTH_VERIFY_URL (funding server) or VOICE_AUTH_HMAC_SECRET.',
+    reasonCode: 'VOICE_AUTH_NOT_VERIFIABLE',
     authCode: code,
   };
 }

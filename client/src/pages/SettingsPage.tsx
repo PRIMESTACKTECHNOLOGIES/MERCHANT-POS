@@ -925,7 +925,7 @@ export const SettingsPage = () => {
           </div>
           <Input 
             label="Account Holder Name (Beneficiary)"
-            placeholder="PRIMESTACK TECHNOLOGIES LLC"
+            placeholder="Registered business name"
             value={settings.banking.holderName} 
             onChange={(e) => setSettings({...settings, banking: {...settings.banking, holderName: e.target.value}})} 
           />
@@ -943,7 +943,6 @@ export const SettingsPage = () => {
           />
           <Input 
             label="Account Number / IBAN"
-            placeholder="343612919064346"
             value={settings.banking.accountNumber} 
             onChange={(e) => setSettings({...settings, banking: {...settings.banking, accountNumber: e.target.value}})} 
           />
