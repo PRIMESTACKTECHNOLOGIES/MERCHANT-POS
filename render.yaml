@@ -31,12 +31,6 @@ services:
         value: "https://merchant-pos-0nno.onrender.com"
       - key: ENABLE_RUNTIME_API_URL
         value: "true"
-      # Customer wallet portal now lives on Netlify. Any /portal/* request that
-      # still reaches this host is 302-redirected to this base URL (path + query
-      # preserved). Leave it blank to keep serving the portal from this service.
-      # Example: https://primestack-portal.netlify.app
-      - key: CUSTOMER_PORTAL_URL
-        sync: false
 
       # ── JWT / Auth ─────────────────────────────────────────────────────────
       - key: JWT_SECRET

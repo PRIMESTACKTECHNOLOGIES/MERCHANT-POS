@@ -526,19 +526,6 @@ app.post('/webhooks/transak/kyc', express.json({ limit: '1mb' }), async (req: Re
   } catch (e: any) { return res.status(200).json({ ok: true, error: 'acknowledged' }); }
 });
 
-// ── Customer wallet portal → Netlify ─────────────────────────────────────────
-// The customer portal now ships as its own static bundle on Netlify. Links that
-// were already handed out (printed receipts, QR codes, bookmarks) still point at
-// this host, so /portal/* is forwarded to CUSTOMER_PORTAL_URL. Path and query
-// string are preserved — the portal bundle keeps its /portal/... routes.
-// If CUSTOMER_PORTAL_URL is unset the request falls through unchanged, so the
-// backend keeps serving the bundled portal exactly as before.
-app.get(/^\/portal(\/.*)?$/, (req: Request, res: Response, next: NextFunction) => {
-  const base = (process.env.CUSTOMER_PORTAL_URL || '').trim().replace(/\/+$/, '');
-  if (!base) return next();
-  return res.redirect(302, `${base}${req.originalUrl}`);
-});
-
 if ((process.env.SERVE_FRONTEND === 'true' || process.env.SERVE_FRONTEND === '1') && _frontendDist) {
   app.get(/^\/(?!auth|api|merchant|wallet|webhooks|health).*$/, (_req: Request, res: Response) => {
     return serveInjectedIndexHtml(res);
