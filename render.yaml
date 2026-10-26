@@ -132,15 +132,18 @@ services:
         sync: false
 
       # ── Bank Payout Rail ───────────────────────────────────────────────────
-      # iso8583 or dwolla (empty = internal acquirer only)
+      # iso8583 (TCP acquirer) or dwolla (ACH). Empty = internal acquirer only:
+      # the payout is recorded and a SEPA pain.001 / SWIFT MT103 file is still
+      # generated for the receiving bank. Set it in the Render dashboard.
       - key: INTERNAL_PAYOUT_DOWNSTREAM
-        value: ""
+        sync: false
 
-      # ── Merchant IBAN/BIC (SEPA outbound debtor side) ──────────────────────
+      # ── Merchant IBAN/BIC (SEPA outbound debtor side / MT103 :50K sender) ──
+      # Bank data: set in the Render dashboard (sync: false), never committed.
       - key: MERCHANT_IBAN
-        value: ""
+        sync: false
       - key: MERCHANT_BIC
-        value: ""
+        sync: false
 
       # ── Receiving bank account (merchant receiver of settled funds) ────────
       # Overrides the bank account saved in Merchant Settings. Empty = use Settings.

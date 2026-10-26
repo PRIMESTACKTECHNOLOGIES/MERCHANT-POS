@@ -300,6 +300,30 @@ export function SettlementsPage() {
   const [merchantBalance, setMerchantBalance] = useState<number>(0);
   const [merchantBalanceLoading, setMerchantBalanceLoading] = useState(true);
   const { showToast } = useToast();
+
+  const apiBase = resolveApiBaseUrl({ envValue: import.meta.env.VITE_API_URL, currentOrigin: window.location.origin });
+
+  // Every payout emits a SEPA pain.001 / SWIFT MT103 file for the destination
+  // bank. The download routes are authenticated, so fetch → blob → save.
+  const downloadWireFile = async (path: string, filename: string) => {
+    try {
+      const res = await fetch(`${apiBase}${path}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast(`${filename} downloaded`, 'success');
+    } catch (err: any) {
+      showToast(`Download failed: ${err?.message ?? String(err)}`, 'error');
+    }
+  };
+
   
   // Filter States
   const [batchSearch, setBatchSearch] = useState("");
@@ -643,7 +667,7 @@ export function SettlementsPage() {
             <strong className="ml-2">Last Update:</strong> {new Date().toLocaleString()}
           </p>
           {/* ── One-click payout through the internal acquirer ── */}
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex items-start gap-3 flex-wrap">
             <button
               onClick={() => { setPayoutAmount(String(merchantBalance)); setShowPayoutModal(true); }}
               disabled={merchantBalance <= 0 || payoutLoading}
@@ -652,9 +676,49 @@ export function SettlementsPage() {
               🏦 Pay Out via Internal Acquirer
             </button>
             {lastPayoutResult && (
-              <span className="text-xs text-green-700 font-medium">
-                ✅ Last payout: {payoutMoney(Number(lastPayoutResult.amount || 0))} · Ref: {lastPayoutResult.provider_reference || lastPayoutResult.payout_id}
-              </span>
+              <div className="text-xs text-green-800 space-y-1">
+                <div className="font-medium">
+                  ✅ Last payout: {payoutMoney(Number(lastPayoutResult.amount || 0))} · Ref: {lastPayoutResult.provider_reference || lastPayoutResult.payout_id}
+                </div>
+                {lastPayoutResult.destination_bank?.bank_name && (
+                  <div className="text-green-700">
+                    → {lastPayoutResult.destination_bank.bank_name}
+                    {lastPayoutResult.destination_bank.iban ? ` · ${lastPayoutResult.destination_bank.iban}` : ''}
+                    {lastPayoutResult.destination_bank.swift_code ? ` · ${lastPayoutResult.destination_bank.swift_code}` : ''}
+                  </div>
+                )}
+                {(lastPayoutResult.wire_files?.mt103 || lastPayoutResult.wire_files?.sepa) && (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {lastPayoutResult.wire_files?.mt103 && (
+                      <button
+                        type="button"
+                        onClick={() => downloadWireFile(
+                          lastPayoutResult.wire_files.mt103.download_url,
+                          `MT103-${lastPayoutResult.wire_files.mt103.reference}.txt`,
+                        )}
+                        className="px-3 py-1 rounded-lg bg-green-100 hover:bg-green-200 text-green-800 font-bold transition"
+                      >
+                        ⬇ MT103 (SWIFT)
+                      </button>
+                    )}
+                    {lastPayoutResult.wire_files?.sepa && (
+                      <button
+                        type="button"
+                        onClick={() => downloadWireFile(
+                          lastPayoutResult.wire_files.sepa.download_url,
+                          `SEPA-${lastPayoutResult.wire_files.sepa.msg_id}.xml`,
+                        )}
+                        className="px-3 py-1 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold transition"
+                      >
+                        ⬇ SEPA XML
+                      </button>
+                    )}
+                  </div>
+                )}
+                {lastPayoutResult.wire_files?.errors?.length > 0 && (
+                  <div className="text-amber-700">⚠ {lastPayoutResult.wire_files.errors.join('; ')}</div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -697,11 +761,11 @@ export function SettlementsPage() {
                 </div>
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm space-y-1">
                   <div className="flex justify-between"><span className="text-slate-500">Bank</span><span className="font-semibold">{merchantBankAccount?.bank_name || 'Replacement provider'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Account</span><span className="font-mono font-semibold">{merchantBankAccount?.account_number || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Account</span><span className="font-mono font-semibold">{merchantBankAccount?.account_number || merchantBankAccount?.iban || '—'}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Holder</span><span className="font-semibold">{merchantBankAccount?.account_holder || '—'}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">Routing</span><span className="font-mono font-semibold">{merchantBankAccount?.routing_number || 'Not configured'}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500">SWIFT</span><span className="font-mono font-semibold">{merchantBankAccount?.swift_code || 'Not configured'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Provider</span><span className="font-semibold text-green-700">Internal Acquirer (Protocol 201.3) · Configured bank rail</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Provider</span><span className="font-semibold text-green-700">Internal Acquirer (Protocol 201.3) · SEPA / MT103 wire file</span></div>
                 </div>
               </div>
               <div className="px-6 pb-6 flex gap-3">

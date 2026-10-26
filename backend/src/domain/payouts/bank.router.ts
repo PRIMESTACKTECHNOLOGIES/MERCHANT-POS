@@ -6,7 +6,12 @@ import { db } from '../../config/db';
 import { submitBankPayout } from './payoutProvider.service';
 import { executeInternalPayout } from './internalPayoutProvider';
 import { authenticateToken } from '../../middleware/auth.middleware';
-import { merchantDisplayName } from '../../config/merchantBank';
+import { merchantDisplayName, resolveMerchantBankAccount } from '../../config/merchantBank';
+import {
+  generatePayoutWireFiles,
+  getSepaPayoutFile,
+  listPayoutWireFiles,
+} from './payoutWire.service';
 
 /**
  * Business name printed on payout receipts. Env-driven (MERCHANT_NAME /
@@ -109,6 +114,34 @@ function renderPayoutReceiptHtml(po: any, wallet: any, ldg: any, mtx: any): stri
   return parts.join('\n');
 }
 
+/**
+ * The operator-configured receiving account (MERCHANT_BANK_* / MERCHANT_IBAN /
+ * MERCHANT_BIC) rendered in the shape of a `bank_accounts` row. Deployments that
+ * have not seeded the table still pay out to the bank entered in the
+ * environment — e.g. the German Banking Circle account DE96… / SXPYDEHH.
+ */
+async function envBankAccountRow(merchantId: string) {
+  const env = await resolveMerchantBankAccount(merchantId);
+  if (env.source === 'none' || (!env.iban && !env.accountNumber)) return null;
+  return {
+    id: null,
+    bank_name: env.bankName,
+    account_holder: env.accountHolder,
+    account_number: env.accountNumber,
+    routing_number: env.routingNumber,
+    account_type: 'CHECKING',
+    iban: env.iban,
+    swift_code: env.swiftCode,
+    bank_address: env.bankAddress,
+    recipient_address: null,
+    currency: env.currency,
+    is_default: 1,
+    verified: true,
+    created_at: null,
+    source: env.source,
+  };
+}
+
 const router = Router();
 
 // GET /api/merchant/:merchantId/bank-accounts
@@ -128,7 +161,40 @@ router.get('/merchant/:merchantId/bank-accounts', authenticateToken, async (req,
            currency ASC`,
       [merchantId]
     );
+    if (rows.rows.length === 0) {
+      // No seeded row — fall back to the operator-configured receiving account
+      // so the payout UI shows the real destination bank (e.g. Banking Circle).
+      const envAccount = await envBankAccountRow(merchantId);
+      if (envAccount) {
+        return res.status(200).json({ ok: true, merchant_id: merchantId, accounts: [envAccount] });
+      }
+    }
     return res.status(200).json({ ok: true, merchant_id: merchantId, accounts: rows.rows });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/payout/wire/sepa/:id/download — download a generated SEPA pain.001 file
+router.get('/wire/sepa/:id/download', authenticateToken, async (req, res) => {
+  const { id } = req.params as any;
+  try {
+    const row = await getSepaPayoutFile(id);
+    if (!row) return res.status(404).json({ error: 'SEPA file not found' });
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="SEPA-${row.msg_id}.xml"`);
+    return res.send(row.xml);
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/payout/merchant/:merchantId/wire-files — generated SEPA + MT103 files
+router.get('/merchant/:merchantId/wire-files', authenticateToken, async (req, res) => {
+  const { merchantId } = req.params as any;
+  try {
+    const files = await listPayoutWireFiles(merchantId);
+    return res.status(200).json({ ok: true, merchant_id: merchantId, ...files });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: e.message });
   }
@@ -166,7 +232,9 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
   const { merchantId } = req.params as any;
   const rawAmount = req.body?.amount;
   const amount = Number(rawAmount);
-  const currency = String(req.body?.currency || 'USD').toUpperCase();
+  // Default to the receiving bank's own currency (MERCHANT_BANK_CURRENCY) so an
+  // omitted currency pays out in EUR to the German Banking Circle account.
+  const currency = String(req.body?.currency || process.env.MERCHANT_BANK_CURRENCY || 'USD').toUpperCase();
   const bodyBankAccount = req.body?.bank_account || req.body?.bankAccount || null;
   const bodyBankAccountId = req.body?.bank_account_id || req.body?.bankAccountId || null;
 
@@ -219,31 +287,40 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
         [...params, currency, currency]
       );
       if (pick.rows.length === 0) {
-        return res.status(404).json({
-          error:
-            bodyBankAccountId
-              ? `Bank account ${bodyBankAccountId} not found for merchant ${merchantId}.`
-              : `No inbuilt bank account configured for merchant ${merchantId} (currency=${currency}). ` +
-                `Seed one in bank_accounts with merchant_id + is_default=1, or pass body.bank_account.`,
-        });
+        // No seeded row — pay out to the operator-configured receiving account
+        // (MERCHANT_BANK_*, e.g. Banking Circle DE96… / SXPYDEHH) when no
+        // explicit bank_account_id was requested.
+        const envAccount = bodyBankAccountId ? null : await envBankAccountRow(merchantId);
+        if (!envAccount) {
+          return res.status(404).json({
+            error:
+              bodyBankAccountId
+                ? `Bank account ${bodyBankAccountId} not found for merchant ${merchantId}.`
+                : `No inbuilt bank account configured for merchant ${merchantId} (currency=${currency}). ` +
+                  `Seed one in bank_accounts with merchant_id + is_default=1, set MERCHANT_BANK_IBAN in .env, or pass body.bank_account.`,
+          });
+        }
+        resolvedLabel = `merchant receiving account (env ${envAccount.bank_name || 'MERCHANT_BANK_*'}, ${envAccount.currency})`;
+        bank_account = envAccount;
+      } else {
+        const row = pick.rows[0];
+        resolvedBankAccountId = row.id;
+        resolvedLabel = `inbuilt ${row.id} (${row.currency}, default=${row.is_default})`;
+        bank_account = {
+          id: row.id,
+          bank_name: row.bank_name,
+          bank_address: row.bank_address || null,
+          recipient_address: row.recipient_address ? JSON.parse(row.recipient_address) : null,
+          account_holder: row.account_holder,
+          account_number: row.account_number,
+          routing_number: row.routing_number || process.env.PAYOUT_BANK_ROUTING_NUMBER || '',
+          account_type: row.account_type || 'CHECKING',
+          iban: row.iban,
+          swift_code: row.swift_code,
+          currency: row.currency || currency,
+          verified: !!row.verified,
+        };
       }
-      const row = pick.rows[0];
-      resolvedBankAccountId = row.id;
-      resolvedLabel = `inbuilt ${row.id} (${row.currency}, default=${row.is_default})`;
-      bank_account = {
-        id: row.id,
-        bank_name: row.bank_name,
-        bank_address: row.bank_address || null,
-        recipient_address: row.recipient_address ? JSON.parse(row.recipient_address) : null,
-        account_holder: row.account_holder,
-        account_number: row.account_number,
-        routing_number: row.routing_number || process.env.PAYOUT_BANK_ROUTING_NUMBER || '',
-        account_type: row.account_type || 'CHECKING',
-        iban: row.iban,
-        swift_code: row.swift_code,
-        currency: row.currency || currency,
-        verified: !!row.verified,
-      };
     } catch (e: any) {
       return res.status(500).json({ error: `Failed to resolve inbuilt bank account: ${e.message}` });
     }
@@ -295,6 +372,7 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
     let finalProvider: string | null = initialProvider;
     let finalReference: string | null = null;
     let finalRaw: any = null;
+    let wireFiles: any = null;
     let message: string;
 
     if (isManual) {
@@ -305,8 +383,10 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
       // ── YOUR OWN LICENSED ACQUIRER (Protocol 201.3) ───────────────────────
       // Internal acquirer is the PROVIDER.
       const downstream = process.env.INTERNAL_PAYOUT_DOWNSTREAM?.trim().toLowerCase() || '';
+      const railActive = ['iso8583', 'iso8583-tcp', 'vaultbank_iso8583', 'dwolla', 'vaultbank_dwolla'].includes(downstream);
 
-      // ── Configured bank receiver callback, or local pending instruction ──
+      // 1) Settlement instruction — audit record, pushed to the bank callback
+      //    (INTERNAL_PAYOUT_RECEIVER_URL) when one is configured.
       const internalResult = await executeInternalPayout({
         merchantId,
         payoutId,
@@ -315,13 +395,55 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
         bankAccount: bank_account,
         reference: payoutId,
       });
-      finalStatus    = internalResult.status;
+
+      // 2) SEPA / MT103 wire files for the destination bank, so the payout can be
+      //    uploaded to the bank (e.g. Banking Circle DE96… / SXPYDEHH).
+      wireFiles = await generatePayoutWireFiles({
+        merchantId,
+        payoutId,
+        amount: Number(amount),
+        currency,
+        bankAccount: bank_account,
+        remittanceInfo: `POS 201.3 SETTLEMENT ${merchantId} REF ${payoutId.slice(0, 8)}`,
+      });
+
+      // 3) Internal iso8583 / dwolla rail — push the payout when INTERNAL_PAYOUT_
+      //    DOWNSTREAM is configured. An unreachable rail must not fail the payout:
+      //    the wire file + settlement instruction stay the source of truth.
+      let railResult: any = null;
+      if (railActive) {
+        try {
+          railResult = await submitBankPayout({
+            merchantId,
+            payoutId,
+            amount: Number(amount),
+            currency,
+            bankAccount: bank_account,
+            reference: payoutId,
+          });
+        } catch (railErr: any) {
+          railResult = {
+            success: false,
+            provider: 'internal',
+            rail: downstream,
+            status: 'RAIL_UNAVAILABLE',
+            raw: { error: railErr.message },
+          };
+        }
+      }
+
+      const railAccepted = Boolean(railResult?.success)
+        && ['SUBMITTED', 'QUEUED', 'PROCESSED', 'PENDING'].includes(String(railResult?.status || '').toUpperCase());
+
+      finalStatus    = railAccepted ? railResult.status : internalResult.status;
       finalProvider  = 'internal';
-      finalReference = internalResult.providerReference;
-      finalRaw       = internalResult.raw;
-      message        = internalResult.status === 'SENT'
-        ? `Internal acquirer called the configured bank provider. Ref: ${internalResult.providerReference}. Funds are being sent to ${bank_account?.bank_name || 'the destination bank'}.`
-        : `Internal acquirer payout recorded but not sent. Ref: ${internalResult.providerReference}. Configure INTERNAL_PAYOUT_RECEIVER_URL (and its API key if required) to call the bank provider.`;
+      finalReference = railResult?.providerReference || internalResult.providerReference;
+      finalRaw       = { settlement: internalResult.raw, rail: railResult, wire_files: wireFiles };
+      message        = railAccepted
+        ? `Internal acquirer pushed the payout on the ${railResult.rail || downstream} rail. Ref: ${finalReference}. Destination: ${bank_account?.bank_name || 'the destination bank'}.`
+        : `Internal acquirer payout recorded. Ref: ${internalResult.providerReference}. ` +
+          `SEPA/MT103 wire file generated — upload it to ${bank_account?.bank_name || 'the destination bank'}.` +
+          (wireFiles?.errors?.length ? ` Wire file issues: ${wireFiles.errors.join('; ')}.` : '');
 
       await db.query(
         `UPDATE merchant_payouts
@@ -336,7 +458,7 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
           finalStatus,
           finalProvider,
           finalReference,
-          JSON.stringify({ ...metaPayload, provider: finalProvider, downstream, raw: finalRaw }),
+          JSON.stringify({ ...metaPayload, provider: finalProvider, downstream, rail: railResult, wire_files: wireFiles, raw: finalRaw }),
           String(finalStatus || '').toUpperCase(),
           payoutId,
         ]
@@ -381,11 +503,22 @@ router.post('/merchant/:merchantId/payout/bank', authenticateToken, async (req, 
       ok: true,
       mode: payoutProvider,
       payout_id: payoutId,
+      amount: Number(amount),
+      currency,
       status: finalStatus,
       provider: finalProvider,
       provider_reference: finalReference,
       bank_account_resolution: resolvedLabel,
       bank_account_id: resolvedBankAccountId,
+      destination_bank: {
+        bank_name: bank_account?.bank_name || null,
+        account_holder: bank_account?.account_holder || null,
+        iban: bank_account?.iban || null,
+        account_number: bank_account?.account_number || null,
+        swift_code: bank_account?.swift_code || null,
+        currency: bank_account?.currency || currency,
+      },
+      wire_files: wireFiles,
       manual: isManual,
       message,
       merchant_instructions: metaPayload.merchant_instructions,

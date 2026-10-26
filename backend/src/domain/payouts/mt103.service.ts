@@ -256,9 +256,11 @@ export function buildMt103FromPayout(params: {
     senderName:    process.env.MT103_SENDER_NAME    || '',
     senderAddressLines: (process.env.MT103_SENDER_ADDRESS || '').split(',').filter(Boolean),
 
-    // Beneficiary — from the bank account record
+    // Beneficiary — from the bank account record. IBAN-only accounts (e.g. the
+    // German Banking Circle account DE96…) carry no account_number, so the IBAN
+    // is used as the :59: account identifier.
     beneficiaryBic:     params.bankAccount?.swift_code     || '',
-    beneficiaryAccount: params.bankAccount?.account_number || '',
+    beneficiaryAccount: params.bankAccount?.account_number || params.bankAccount?.iban || '',
     beneficiaryName:    params.bankAccount?.account_holder || '',
     beneficiaryAddressLines: [
       params.bankAccount?.bank_address || '',
