@@ -128,6 +128,8 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE merchant_payouts ADD COLUMN reconciliation_note TEXT`),
       // admin_users fields
       parseAddCol(`ALTER TABLE admin_users ADD COLUMN two_factor_enabled INTEGER DEFAULT 0`),
+      parseAddCol(`ALTER TABLE admin_users ADD COLUMN address TEXT`),
+      parseAddCol(`ALTER TABLE admin_users ADD COLUMN business_type TEXT`),
       // POS idempotency table columns (safe for existing databases)
       parseAddCol(`ALTER TABLE pos_idempotency ADD COLUMN result_json TEXT`),
       parseAddCol(`ALTER TABLE pos_idempotency ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP`),
@@ -196,6 +198,8 @@ export const initTables = async () => {
         company_name TEXT,
         email TEXT,
         avatar_url TEXT,
+        address TEXT,
+        business_type TEXT,
         two_factor_enabled INTEGER DEFAULT 0, -- Boolean as 0/1
         two_factor_secret TEXT,
         theme_preference TEXT DEFAULT 'light',

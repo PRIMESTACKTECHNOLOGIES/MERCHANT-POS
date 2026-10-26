@@ -47,7 +47,7 @@ export class AuthService {
 
   async getProfile(userId: string) {
     const res = await db.query(
-      "SELECT full_name, display_name, phone, country, timezone, company_name, email, avatar_url, two_factor_enabled, theme_preference, language_preference, api_key FROM admin_users WHERE id = ?",
+      "SELECT full_name, display_name, phone, country, timezone, company_name, email, avatar_url, address, business_type, two_factor_enabled, theme_preference, language_preference, api_key FROM admin_users WHERE id = ?",
       [userId]
     );
     const user = res.rows[0] as any;
@@ -83,6 +83,8 @@ export class AuthService {
     addField("company_name", "company_name");
     addField("email", "email");
     addField("avatar_url", "avatar_url");
+    addField("address", "address");
+    addField("business_type", "business_type");
     addField("theme_preference", "theme_preference");
     addField("language_preference", "language_preference");
 

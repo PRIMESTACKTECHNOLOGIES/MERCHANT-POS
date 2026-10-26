@@ -359,6 +359,8 @@ async function getDb(): Promise<any> {
     timezone TEXT,
     company_name TEXT,
     avatar_url TEXT,
+    address TEXT,
+    business_type TEXT,
     two_factor_enabled INTEGER DEFAULT 0,
     theme_preference TEXT DEFAULT 'light',
     language_preference TEXT DEFAULT 'en',

@@ -309,8 +309,8 @@ export const SettingsPage = () => {
           country: profileData.country || "",
           timezone: profileData.timezone || "",
           companyName: profileData.company || "",
-          address: "",
-          businessType: "",
+          address: profileData.address || "",
+          businessType: profileData.business_type || profileData.businessType || "",
           avatarUrl: profileData.avatar_url || "",
           theme: profileData.theme_preference || "light",
           language: profileData.language_preference || "en"
@@ -398,6 +398,8 @@ export const SettingsPage = () => {
             company: (settings.profile.companyName || "").trim(),
             email: (settings.profile.email || "").trim(),
             avatar_url: (settings.profile.avatarUrl || "").trim(),
+            address: (settings.profile.address || "").trim(),
+            business_type: (settings.profile.businessType || "").trim(),
             theme_preference: settings.profile.theme,
             language_preference: settings.profile.language
         });
@@ -431,6 +433,8 @@ export const SettingsPage = () => {
                 country: freshProfile.country || prev.profile.country,
                 timezone: freshProfile.timezone || prev.profile.timezone,
                 companyName: freshProfile.company || prev.profile.companyName,
+                address: freshProfile.address || prev.profile.address,
+                businessType: freshProfile.business_type || prev.profile.businessType,
                 avatarUrl: freshProfile.avatar_url || prev.profile.avatarUrl,
                 theme: freshProfile.theme_preference || prev.profile.theme,
                 language: freshProfile.language_preference || prev.profile.language,
@@ -907,6 +911,18 @@ export const SettingsPage = () => {
             placeholder="Your Business Name"
             value={settings.profile.companyName} 
             onChange={(e) => setSettings({...settings, profile: {...settings.profile, companyName: e.target.value}})}
+          />
+          <Input 
+            label="Business Type" 
+            placeholder="Retail, E-commerce, Hospitality..."
+            value={settings.profile.businessType} 
+            onChange={(e) => setSettings({...settings, profile: {...settings.profile, businessType: e.target.value}})}
+          />
+          <Input 
+            label="Address" 
+            placeholder="Street, City, Country"
+            value={settings.profile.address} 
+            onChange={(e) => setSettings({...settings, profile: {...settings.profile, address: e.target.value}})}
           />
         </div>
       </SettingsDrawer>

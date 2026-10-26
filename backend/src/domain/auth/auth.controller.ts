@@ -60,6 +60,8 @@ export class AuthController {
         company: result.company_name,
         email: result.email,
         avatar_url: result.avatar_url,
+        address: result.address,
+        business_type: result.business_type,
         two_factor_enabled: result.two_factor_enabled,
         theme_preference: result.theme_preference,
         language_preference: result.language_preference,
