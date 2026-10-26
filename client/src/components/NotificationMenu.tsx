@@ -86,7 +86,7 @@ export const NotificationMenu = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-4 w-80 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 animate-fade-in origin-top-right">
+        <div className="absolute right-0 mt-4 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 animate-fade-in origin-top-right overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
             <h3 className="text-sm font-bold text-gray-900">Notifications</h3>
             {notifications.length > 0 && (
@@ -114,11 +114,14 @@ export const NotificationMenu = () => {
                   >
                     <div className="flex gap-3">
                       {getIcon(notification.type)}
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm ${!notification.read ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
+                      <div className="flex-1 min-w-0 overflow-hidden">
+                        <p className={`text-sm truncate ${!notification.read ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
                           {notification.title}
                         </p>
-                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2" style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
+                        <p 
+                          className="text-xs text-gray-500 mt-0.5 break-words line-clamp-3 overflow-hidden"
+                          style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}
+                        >
                           {notification.message}
                         </p>
                         <p className="text-[10px] text-gray-400 mt-1">

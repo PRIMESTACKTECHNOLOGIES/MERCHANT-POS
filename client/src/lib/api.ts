@@ -289,18 +289,25 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
     const res = await fetch(url, { ...options, headers });
 
     if (!res.ok) {
+      const contentType = res.headers.get("content-type");
       const text = await res.text().catch(() => "");
-      let errorMessage = res.statusText || "Request failed";
-      try {
-        const json = JSON.parse(text || "{}");
-        if (json?.error) {
-          errorMessage = json.error;
-        }
+      
+      let errorMessage = res.statusText || `Request failed (${res.status})`;
 
-      } catch {
-        if (text) {
-          errorMessage = text;
+      if (contentType?.includes("application/json")) {
+        try {
+          const json = JSON.parse(text || "{}");
+          if (json?.error) errorMessage = json.error;
+          else if (json?.message) errorMessage = json.message;
+        } catch {
+          // fallback to statusText
         }
+      } else if (contentType?.includes("text/html") || text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+        // If it's an HTML error page (like Render 502/504), don't show the HTML source.
+        errorMessage = `${res.status} ${res.statusText || 'Server Error'}`;
+      } else if (text && text.length < 200) {
+        // Only use plain text if it's reasonably short
+        errorMessage = text;
       }
 
       if (res.status === 401 || res.status === 403) {
