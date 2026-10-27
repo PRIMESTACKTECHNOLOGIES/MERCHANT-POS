@@ -67,7 +67,6 @@ export interface EntryResult {
   currency:   string;
   reference:  string | null;
   source:     string | null;
-  status:     string;
   created_at: string;
 }
 
@@ -190,7 +189,7 @@ export class VaultBankService {
          COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE 0 END), 0) AS credits,
          COALESCE(SUM(CASE WHEN direction = 'debit'  THEN amount ELSE 0 END), 0) AS debits
        FROM vault_entries
-       WHERE account_id = ? AND currency = ? AND status = 'POSTED'`,
+       WHERE account_id = ? AND currency = ?`,
       [accountId, ccy]
     )).rows;
 
@@ -283,9 +282,8 @@ export class VaultBankService {
       [accountId, targetDate]
     )).rows as EntryResult[];
 
-    const postedRows = rows.filter(e => e.status === 'POSTED');
-    const totalCredits = postedRows.filter(e => e.direction === 'credit').reduce((s, e) => s + Number(e.amount), 0);
-    const totalDebits  = postedRows.filter(e => e.direction === 'debit').reduce((s, e) => s + Number(e.amount), 0);
+    const totalCredits = rows.filter(e => e.direction === 'credit').reduce((s, e) => s + Number(e.amount), 0);
+    const totalDebits  = rows.filter(e => e.direction === 'debit').reduce((s, e) => s + Number(e.amount), 0);
 
     // Opening balance = all entries BEFORE this date
     const openingRows = (await db.query(
@@ -293,7 +291,7 @@ export class VaultBankService {
          COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE 0 END), 0) AS c,
          COALESCE(SUM(CASE WHEN direction='debit'  THEN amount ELSE 0 END), 0) AS d
        FROM vault_entries
-       WHERE account_id = ? AND status = 'POSTED' AND substr(created_at, 1, 10) < ?`,
+       WHERE account_id = ? AND substr(created_at, 1, 10) < ?`,
       [accountId, targetDate]
     )).rows[0] as any;
 

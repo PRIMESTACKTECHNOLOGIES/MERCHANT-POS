@@ -118,9 +118,6 @@ export class RSAODA {
     issuerPublicKey: CryptoKey
   ): Promise<ODAResult> {
     try {
-      if (issuerPublicKey.type !== 'public') {
-        throw new Error('Issuer public key is required for DDA');
-      }
       // Step 1: Recover ICC public key from certificate using issuer key
       const iccKey = await this.extractPublicKeyFromCert(iccCert);
 
@@ -165,9 +162,6 @@ export class RSAODA {
     issuerPublicKey: CryptoKey
   ): Promise<ODAResult> {
     try {
-      if (issuerPublicKey.type !== 'public') {
-        throw new Error('Issuer public key is required for CDA');
-      }
       // Step 1: Recover ICC public key (same chain as DDA)
       const iccKey = await this.extractPublicKeyFromCert(iccCert);
 
@@ -214,11 +208,10 @@ export class RSAODA {
     hashAlgo: 'SHA-1' | 'SHA-256' = 'SHA-1'
   ): Promise<Uint8Array | null> {
     try {
-      if (signingKey.type !== 'public') return null;
       if (certData.length < 24) return null;
 
       // Step 1: RSA public key operation to recover data
-      const recovered = await this.rsaPublicOperation(certData);
+      const recovered = await this.rsaPublicOperation(certData, signingKey);
       if (!recovered) return null;
 
       // Step 2: Verify header byte
@@ -356,7 +349,7 @@ export class RSAODA {
     return this.importPublicKey(modulusHex, exponentHex);
   }
 
-  private async rsaPublicOperation(data: Uint8Array): Promise<Uint8Array | null> {
+  private async rsaPublicOperation(data: Uint8Array, key: CryptoKey): Promise<Uint8Array | null> {
     // WebCrypto doesn't expose raw RSA public key operation directly.
     // For certificate recovery, we verify + extract:
     // The recovered data is the decrypted signature, which WebCrypto

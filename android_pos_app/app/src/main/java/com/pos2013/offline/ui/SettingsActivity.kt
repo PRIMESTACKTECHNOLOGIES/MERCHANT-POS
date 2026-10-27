@@ -33,8 +33,6 @@ class SettingsActivity : AppCompatActivity() {
         supportActionBar?.title = "Terminal Settings"
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
-        val prefs = getSharedPreferences(prefsName, Context.MODE_PRIVATE)
-
         val scroll = ScrollView(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

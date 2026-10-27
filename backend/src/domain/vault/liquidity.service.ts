@@ -1,9 +1,18 @@
 import { db } from '../../config/db';
 import { vaultEngine } from './vault.service';
 import { appendVaultAudit } from './audit.service';
-import { calculateVaultLiquidity, type VaultLiquidity } from './liquidity-calculator';
 
-export type { LiquidityStatus, VaultLiquidity } from './liquidity-calculator';
+export type LiquidityStatus = 'HEALTHY' | 'WARNING' | 'CRITICAL';
+
+export interface VaultLiquidity {
+  currency: string;
+  vaultBalance: number;
+  reserve: number;
+  pendingPayouts: number;
+  riskBuffer: number;
+  liquidity: number;
+  status: LiquidityStatus;
+}
 
 export async function getVaultLiquidity(currency = 'EUR'): Promise<VaultLiquidity> {
   const normalizedCurrency = currency.toUpperCase();
@@ -12,12 +21,25 @@ export async function getVaultLiquidity(currency = 'EUR'): Promise<VaultLiquidit
     db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM vault_reserve WHERE currency = ? AND status = 'ACTIVE'`, [normalizedCurrency]),
     db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payout_instructions WHERE currency = ? AND status IN ('QUEUED', 'PROCESSING')`, [normalizedCurrency]),
   ]);
-  const output = calculateVaultLiquidity({
+  const balance = Number(vaultBalance);
+  const reserveAmount = Number(reserve.rows?.[0]?.total || 0);
+  const pendingPayouts = Number(payouts.rows?.[0]?.total || 0);
+  const riskBuffer = balance * 0.1;
+  const liquidity = balance - (reserveAmount + pendingPayouts + riskBuffer);
+  const status: LiquidityStatus = liquidity < 0
+    ? 'CRITICAL'
+    : liquidity < balance * 0.05
+      ? 'WARNING'
+      : 'HEALTHY';
+  const output = {
     currency: normalizedCurrency,
-    vaultBalance: Number(vaultBalance),
-    reserve: Number(reserve.rows?.[0]?.total || 0),
-    pendingPayouts: Number(payouts.rows?.[0]?.total || 0),
-  });
+    vaultBalance: balance,
+    reserve: reserveAmount,
+    pendingPayouts,
+    riskBuffer,
+    liquidity,
+    status,
+  };
   await appendVaultAudit({
     actor: 'system',
     event: 'LIQUIDITY_CHECK',

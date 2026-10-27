@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNotifications } from "../contexts/useNotifications";
-import type { NotificationType } from "../contexts/notification-context";
+import type { NotificationType } from "../contexts/notificationContext";
 
 export const NotificationMenu = () => {
   const [open, setOpen] = useState(false);

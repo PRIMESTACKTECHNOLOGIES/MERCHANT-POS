@@ -1,4 +1,5 @@
 import { TLVParser } from './tlv-parser';
+import type { EMVTag } from './tlv-parser';
 import { hexToBytes } from './emv-utils';
 import type { PinPad } from './pin-pad';
 import { CVMTable } from './cvm-table';
@@ -286,7 +287,7 @@ export class CVMProcessor {
 
       // Enciphered PIN — encrypt the block before verification
       if (method === 'ENCIPHERED_PIN' || method === 'ENCIPHERED_PIN_AND_SIGNATURE') {
-        await pinPad.encryptPIN('', ''); // PAN passed via ICC VERIFY APDU
+        const encrypted = await pinPad.encryptPIN('', ''); // PAN passed via ICC VERIFY APDU
         return {
           success: true,
           method: 'PIN',

@@ -1,7 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { useTranslation } from "react-i18next";
 import { useDarkMode } from "../hooks/useDarkMode";
-import { LanguageSwitcher } from "./LanguageSwitcher";
 
 const Icons = {
   POS: () => (
@@ -24,14 +22,9 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25" />
     </svg>
   ),
-  Merchants: () => (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 21v-7.5a.75.75 0 01.75-.75h3a.75.75 0 01.75.75V21m-4.5 0H2.36m11.14 0H18m0 0h3.64m-1.39 0V9.349m-16.5 11.65V9.35m0 0a3.001 3.001 0 003.75-.615A2.993 2.993 0 009.75 9.75c.896 0 1.7-.393 2.25-1.016a2.993 2.993 0 002.25 1.016c.896 0 1.7-.393 2.25-1.016a3.001 3.001 0 003.75.614m-16.5 0a3.004 3.004 0 01-.621-4.72L4.318 3.44A1.5 1.5 0 015.378 3h13.243a1.5 1.5 0 011.06.44l1.19 1.189a3 3 0 01-.621 4.72m-13.5 8.65h3.75a.75.75 0 00.75-.75V13.5a.75.75 0 00-.75-.75H6.75a.75.75 0 00-.75.75v3.75c0 .414.336.75.75.75z" />
-    </svg>
-  ),
   Transactions: () => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   ),
   Batches: () => (
@@ -97,7 +90,6 @@ const Icons = {
 export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose?: () => void }) => {
   const navigate = useNavigate();
   const { dark, toggle } = useDarkMode();
-  const { t } = useTranslation();
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     "nav-link" + (isActive ? " active" : "");
@@ -118,7 +110,7 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
         />
       )}
       
-      <aside className={`sidebar fixed lg:sticky top-0 left-0 h-[100dvh] lg:h-screen transition-transform duration-300 z-50 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+      <aside className={`sidebar fixed lg:sticky top-0 left-0 h-screen transition-transform duration-300 z-50 ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="flex justify-between items-center pr-4">
           <div className="sidebar-logo">
             <span style={{ color: 'var(--accent-primary)' }}>POS</span>
@@ -142,8 +134,8 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
               <Icons.POS />
             </div>
             <div className="flex flex-col items-start">
-              <span className="text-sm leading-tight">{t("shell.nav.paymentProcessor").toUpperCase()}</span>
-              <span className="text-[10px] opacity-70 font-medium">{t("shell.nav.processorTag")}</span>
+              <span className="text-sm leading-tight">PAYMENT PROCESSOR</span>
+              <span className="text-[10px] opacity-70 font-medium">101.1 · 101.6 · 201.3 · Normal</span>
             </div>
           </NavLink>
         </div>
@@ -151,76 +143,65 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
         <nav className="sidebar-nav">
           <NavLink to="/overview" className={linkClass} onClick={() => onClose?.()}>
             <Icons.Overview />
-            {t("shell.nav.dashboard")}
+            Dashboard
           </NavLink>
         <NavLink to="/terminals" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Terminals />
-          {t("shell.nav.terminals")}
-        </NavLink>
-        <NavLink to="/merchant-profiles" className={linkClass} onClick={() => onClose?.()}>
-          <Icons.Merchants />
-          {t("shell.nav.merchantProfiles")}
+          Terminals
         </NavLink>
         <NavLink to="/transactions" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Transactions />
-          {t("shell.nav.transactions")}
+          Transactions
         </NavLink>
         <NavLink to="/batches" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Batches />
-          {t("shell.nav.batches")}
+          Batches
         </NavLink>
         <NavLink to="/settlements" className={linkClass}>
           <Icons.Settlements />
-          {t("shell.nav.settlements")}
+          Settlement Reports
         </NavLink>
         <NavLink to="/wallets" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Wallet />
-          {t("shell.nav.customerWallets")}
+          Customer Wallets
         </NavLink>
         <NavLink to="/merchant-wallet" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Wallet />
-          {t("shell.nav.merchantWallet")}
+          Merchant Wallet
         </NavLink>
         <NavLink to="/hot-wallet" className={linkClass} onClick={() => onClose?.()}>
           <Icons.HotWallet />
-          {t("shell.nav.hotWallet")}
+          Hot Wallet
         </NavLink>
         <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '8px 16px' }}></div>
 
         <NavLink to="/settings" className={linkClass}>
           <Icons.Settings />
-          {t("shell.nav.settings")}
+          Merchant Settings
         </NavLink>
         <NavLink to="/developer" className={linkClass}>
           <Icons.ApiKeys />
-          {t("shell.nav.developer")}
+          Developer API Keys
         </NavLink>
         <NavLink to="/payment-methods" className={linkClass}>
           <Icons.PaymentMethods />
-          {t("shell.nav.paymentMethods")}
+          Payment Methods
         </NavLink>
         <NavLink to="/offline-transactions" className={linkClass}>
           <Icons.OfflineViewer />
-          {t("shell.nav.offlineTransactions")}
+          Offline Transaction Viewer
         </NavLink>
         <NavLink to="/device-security" className={linkClass}>
           <Icons.Security />
-          {t("shell.nav.deviceSecurity")}
+          Device Security & Keys
         </NavLink>
         <NavLink to="/receipts" className={linkClass}>
           <Icons.Receipt />
-          {t("shell.nav.receipts")}
-        </NavLink>
-        <NavLink to="/vault-bank" className={linkClass} onClick={() => onClose?.()}>
-          <Icons.Wallet />
-          {t("shell.nav.vaultBank")}
+          Receipts
         </NavLink>
       </nav>
       
       <div style={{ marginTop: 'auto', padding: '0 16px 16px' }}>
-        {/* Language Selector */}
-        <LanguageSwitcher variant="sidebar" />
-
         {/* Dark / Light Mode Toggle */}
         <button
           onClick={toggle}
@@ -228,7 +209,7 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
           style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', marginBottom: '4px' }}
         >
           <span style={{ fontSize: '18px', lineHeight: 1 }}>{dark ? '☀️' : '🌙'}</span>
-          <span style={{ flex: 1, textAlign: 'left' }}>{dark ? t("shell.theme.light") : t("shell.theme.dark")}</span>
+          <span style={{ flex: 1, textAlign: 'left' }}>{dark ? 'Light Mode' : 'Dark Mode'}</span>
           {/* Toggle pill */}
           <span style={{
             display: 'inline-flex',
@@ -260,7 +241,7 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
           style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)' }}
         >
           <Icons.Logout />
-          {t("shell.logout")}
+          Logout
         </button>
       </div>
     </aside>

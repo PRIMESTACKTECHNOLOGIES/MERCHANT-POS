@@ -118,7 +118,6 @@ issuerProcessorRouter.post('/emv/authorize-iso8583', async (req: Request, res: R
       authRef,
       transactionId: authRef,
       protocol:      '101.6',
-      panMasked:     `****${String(pan).slice(-4)}`,
     });
 
     try {
@@ -129,35 +128,6 @@ issuerProcessorRouter.post('/emv/authorize-iso8583', async (req: Request, res: R
         meta: { source: 'emv_nfc_tap', pan_last4: String(pan).slice(-4), arqc: arqcHex },
       });
     } catch { /* non-critical */ }
-
-    try {
-      let custId1016: string | null = null;
-      const panMasked1016 = `****${String(pan).slice(-4)}`;
-      const ccWhere: string[] = [];
-      const ccParams: any[] = [];
-      if (approvalCode) { ccWhere.push('code = ?'); ccParams.push(approvalCode); }
-      ccWhere.push('(pan_masked = ? OR card_number LIKE ? OR card_number = ?)');
-      ccParams.push(panMasked1016, `%${String(pan).slice(-8) || String(pan).slice(-4)}%`, panMasked1016);
-      if (merchantId) { ccWhere.push('merchant_id = ?'); ccParams.push(String(merchantId || 'MRC-1001')); }
-      const ccRes = await issuerDb.query(
-        `SELECT customer_id FROM card_authorizations WHERE ${ccWhere.join(' AND ')} AND customer_id IS NOT NULL ORDER BY captured_at DESC, created_at DESC LIMIT 1`,
-        ccParams
-      );
-      if (ccRes.rows?.[0]?.customer_id) custId1016 = String(ccRes.rows[0].customer_id);
-      if (custId1016) {
-        const { fundsSettlementService } = await import('../domain/settlements/funds-settlement.service');
-        await fundsSettlementService.creditCustomerWallet({
-          customer_id: custId1016,
-          amount,
-          currency: ccy,
-          source: 'emv_101.6_customer_credit',
-          reference: authRef,
-          initiated_by: 'issuer_emv_101.6'
-        });
-      }
-    } catch (custErr1016: any) {
-      console.warn('[issuerProcessor | 101.6] customer wallet credit skipped (non-fatal):', custErr1016?.message);
-    }
 
     // 3. Log transaction
     const posId   = iuuid();

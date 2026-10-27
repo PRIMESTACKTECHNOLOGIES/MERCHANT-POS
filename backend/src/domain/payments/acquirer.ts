@@ -1,15 +1,11 @@
 /**
- * Acquirer barrel — re-exports createAcquirerClient from the correct
- * protocol-aware implementation so payments.service.ts import works.
+ * Acquirer shim — re-exports HttpAcquirerClient as createAcquirerClient()
+ * so the existing payments.service.ts import works without modification.
  */
-export { createAcquirerClient } from './acquirer/index';
-export type { AcquirerClient } from './acquirer/index';
-export {
-  detectNetworkFromPan,
-  detectNetworkFromTrack2,
-  resolveCardNetwork,
-  networkLabel,
-} from './acquirer/schemeNetwork';
-export type { CardNetwork, NetworkResolution } from './acquirer/schemeNetwork';
-export { resolveRoute, listRoutes, describeRouting } from './acquirer/schemeRouting';
-export type { SchemeRoute, SchemeRoutingSummary } from './acquirer/schemeRouting';
+import { HttpAcquirerClient } from '../../services/acquirer/HttpAcquirerClient';
+
+export { HttpAcquirerClient };
+
+export function createAcquirerClient(): HttpAcquirerClient {
+  return new HttpAcquirerClient();
+}

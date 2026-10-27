@@ -899,6 +899,58 @@ export function verifyWebhookSignature(
   );
 }
 
+/**
+ * Decode a Transak webhook payload.
+ *
+ * Per Transak docs the top-level `data` field is a signed JWT whose payload
+ * contains the real event data.  We decode it without verifying the JWT
+ * signature here because the outer HMAC (verifyWebhookSignature) already
+ * authenticated the entire request body.
+ *
+ * Supports both shapes Transak sends:
+ *   { data: "<jwt>", eventID: "ORDER_COMPLETED" }          ← order/KYC events
+ *   { webhookData: { id, status, … }, eventID: "…" }       ← legacy plain JSON
+ */
+export function decodeTransakWebhook(body: any): {
+  eventId: string;
+  webhookData: Record<string, any>;
+  isKyc: boolean;
+} {
+  const eventId = String(
+    body?.eventID || body?.event || body?.type || 'UNKNOWN'
+  ).toUpperCase();
+
+  const isKyc = eventId.startsWith('KYC_');
+
+  // ── JWT-encoded data field (current Transak format) ──────────────────────
+  const rawData = body?.data;
+  if (typeof rawData === 'string' && rawData.includes('.')) {
+    try {
+      // JWT is base64url(header).base64url(payload).base64url(sig)
+      const parts = rawData.split('.');
+      if (parts.length >= 2) {
+        const padded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const json = Buffer.from(padded, 'base64').toString('utf8');
+        const decoded = JSON.parse(json);
+        return { eventId, webhookData: decoded, isKyc };
+      }
+    } catch {
+      // Fall through to plain JSON handling
+    }
+  }
+
+  // ── Plain JSON (legacy / webhookData field) ───────────────────────────────
+  if (rawData && typeof rawData === 'object') {
+    return { eventId, webhookData: rawData, isKyc };
+  }
+  if (body?.webhookData && typeof body.webhookData === 'object') {
+    return { eventId, webhookData: body.webhookData, isKyc };
+  }
+
+  // ── Whole body is the event ───────────────────────────────────────────────
+  return { eventId, webhookData: body || {}, isKyc };
+}
+
 // Coin → default network mapping for the quotes endpoint
 const COIN_DEFAULT_NETWORK: Record<string, string> = {
   USDT: 'tron',

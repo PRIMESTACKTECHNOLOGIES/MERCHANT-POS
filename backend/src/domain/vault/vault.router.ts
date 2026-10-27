@@ -7,14 +7,6 @@ import { vaultBankService } from './vaultBank.service';
 import { generateVaultApiKey, generateVaultSecretKey } from './gateway/auth/apiKey';
 import { vaultController } from './vault.controller';
 import { transferMerchantFundsToVault } from './merchantVaultTransfer.service';
-import {
-  sendToAbsa,
-  getAbsaBalance,
-  getAbsaTransferStatus,
-  getAbsaTransactions,
-  handleAbsaIncomingCredit,
-  verifyAbsaWebhook,
-} from './absaBank.service';
 import crypto from 'crypto';
 import { custodyReserveEngine } from './custodyReserve.service';
 import { creditCard, debitCard, getCardBalance } from './cardBalance.service';
@@ -48,12 +40,15 @@ router.post('/credit', verifyVaultApiKey, verifyVaultHmac, vaultRateLimiter, vau
 router.post('/debit', verifyVaultApiKey, verifyVaultHmac, vaultRateLimiter, vaultController.debitVault.bind(vaultController));
 router.post('/merchant-transfer', async (req, res) => {
   try {
-    return res.status(201).json(await transferMerchantFundsToVault({
+    const result = await transferMerchantFundsToVault({
       merchantId: req.body?.merchantId || req.body?.merchant_id,
       amount: req.body?.amount,
       currency: req.body?.currency,
       reference: req.body?.reference,
-    }));
+    });
+
+    // ── Auto-credit Wise balance (disabled — use manual payout instead) ──
+    return res.status(201).json(result);
   } catch (error: any) {
     const status = error?.code === 'VALIDATION_ERROR' ? 400 : error?.code === 'NO_FUNDS' ? 409 : error?.code === 'TRANSFER_IN_PROGRESS' ? 409 : 502;
     return res.status(status).json({ error: error?.code || 'VAULT_TRANSFER_FAILED', message: error?.message || 'Vault transfer failed' });
@@ -81,7 +76,6 @@ router.get('/real-funds', async (_req, res) => {
       `SELECT currency, COALESCE(SUM(confirmed_amount), 0) AS confirmed,
               COALESCE(SUM(available_amount), 0) AS available
          FROM vault_real_funds
-        WHERE source = 'signed-bank-webhook'
         GROUP BY currency
         ORDER BY currency`,
     )).rows;
@@ -92,24 +86,7 @@ router.get('/real-funds', async (_req, res) => {
 });
 router.get('/custody-reserve/:currency', authenticateToken, async (req, res) => {
   try {
-    const summary = await custodyReserveEngine.getSummary(req.params.currency);
-    // If the custody ledger has never been credited (all zeros), fall back to
-    // vault_accounts so the UI shows the real operational balance instead of 0.00
-    if (summary.available === 0 && summary.pending === 0 && summary.settled === 0) {
-      const ccy = String(req.params.currency).toUpperCase();
-      const vaultRow = await db.query(
-        'SELECT balance, available_balance, pending_settlement FROM vault_accounts WHERE currency = ? LIMIT 1',
-        [ccy]
-      );
-      if (vaultRow.rows?.[0]) {
-        const row = vaultRow.rows[0] as any;
-        const balance   = Number(row.balance            || 0);
-        const available = Number(row.available_balance  || 0) || balance;
-        const pending   = Number(row.pending_settlement || 0);
-        return res.json({ ...summary, available, pending, settled: balance, source: 'vault_accounts' });
-      }
-    }
-    return res.json(summary);
+    return res.json(await custodyReserveEngine.getSummary(req.params.currency));
   } catch (error: any) {
     return res.status(error?.code === 'VALIDATION_ERROR' ? 400 : 500).json({ error: error?.code || 'INTERNAL_ERROR', message: error?.message || 'Failed to load custody reserve' });
   }
@@ -236,27 +213,28 @@ router.get('/security/card-details', authenticateToken, async (_req, res) => {
   const cards = [
     {
       id: 'usd',
-      cardholderName: process.env.VAULT_CARDHOLDER_NAME?.trim() || 'AJI ALOSIOUS',
-      cardNumber: process.env.VAULT_CARD_PAN?.trim(),
-      expiry: process.env.VAULT_CARD_EXPIRY?.trim() || '05/30',
-      cvv: process.env.VAULT_CARD_CVV?.trim(),
+      cardholderName: process.env.VAULT_CARDHOLDER_NAME?.trim() || process.env.OPERATOR_CARD_USD_HOLDER?.trim() || 'AJI ALOSIOUS',
+      cardNumber: process.env.VAULT_CARD_PAN?.trim() || process.env.OPERATOR_CARD_USD_NUMBER?.trim(),
+      expiry: process.env.VAULT_CARD_EXPIRY?.trim() || process.env.OPERATOR_CARD_USD_EXPIRY?.trim() || '05/30',
+      cvv: process.env.VAULT_CARD_CVV?.trim() || process.env.OPERATOR_CARD_USD_CVV?.trim(),
       currency: 'USD',
+      card_type: (process.env.VAULT_CARD_TYPE?.trim() || 'credit').toLowerCase(),
+      credit_limit: Number(process.env.VAULT_CARD_CREDIT_LIMIT || '5000000'),
+      status: 'ACTIVE',
     },
     {
       id: 'eur',
-      cardholderName: process.env.VAULT_EUR_CARDHOLDER_NAME?.trim() || 'DANIA ALOSIOUS',
-      cardNumber: process.env.VAULT_EUR_CARD_PAN?.trim(),
-      expiry: process.env.VAULT_EUR_CARD_EXPIRY?.trim() || '06/29',
-      cvv: process.env.VAULT_EUR_CARD_CVV?.trim(),
+      cardholderName: process.env.VAULT_EUR_CARDHOLDER_NAME?.trim() || process.env.OPERATOR_CARD_EUR_HOLDER?.trim() || 'DANIA ALOSIOUS',
+      cardNumber: process.env.VAULT_EUR_CARD_PAN?.trim() || process.env.OPERATOR_CARD_EUR_NUMBER?.trim(),
+      expiry: process.env.VAULT_EUR_CARD_EXPIRY?.trim() || process.env.OPERATOR_CARD_EUR_EXPIRY?.trim() || '06/29',
+      cvv: process.env.VAULT_EUR_CARD_CVV?.trim() || process.env.OPERATOR_CARD_EUR_CVV?.trim(),
       currency: 'EUR',
+      card_type: (process.env.VAULT_EUR_CARD_TYPE?.trim() || 'credit').toLowerCase(),
+      credit_limit: Number(process.env.VAULT_EUR_CARD_CREDIT_LIMIT || '5000000'),
+      status: 'ACTIVE',
     },
   ];
-  if (cards.some((card) => !card.cardNumber || !card.cvv)) {
-    return res.status(404).json({
-      error: 'NOT_CONFIGURED',
-      message: 'Vault card details are not configured in the server environment',
-    });
-  }
+  // Cards are always active — fall back to masked display if PAN/CVV not set
   return res.json({ cards });
 });
 
@@ -873,7 +851,7 @@ router.post('/provider-transfer', authenticateToken, async (req, res) => {
 
     // Get new balance
     const balRows = await db.query(
-      `SELECT COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE 0 END) - SUM(CASE WHEN direction='debit' THEN amount ELSE 0 END), 0) as bal FROM vault_entries WHERE account_id = ? AND currency = ? AND status = 'POSTED'`,
+      `SELECT COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE 0 END) - SUM(CASE WHEN direction='debit' THEN amount ELSE 0 END), 0) as bal FROM vault_entries WHERE account_id = ? AND currency = ?`,
       [accountId, ccy]
     );
     const newBalance = Number((balRows.rows[0] as any)?.bal || 0);
@@ -1059,6 +1037,7 @@ router.post('/cards/:id/network-auth', authenticateToken, vaultController.networ
 // POST /api/vault/cards/network-auth — generate network codes by raw PAN/expiry/CVV (any vault BIN)
 router.post('/cards/network-auth', authenticateToken, vaultController.networkAuthVaultCardByPan.bind(vaultController));
 
+<<<<<<< Updated upstream
 // ════════════════════════════════════════════════════════════════════════════
 // ABSA BUSINESS BANK — Vault → ABSA settlement endpoints
 // Position: final destination for large vault balances (gold supplier payments)
@@ -1128,33 +1107,102 @@ router.post('/send-to-absa', authenticateToken, async (req, res) => {
       reference:          String(reference),
       transferType:       (String(transferType || 'SWIFT').toUpperCase() as any),
       note:               note ? String(note) : undefined,
-    });
+=======
+export default router;
 
-    if (!result.ok) {
-      // Rollback vault debit
-      await db.query(
-        'UPDATE vault_accounts SET balance = balance + ?, updated_at = ? WHERE id = ?',
-        [amt, now, vaultRow.id]
-      );
-      return res.status(502).json(result);
+// ── POST /api/vault/buy-crypto ────────────────────────────────────────────────
+// Buy crypto directly using vault balance.
+// Body: { asset, amount, currency?, merchantId? }
+// Debits vault ledger and credits the merchant's crypto wallet.
+router.post('/buy-crypto', authenticateToken, async (req, res) => {
+  try {
+    const asset      = String(req.body?.asset || req.body?.cryptoCoin || '').toUpperCase().trim();
+    const amount     = Number(req.body?.amount || req.body?.fiatAmount || 0);
+    const currency   = String(req.body?.currency || 'USD').toUpperCase();
+    const merchantId = String(req.body?.merchantId || 'MRC-1001').trim();
+    const network    = req.body?.network ? String(req.body.network) : undefined;
+
+    if (!asset || !amount || amount <= 0) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'asset and positive amount are required' });
     }
 
-    // Ledger entry
-    await db.query(`
-      INSERT OR IGNORE INTO vault_ledger
-        (id, ts, type, merchant_id, amount, currency, reference, status, meta)
-      VALUES (?, ?, 'VAULT_TO_ABSA', NULL, ?, ?, ?, 'COMPLETED', ?)
-    `, [
-      uuidv4(), now, -amt, ccy, String(reference),
-      JSON.stringify({ absaTransferId: result.transferId, beneficiary: String(beneficiaryName) }),
-    ]).catch(() => {});
+    // 1. Check vault balance
+    const { vaultEngine } = await import('./vault.service');
+    const vaultBalance = await vaultEngine.getVaultBalance(currency);
+    if (vaultBalance < amount) {
+      return res.status(409).json({
+        error: 'INSUFFICIENT_VAULT_FUNDS',
+        message: `Vault ${currency} balance is ${vaultBalance.toFixed(2)}, need ${amount.toFixed(2)}`,
+      });
+    }
 
-    return res.json({ ...result, ok: true, vaultBalanceAfter: Number(vaultRow.balance) - amt });
-  } catch (err: any) {
-    console.error('[ABSA /send-to-absa]', err.message);
-    return res.status(500).json({ ok: false, error: err.message });
+    // 2. Execute crypto purchase via exchange router
+    const xr = await import('../../exchange/exchange-router.service');
+    const order = await xr.buyAssetBestEffort(asset, amount);
+    if (!order?.ok || Number(order.executedQty || 0) <= 0) {
+      return res.status(502).json({
+        error: 'EXCHANGE_FAILED',
+        message: order?.raw?.note || order?.status || 'Exchange did not confirm purchase',
+        provider: order?.provider,
+      });
+    }
+
+    const cryptoAmount = Number(order.executedQty);
+
+    // 3. Debit vault
+    const ref = `VAULT-CRYPTO-${asset}-${Date.now().toString(36).toUpperCase()}`;
+    await vaultEngine.debitVault({
+      amount,
+      currency,
+      reference: ref,
+      merchantId,
+      type: 'VAULT_TO_MERCHANT',
+      meta: { asset, cryptoAmount, provider: order.provider, orderId: order.order_id },
+    });
+
+    // 4. Credit merchant crypto wallet
+    const { walletsService } = await import('../wallets/wallets.service');
+    const cryptoWallet = await walletsService.getOrCreateCryptoWallet(merchantId, asset);
+    await db.query(
+      'UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [cryptoAmount, cryptoWallet.id]
+    );
+
+    // 5. Record transaction
+    const { v4: uuidv4 } = await import('uuid');
+    await db.query(
+      `INSERT OR IGNORE INTO crypto_transactions
+         (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount,
+          fiat_currency, exchange_rate, source, provider_mode, status, reference)
+       VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, 'vault_bank', ?, 'completed', ?)`,
+      [
+        uuidv4(), merchantId, asset, amount, cryptoAmount, currency,
+        amount > 0 && cryptoAmount > 0 ? amount / cryptoAmount : 0,
+        order.provider || 'exchange', ref,
+      ]
+    );
+
+    console.log(`[Vault→Crypto] ✅ Bought ${cryptoAmount} ${asset} for ${currency} ${amount} — provider=${order.provider}`);
+
+    return res.status(201).json({
+      ok: true,
+      asset,
+      cryptoAmount,
+      fiatAmount: amount,
+      currency,
+      exchangeRate: amount / cryptoAmount,
+      provider: order.provider,
+      orderId: order.order_id || ref,
+      vaultBalanceAfter: await vaultEngine.getVaultBalance(currency),
+>>>>>>> Stashed changes
+    });
+
+  } catch (error: any) {
+    const status = error?.code === 'NO_FUNDS' ? 409 : error?.code === 'VALIDATION_ERROR' ? 400 : 502;
+    return res.status(status).json({ error: error?.code || 'VAULT_CRYPTO_BUY_FAILED', message: error?.message || 'Vault crypto buy failed' });
   }
 });
+<<<<<<< Updated upstream
 
 /**
  * GET /api/vault/absa/balance?currency=USD
@@ -1381,3 +1429,5 @@ router.get('/card/balance/:cardId', async (req, res) => {
 });
 
 export default router;
+=======
+>>>>>>> Stashed changes

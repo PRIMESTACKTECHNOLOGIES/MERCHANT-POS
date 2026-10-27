@@ -374,8 +374,8 @@ export const OverviewPage = () => {
   const [lastTransactionCount, setLastTransactionCount] = useState(0);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
-  // These records are awaiting provider or bank confirmation; they are not wallet funds.
-  const [unprocessed, setUnprocessed] = useState<{ totalTransactions: number; byCurrency: { currency: string; count: number; totalAmount: number }[] } | null>(null);
+  // Unprocessed batch state
+  const [unprocessed, setUnprocessed] = useState<{ totalTransactions: number; totalAmountUSD: number; byCurrency: { currency: string; count: number; totalUSD: number }[] } | null>(null);
   const [processing, setProcessing] = useState(false);
   const [processResult, setProcessResult] = useState<{ success: boolean; message: string; totalAmountCredited: number } | null>(null);
 
@@ -732,18 +732,29 @@ export const OverviewPage = () => {
               </div>
               <div>
                 <h3 className="text-base font-semibold text-amber-900">
-                  POS Transactions Awaiting Settlement Confirmation
+                  Internal Ledger Transactions Pending Credit
                 </h3>
                 <p className="text-sm text-amber-700 mt-0.5">
-                  <span className="font-bold text-amber-900">{unprocessed.totalTransactions} transactions</span> are awaiting external provider or bank confirmation. They are not available to credit to the merchant wallet.
+                  <span className="font-bold text-amber-900">{unprocessed.totalTransactions} transactions</span> totalling{' '}
+                  <span className="font-bold text-amber-900">
+                    ${unprocessed.totalAmountUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                  </span>{' '}
+                  are ready to be credited to your merchant internal wallet.
                 </p>
                 {unprocessed.byCurrency.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
                     {unprocessed.byCurrency.map((c) => (
                       <span key={c.currency} className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                        {c.currency}: {c.count} txns · {new Intl.NumberFormat('en-US', { style: 'currency', currency: c.currency }).format(c.totalAmount)}
+                        {c.currency}: {c.count} txns · ${c.totalUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     ))}
+                  </div>
+                )}
+                {processResult && (
+                  <div className={`mt-2 text-sm font-medium ${processResult.success ? 'text-green-700' : 'text-red-600'}`}>
+                    {processResult.success
+                      ? `✅ ${processResult.message}`
+                      : `❌ ${processResult.message}`}
                   </div>
                 )}
               </div>
@@ -775,20 +786,41 @@ export const OverviewPage = () => {
                 </svg>
                 MT103 SWIFT
               </a>
-              <p className="max-w-xs text-xs font-medium text-amber-800">
-                Manual wallet credit is disabled. Funds post only after provider or signed bank confirmation.
-              </p>
+              {/* Process & Credit Internal Ledger */}
+              <button
+                onClick={handleProcessBatch}
+                disabled={processing}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-semibold shadow-sm hover:shadow-md transition-all duration-200 disabled:cursor-not-allowed"
+              >
+                {processing ? (
+                  <>
+                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    Credit Internal Ledger
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {unprocessed && unprocessed.totalTransactions === 0 && (
+      {/* ── All-clear message after processing ──────────────────────────── */}
+      {unprocessed && unprocessed.totalTransactions === 0 && processResult?.success && (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-green-50 border border-green-200 text-green-800 text-sm font-medium">
           <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
-          No POS transactions are currently awaiting settlement confirmation.
+          All transactions settled. ${processResult.totalAmountCredited.toLocaleString('en-US', { minimumFractionDigits: 2 })} credited to your wallet.
         </div>
       )}
 

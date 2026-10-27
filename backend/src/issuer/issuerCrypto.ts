@@ -1,4 +1,12 @@
 import crypto from "crypto";
+import {
+  BLOCK_SIZE,
+  KEY_SIZE_BYTES,
+  EMV_CRYPTO_DEFAULTS,
+  CIPHER_SPECS,
+  validateKeyBytes,
+  type SymmetricCipher,
+} from "../config/crypto.spec";
 
 export type IssuerCryptoInput = {
   pan: string;
@@ -27,21 +35,33 @@ function normalizePan(pan: string): string {
 }
 
 function expandTwoKey3Des(key: Buffer): Buffer {
-  if (key.length === 24) return key;
-  if (key.length !== 16) throw new Error("EMV_IMK_MUST_BE_16_OR_24_BYTES");
-  return Buffer.concat([key, key.subarray(0, 8)]);
+  if (key.length === KEY_SIZE_BYTES.TRIPLE_DES_3KEY) return key;
+  if (key.length !== KEY_SIZE_BYTES.TRIPLE_DES_2KEY) {
+    throw new Error(
+      `EMV_IMK_MUST_BE_${KEY_SIZE_BYTES.TRIPLE_DES_2KEY}_OR_${KEY_SIZE_BYTES.TRIPLE_DES_3KEY}_BYTES`
+    );
+  }
+  return Buffer.concat([key, key.subarray(0, BLOCK_SIZE.DES)]);
 }
 
 function encryptBlock(key: Buffer, block: Buffer): Buffer {
-  const cipher = crypto.createCipheriv("des-ede3-ecb", expandTwoKey3Des(key), null);
+  if (block.length !== BLOCK_SIZE.TRIPLE_DES) throw new Error("DES_BLOCK_SIZE_INVALID");
+  const expanded = expandTwoKey3Des(key);
+  const cipher = crypto.createCipheriv(
+    CIPHER_SPECS["3DES-ECB-2KEY"].nodeCryptoName,
+    expanded,
+    null
+  );
   cipher.setAutoPadding(false);
   return Buffer.concat([cipher.update(block), cipher.final()]);
 }
 
 function encryptSingleDes(key: Buffer, block: Buffer): Buffer {
-  if (key.length !== 8 || block.length !== 8) throw new Error("DES_BLOCK_SIZE_INVALID");
-  // Use 3DES K1/K1/K1 because OpenSSL 3 disables the legacy single-DES cipher.
-  const cipher = crypto.createCipheriv("des-ede3-ecb", Buffer.concat([key, key, key]), null);
+  if (key.length !== BLOCK_SIZE.DES || block.length !== BLOCK_SIZE.DES) {
+    throw new Error("DES_BLOCK_SIZE_INVALID");
+  }
+  const threeKey = Buffer.concat([key, key, key]);
+  const cipher = crypto.createCipheriv("des-ede3-ecb", threeKey, null);
   cipher.setAutoPadding(false);
   return Buffer.concat([cipher.update(block), cipher.final()]);
 }
@@ -52,6 +72,9 @@ function xor(left: Buffer, right: Buffer): Buffer {
 }
 
 function deriveUdk(imk: Buffer, pan: string, panSequence: string): Buffer {
+  if (!validateKeyBytes("3DES-ECB-2KEY", imk) && !validateKeyBytes("3DES-ECB-3KEY", imk)) {
+    throw new Error(`UDK_KEY_INVALID: require 16/24-byte 3DES key, got ${imk.length}`);
+  }
   const panPsn = Buffer.from(`${pan}${panSequence}`.padEnd(16, "F").slice(0, 16), "hex");
   const left = encryptBlock(imk, panPsn);
   const right = encryptBlock(imk, xor(panPsn, Buffer.alloc(8, 0xFF)));
@@ -59,7 +82,9 @@ function deriveUdk(imk: Buffer, pan: string, panSequence: string): Buffer {
 }
 
 function deriveSessionKey(udk: Buffer, atc: Buffer): Buffer {
-  if (atc.length !== 2) throw new Error("ATC_MUST_BE_2_BYTES");
+  if (atc.length !== EMV_CRYPTO_DEFAULTS.ATC_DIVERSIFICATION_BYTES - 8) {
+    throw new Error("ATC_MUST_BE_2_BYTES");
+  }
   const diversification = Buffer.concat([
     atc,
     Buffer.alloc(6),
@@ -73,20 +98,26 @@ function deriveSessionKey(udk: Buffer, atc: Buffer): Buffer {
 }
 
 function retailMac(key: Buffer, data: Buffer): Buffer {
-  const paddedLength = Math.ceil((data.length + 1) / 8) * 8;
+  const blockBytes = BLOCK_SIZE.TRIPLE_DES;
+  const paddedLength = Math.ceil((data.length + 1) / blockBytes) * blockBytes;
   const padded = Buffer.alloc(paddedLength);
   data.copy(padded);
   padded[data.length] = 0x80;
 
-  let state = Buffer.alloc(8) as Buffer<ArrayBufferLike>;
-  const singleDesKey = expandTwoKey3Des(key).subarray(0, 8);
-  for (let offset = 0; offset < padded.length; offset += 8) {
-    state = encryptSingleDes(singleDesKey, xor(state, padded.subarray(offset, offset + 8)));
+  let state = Buffer.alloc(blockBytes) as Buffer<ArrayBufferLike>;
+  const singleDesKey = expandTwoKey3Des(key).subarray(0, BLOCK_SIZE.DES);
+  for (let offset = 0; offset < padded.length; offset += blockBytes) {
+    state = encryptSingleDes(singleDesKey, xor(state, padded.subarray(offset, offset + blockBytes)));
   }
-  const decrypt = crypto.createDecipheriv("des-ede3-ecb", expandTwoKey3Des(key), null);
+  const decrypt = crypto.createDecipheriv(
+    CIPHER_SPECS["3DES-ECB-2KEY"].nodeCryptoName,
+    expandTwoKey3Des(key),
+    null
+  );
   decrypt.setAutoPadding(false);
   const decrypted = Buffer.concat([decrypt.update(state), decrypt.final()]);
-  return Buffer.from(encryptSingleDes(singleDesKey, decrypted));
+  const finalMac = Buffer.from(encryptSingleDes(singleDesKey, decrypted));
+  return finalMac.subarray(0, EMV_CRYPTO_DEFAULTS.ARQC_LENGTH_BYTES);
 }
 
 /**

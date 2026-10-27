@@ -3,10 +3,9 @@
  * Organized sections: Payments, Wallet, Records, Settings
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useNotifications } from '../contexts/useNotifications';
-import './CustomerWalletPage.css';
 import {
   getCustomers,
   getWalletBalance,
@@ -14,8 +13,6 @@ import {
   topupWallet,
   debitWallet,
   walletTransfer,
-  sendToHotWallet,
-  callProviderAndSendToMerchant,
   getCryptoWallets,
   type Customer,
   type WalletBalance,
@@ -25,7 +22,7 @@ import {
 import { getErrorMessage } from '../utils/errorMessage';
 
 type Section = 'payments' | 'wallet' | 'records' | 'settings';
-type PaymentAction = 'send' | null;
+type PaymentAction = 'send' | 'receive' | 'scan' | 'links' | null;
 type WalletAction = 'add' | 'withdraw' | 'methods' | null;
 
 export default function CustomerWalletPage() {
@@ -41,18 +38,6 @@ export default function CustomerWalletPage() {
   const [activeSection, setActiveSection] = useState<Section>('payments');
   const [paymentAction, setPaymentAction] = useState<PaymentAction>(null);
   const [walletAction, setWalletAction] = useState<WalletAction>(null);
-  const [merchantTransferOpen, setMerchantTransferOpen] = useState(false);
-  const [providerEndpoint, setProviderEndpoint] = useState('');
-  const [providerApiKey, setProviderApiKey] = useState('');
-  const [providerRequestReference, setProviderRequestReference] = useState('');
-  const merchantTransferInFlight = useRef(false);
-  const [merchantTransfer, setMerchantTransfer] = useState({
-    merchantId: '',
-    amount: '',
-    assetType: 'fiat' as 'fiat' | 'crypto',
-    cryptoCoin: '',
-    reason: '',
-  });
   
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -66,7 +51,13 @@ export default function CustomerWalletPage() {
   const [searching, setSearching] = useState(false);
 
   // Load customer data
-  const loadCustomerData = useCallback(async () => {
+  useEffect(() => {
+    if (customerId) {
+      loadCustomerData();
+    }
+  }, [customerId]);
+
+  const loadCustomerData = async () => {
     setLoading(true);
     try {
       const [customers, bal, crypto, txns] = await Promise.all([
@@ -86,27 +77,12 @@ export default function CustomerWalletPage() {
     } finally {
       setLoading(false);
     }
-  }, [customerId, addNotification]);
-
-  useEffect(() => {
-    if (customerId) {
-      void loadCustomerData();
-    }
-  }, [customerId, loadCustomerData]);
+  };
 
 
   const handleSendMoney = async () => {
-    const amount = Number(form.amount);
     if (!form.amount || !form.recipient) {
       addNotification('Error', 'Amount and recipient required', 'error');
-      return;
-    }
-    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
-      addNotification('Error', 'Enter a positive amount with no more than two decimal places', 'error');
-      return;
-    }
-    if (amount > Number(balance?.balance || 0)) {
-      addNotification('Error', 'Insufficient customer wallet balance', 'error');
       return;
     }
 
@@ -120,12 +96,11 @@ export default function CustomerWalletPage() {
       await walletTransfer(
         customerId!,
         form.recipient,
-        amount,
-        form.note,
-        customerCurrency,
+        Number(form.amount),
+        form.note
       );
       
-      addNotification('Success', `Sent ${formatAmount(amount)} to ${form.recipientDisplay || form.recipient}`, 'success');
+      addNotification('Success', `Sent $${form.amount} to ${form.recipientDisplay || form.recipient}`, 'success');
       setForm({ amount: '', recipient: '', recipientDisplay: '', note: '', method: 'card' });
       setPaymentAction(null);
       setSearchResults([]);
@@ -214,116 +189,6 @@ export default function CustomerWalletPage() {
     }
   };
 
-  const customerCurrency = balance?.currency || 'USD';
-  const currencyTransactions = transactions.filter(
-    (transaction) => !transaction.currency || transaction.currency.toUpperCase() === customerCurrency.toUpperCase(),
-  );
-  const receivedTotal = currencyTransactions.reduce((total, transaction) => (
-    (transaction.transaction_type || transaction.type) === 'credit'
-      ? total + Number((transaction.fiat_amount ?? transaction.amount) || 0)
-      : total
-  ), 0);
-  const sentTotal = currencyTransactions.reduce((total, transaction) => (
-    (transaction.transaction_type || transaction.type) === 'debit'
-      ? total + Number((transaction.fiat_amount ?? transaction.amount) || 0)
-      : total
-  ), 0);
-  const formatAmount = (amount: number) => new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: customerCurrency,
-    minimumFractionDigits: 2,
-  }).format(Number.isFinite(amount) ? amount : 0);
-  const maskedIdentityNumber = customer?.id_number
-    ? `${'•'.repeat(Math.max(customer.id_number.length - 4, 0))}${customer.id_number.slice(-4)}`
-    : 'Not provided';
-  const customerAddress = [
-    customer?.address_line1,
-    customer?.address_line2,
-    customer?.city,
-    customer?.postal_code,
-    customer?.country,
-  ].filter(Boolean).join(', ');
-
-  const handleSendToMerchant = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (merchantTransferInFlight.current) return;
-    const amount = Number(merchantTransfer.amount);
-    if (!merchantTransfer.merchantId.trim() || !Number.isFinite(amount) || amount <= 0) {
-      addNotification('Error', 'Enter a merchant ID and a positive amount', 'error');
-      return;
-    }
-    if (merchantTransfer.assetType === 'fiat' && amount > Number(balance?.balance || 0)) {
-      addNotification('Error', 'Insufficient customer wallet balance', 'error');
-      return;
-    }
-    if (merchantTransfer.assetType === 'crypto') {
-      const cryptoWallet = cryptoWallets.find(
-        (wallet) => wallet.crypto_coin.toUpperCase() === merchantTransfer.cryptoCoin.toUpperCase(),
-      );
-      if (!cryptoWallet || amount > Number(cryptoWallet.balance || 0)) {
-        addNotification('Error', 'Insufficient balance for the selected crypto asset', 'error');
-        return;
-      }
-    }
-
-    merchantTransferInFlight.current = true;
-    setLoading(true);
-    try {
-      let result: {
-        amount: number;
-        currency?: string;
-        cryptoCoin?: string;
-        merchantId: string;
-      };
-      if (merchantTransfer.assetType === 'fiat') {
-        const amountMinor = Math.round(amount * 100);
-        if (Math.abs(amount * 100 - amountMinor) > 1e-6) {
-          addNotification('Error', 'Fiat transfer amounts must have no more than two decimal places', 'error');
-          return;
-        }
-        const requestReference = providerRequestReference
-          || `WPM-${window.crypto.randomUUID().replace(/-/g, '').slice(0, 20).toUpperCase()}`;
-        setProviderRequestReference(requestReference);
-        result = await callProviderAndSendToMerchant({
-            customerId: customerId!,
-            merchantId: merchantTransfer.merchantId.trim(),
-            amountMinor,
-            currency: customerCurrency,
-            endpointUrl: providerEndpoint.trim(),
-            apiKey: providerApiKey.trim(),
-            requestReference,
-            reason: merchantTransfer.reason.trim() || undefined,
-          });
-      } else {
-        result = await sendToHotWallet({
-            customerId: customerId!,
-            merchantId: merchantTransfer.merchantId.trim(),
-            assetType: merchantTransfer.assetType,
-            amount,
-            currency: customerCurrency,
-            cryptoCoin: merchantTransfer.cryptoCoin,
-            reason: merchantTransfer.reason.trim() || undefined,
-          });
-      }
-      addNotification(
-        'Success',
-        `${result.amount} ${result.cryptoCoin || result.currency || customerCurrency} sent to merchant ${result.merchantId}`,
-        'success',
-      );
-      setMerchantTransferOpen(false);
-      setProviderEndpoint('');
-      setProviderApiKey('');
-      setProviderRequestReference('');
-      setMerchantTransfer({ merchantId: '', amount: '', assetType: 'fiat', cryptoCoin: '', reason: '' });
-      await loadCustomerData();
-    } catch (error: unknown) {
-      addNotification('Error', getErrorMessage(error, 'Merchant wallet transfer failed'), 'error');
-    } finally {
-      merchantTransferInFlight.current = false;
-      setLoading(false);
-    }
-  };
-
   if (!customer) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -337,99 +202,62 @@ export default function CustomerWalletPage() {
   }
 
   return (
-    <div className="customer-wallet-page">
-      <header className="customer-wallet-navbar">
-        <div className="customer-wallet-navbar-inner">
-          <button type="button" className="customer-wallet-brand" onClick={() => navigate('/wallets')}>
-            <span className="customer-wallet-brand-mark">W</span>
-            <span>WALLET DASHBOARD</span>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 shadow-lg">
+        <div className="max-w-7xl mx-auto">
+          <button
+            onClick={() => navigate('/wallets')}
+            className="mb-4 flex items-center gap-2 text-white/90 hover:text-white transition"
+          >
+            <span>←</span> Back to All Wallets
           </button>
-          <div className="customer-wallet-navbar-user">
-            <span className="customer-wallet-navbar-name">{customer.name}</span>
-            <button type="button" className="customer-wallet-back" onClick={() => navigate(`/customer-wallet-profile/${customer.id}`)}>
-              Profile &amp; KYC
-            </button>
-            <button type="button" className="customer-wallet-back" onClick={() => navigate('/wallets')}>
-              ← All customers
-            </button>
+          
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center text-3xl">
+              👤
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">{customer.name}</h1>
+              <p className="text-white/80">{customer.email}</p>
+            </div>
+          </div>
+          
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Fiat Balance */}
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+              <div className="text-white/70 text-sm mb-1">Fiat Wallet</div>
+              <div className="text-3xl font-bold">
+                ${Number(balance?.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-white/60 text-xs mt-1">USD</div>
+            </div>
+            
+            {/* Crypto Balance */}
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+              <div className="text-white/70 text-sm mb-1">Crypto Wallet</div>
+              <div className="text-3xl font-bold">
+                {cryptoWallets.length}
+              </div>
+              <div className="text-white/60 text-xs mt-1">Assets</div>
+            </div>
+            
+            {/* Transactions */}
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+              <div className="text-white/70 text-sm mb-1">Transactions</div>
+              <div className="text-3xl font-bold">
+                {transactions.length}
+              </div>
+              <div className="text-white/60 text-xs mt-1">All time</div>
+            </div>
           </div>
         </div>
-      </header>
-
-      <main className="customer-wallet-shell">
-        <section className="customer-wallet-dashboard" aria-label="Customer wallet overview">
-          <article className="customer-wallet-card customer-wallet-profile-card">
-            <div className="customer-wallet-avatar" aria-hidden="true">
-              {customer.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}
-            </div>
-            <div className="customer-wallet-profile-copy">
-              <span className="customer-wallet-eyebrow">CUSTOMER WALLET</span>
-              <h1>{customer.name}</h1>
-              <p>{customer.occupation || 'Personal account'}</p>
-            </div>
-            <div className="customer-wallet-profile-balance">
-              <span>Wallet balance</span>
-              <strong>{formatAmount(Number(balance?.balance || 0))}</strong>
-            </div>
-            <button type="button" className="customer-wallet-primary-button" onClick={() => setMerchantTransferOpen(true)}>
-              ↗ Send to merchant
-            </button>
-          </article>
-
-          <article className="customer-wallet-card customer-wallet-stat-card">
-            <span className="customer-wallet-stat-icon received">↓</span>
-            <div>
-              <h2>{formatAmount(receivedTotal)}</h2>
-              <p>Received</p>
-            </div>
-            <span className="customer-wallet-stat-caption">Wallet credits · {customerCurrency}</span>
-          </article>
-          <article className="customer-wallet-card customer-wallet-stat-card">
-            <span className="customer-wallet-stat-icon sent">↑</span>
-            <div>
-              <h2>{formatAmount(sentTotal)}</h2>
-              <p>Sent</p>
-            </div>
-            <span className="customer-wallet-stat-caption">Wallet debits · {customerCurrency}</span>
-          </article>
-          <article className="customer-wallet-card customer-wallet-stat-card">
-            <span className="customer-wallet-stat-icon activity">↻</span>
-            <div>
-              <h2>{transactions.length.toLocaleString()}</h2>
-              <p>Transactions</p>
-            </div>
-            <span className="customer-wallet-stat-caption">{cryptoWallets.length} crypto assets</span>
-          </article>
-
-          <article className="customer-wallet-card customer-wallet-details-card">
-            <div className="customer-wallet-details-heading">
-              <div>
-                <span className="customer-wallet-eyebrow">ACCOUNT INFORMATION</span>
-                <h2>Customer details</h2>
-              </div>
-              <span className="customer-wallet-customer-id">ID · {customer.id}</span>
-            </div>
-            <div className="customer-wallet-details-grid">
-              <div><span>Portal PIN</span><strong style={{ color: '#65a30d', fontFamily: 'monospace', letterSpacing: '2px' }}>{customer.portal_pin || 'N/A'}</strong></div>
-              <div><span>Email</span><strong>{customer.email || 'Not provided'}</strong></div>
-              <div><span>Phone</span><strong>{customer.phone || 'Not provided'}</strong></div>
-              <div><span>Wallet code</span><strong>{customer.wallet_code || 'Not assigned'}</strong></div>
-              <div><span>Member since</span><strong>{customer.created_at ? new Date(customer.created_at).toLocaleDateString() : '—'}</strong></div>
-              <div><span>Address</span><strong>{customerAddress || 'Not provided'}</strong></div>
-              <div><span>Date of birth</span><strong>{customer.date_of_birth ? new Date(customer.date_of_birth).toLocaleDateString() : 'Not provided'}</strong></div>
-              <div><span>Nationality</span><strong>{customer.nationality || 'Not provided'}</strong></div>
-              <div><span>ID document</span><strong>{customer.id_type || 'Not provided'}</strong></div>
-              <div><span>ID number</span><strong>{maskedIdentityNumber}</strong></div>
-              <div><span>ID expiry</span><strong>{customer.id_expiry ? new Date(customer.id_expiry).toLocaleDateString() : 'Not provided'}</strong></div>
-              <div><span>Occupation</span><strong>{customer.occupation || 'Not provided'}</strong></div>
-              <div><span>KYC status</span><strong>{customer.kyc_status || 'Not provided'}</strong></div>
-            </div>
-          </article>
-        </section>
+      </div>
 
       {/* Main Navigation */}
-      <div className="customer-wallet-tabs">
-        <nav className="customer-wallet-tabs-inner">
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+        <div className="max-w-7xl mx-auto px-6">
+          <nav className="flex gap-8">
             <button
               onClick={() => { setActiveSection('payments'); setPaymentAction(null); setWalletAction(null); }}
               className={`py-4 px-2 font-semibold transition border-b-2 ${
@@ -470,72 +298,56 @@ export default function CustomerWalletPage() {
             >
               ⚙️ Settings
             </button>
-        </nav>
+          </nav>
+        </div>
       </div>
 
       {/* Content */}
-      <div className="customer-wallet-content">
+      <div className="max-w-7xl mx-auto px-6 py-8">
         {/* PAYMENTS SECTION */}
         {activeSection === 'payments' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-gray-900">Payments</h2>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Send Money */}
               <button
-                type="button"
                 onClick={() => setPaymentAction('send')}
                 className="bg-white rounded-xl p-6 border-2 border-gray-200 hover:border-blue-500 hover:shadow-lg transition text-left"
               >
                 <div className="text-4xl mb-3">📤</div>
                 <h3 className="font-bold text-lg text-gray-900 mb-1">Send Money</h3>
-                <p className="text-sm text-gray-600">Transfer your balance to another customer wallet</p>
+                <p className="text-sm text-gray-600">To wallet users, bank accounts, or contacts</p>
               </button>
 
-              {/* Receive Money is unavailable until a payment-request or wallet-QR flow is implemented. */}
+              {/* Receive Money */}
               <button
-                type="button"
-                disabled
-                aria-describedby="receive-money-unavailable"
-                className="bg-white rounded-xl p-6 border-2 border-gray-200 opacity-60 cursor-not-allowed text-left"
+                onClick={() => setPaymentAction('receive')}
+                className="bg-white rounded-xl p-6 border-2 border-gray-200 hover:border-green-500 hover:shadow-lg transition text-left"
               >
                 <div className="text-4xl mb-3">📥</div>
                 <h3 className="font-bold text-lg text-gray-900 mb-1">Receive Money</h3>
-                <p id="receive-money-unavailable" className="text-sm text-gray-600">Unavailable — no payment request or wallet QR is generated.</p>
+                <p className="text-sm text-gray-600">Request payments, generate QR codes</p>
               </button>
 
-              {/* Scan to Pay is unavailable until a scanner and payment handler are connected. */}
+              {/* Scan to Pay */}
               <button
-                type="button"
-                disabled
-                aria-describedby="scan-to-pay-unavailable"
-                className="bg-white rounded-xl p-6 border-2 border-gray-200 opacity-60 cursor-not-allowed text-left"
+                onClick={() => setPaymentAction('scan')}
+                className="bg-white rounded-xl p-6 border-2 border-gray-200 hover:border-purple-500 hover:shadow-lg transition text-left"
               >
                 <div className="text-4xl mb-3">📷</div>
                 <h3 className="font-bold text-lg text-gray-900 mb-1">Scan to Pay</h3>
-                <p id="scan-to-pay-unavailable" className="text-sm text-gray-600">Unavailable — no QR scanner or merchant-payment handler is connected.</p>
+                <p className="text-sm text-gray-600">QR scanner for merchant payments</p>
               </button>
 
-              {/* Payment Links is unavailable until a payment-link service is connected. */}
+              {/* Payment Links */}
               <button
-                type="button"
-                disabled
-                aria-describedby="payment-links-unavailable"
-                className="bg-white rounded-xl p-6 border-2 border-gray-200 opacity-60 cursor-not-allowed text-left"
+                onClick={() => setPaymentAction('links')}
+                className="bg-white rounded-xl p-6 border-2 border-gray-200 hover:border-orange-500 hover:shadow-lg transition text-left"
               >
                 <div className="text-4xl mb-3">🔗</div>
                 <h3 className="font-bold text-lg text-gray-900 mb-1">Payment Links</h3>
-                <p id="payment-links-unavailable" className="text-sm text-gray-600">Unavailable — no payment-link service is connected.</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMerchantTransferOpen(true)}
-                className="customer-wallet-merchant-action bg-white rounded-xl p-6 border-2 border-gray-200 hover:border-green-500 hover:shadow-lg transition text-left"
-              >
-                <div className="text-4xl mb-3">🏪</div>
-                <h3 className="font-bold text-lg text-gray-900 mb-1">Send to Merchant</h3>
-                <p className="text-sm text-gray-600">Transfer fiat with provider confirmation or move recorded crypto balance internally</p>
+                <p className="text-sm text-gray-600">Create & share payment links for customers</p>
               </button>
             </div>
 
@@ -600,21 +412,22 @@ export default function CustomerWalletPage() {
                   
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Amount ({customerCurrency})
+                      Amount (USD)
                     </label>
                     <div className="relative">
+                      <span className="absolute left-4 top-3 text-gray-500 text-lg">$</span>
                       <input
                         type="number"
                         step="0.01"
                         placeholder="0.00"
                         value={form.amount}
                         onChange={e => setForm({ ...form, amount: e.target.value })}
-                        className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-lg"
+                        className="w-full pl-8 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-lg"
                       />
                     </div>
                     {form.amount && Number(form.amount) > Number(balance?.balance || 0) && (
                       <div className="mt-2 text-sm text-red-600">
-                        Insufficient balance (Available: {formatAmount(Number(balance?.balance || 0))})
+                        Insufficient balance (Available: ${Number(balance?.balance || 0).toFixed(2)})
                       </div>
                     )}
                   </div>
@@ -639,16 +452,16 @@ export default function CustomerWalletPage() {
                       <div className="space-y-1 text-sm">
                         <div className="flex justify-between">
                           <span className="text-gray-600">You Send:</span>
-                          <span className="font-semibold text-gray-900">{formatAmount(Number(form.amount))}</span>
+                          <span className="font-semibold text-gray-900">${Number(form.amount).toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Transfer Fee:</span>
-                          <span className="font-semibold text-green-600">{formatAmount(0)} (no fee)</span>
+                          <span className="font-semibold text-green-600">$0.00 (Free!)</span>
                         </div>
                         <div className="border-t border-blue-200 pt-1 mt-1"></div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Recipient Gets:</span>
-                          <span className="font-bold text-blue-600 text-lg">{formatAmount(Number(form.amount))}</span>
+                          <span className="font-bold text-blue-600 text-lg">${Number(form.amount).toFixed(2)}</span>
                         </div>
                       </div>
                     </div>
@@ -667,10 +480,7 @@ export default function CustomerWalletPage() {
                     </button>
                     <button
                       onClick={handleSendMoney}
-                      disabled={loading || !form.recipient || !form.amount
-                        || !Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0
-                        || Math.abs(Number(form.amount) * 100 - Math.round(Number(form.amount) * 100)) > 1e-6
-                        || Number(form.amount) > Number(balance?.balance || 0)}
+                      disabled={loading || !form.recipient || !form.amount || Number(form.amount) <= 0 || Number(form.amount) > Number(balance?.balance || 0)}
                       className="flex-1 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
                     >
                       {loading ? '⏳ Sending...' : '💸 Send Money'}
@@ -680,6 +490,19 @@ export default function CustomerWalletPage() {
               </div>
             )}
 
+            {/* Receive Money Form */}
+            {paymentAction === 'receive' && (
+              <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
+                <h3 className="text-xl font-bold mb-4">Receive Money</h3>
+                <div className="text-center py-8">
+                  <div className="w-48 h-48 mx-auto bg-gray-100 rounded-xl flex items-center justify-center mb-4">
+                    <div className="text-6xl">📲</div>
+                  </div>
+                  <p className="text-gray-600 mb-4">Show this QR code to receive payment</p>
+                  <div className="font-mono text-sm text-gray-500">Wallet ID: {customerId}</div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -919,173 +742,6 @@ export default function CustomerWalletPage() {
           </div>
         )}
       </div>
-      </main>
-
-      {merchantTransferOpen && (
-        <div className="customer-wallet-modal-backdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget && !loading) {
-            setMerchantTransferOpen(false);
-            setProviderEndpoint('');
-            setProviderApiKey('');
-            setProviderRequestReference('');
-          }
-        }}>
-          <section
-            className="customer-wallet-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="merchant-transfer-title"
-          >
-            <div className="customer-wallet-modal-heading">
-              <div>
-                <span className="customer-wallet-eyebrow">WALLET TRANSFER</span>
-                <h2 id="merchant-transfer-title">Send to merchant wallet</h2>
-                <p>Fiat uses a server-allowlisted provider endpoint and requires its SUCCESS response before posting the balance transfer. Crypto moves the recorded balance between internal ledgers; it does not send a blockchain transaction.</p>
-              </div>
-              <button
-                type="button"
-                className="customer-wallet-modal-close"
-                aria-label="Close transfer dialog"
-                disabled={loading}
-                onClick={() => {
-                  setMerchantTransferOpen(false);
-                  setProviderEndpoint('');
-                  setProviderApiKey('');
-                  setProviderRequestReference('');
-                }}
-              >
-                ×
-              </button>
-            </div>
-
-            <form className="customer-wallet-transfer-form" onSubmit={handleSendToMerchant}>
-              <label>
-                Merchant ID
-                <input
-                  required
-                  autoComplete="off"
-                  placeholder="Enter merchant ID"
-                  value={merchantTransfer.merchantId}
-                  onChange={(event) => setMerchantTransfer({ ...merchantTransfer, merchantId: event.target.value })}
-                />
-              </label>
-              <label>
-                Asset type
-                <select
-                  value={merchantTransfer.assetType}
-                  onChange={(event) => setMerchantTransfer({
-                    ...merchantTransfer,
-                    assetType: event.target.value as 'fiat' | 'crypto',
-                    cryptoCoin: '',
-                  })}
-                >
-                  <option value="fiat">Fiat wallet · {customerCurrency}</option>
-                  <option value="crypto">Crypto balance · internal ledger transfer</option>
-                </select>
-              </label>
-              {merchantTransfer.assetType === 'crypto' && (
-                <label>
-                  Crypto asset
-                  <select
-                    required
-                    value={merchantTransfer.cryptoCoin}
-                    onChange={(event) => setMerchantTransfer({ ...merchantTransfer, cryptoCoin: event.target.value })}
-                  >
-                    <option value="">Select asset</option>
-                    {cryptoWallets.filter((wallet) => Number(wallet.balance) > 0).map((wallet) => (
-                      <option key={wallet.id} value={wallet.crypto_coin}>
-                        {wallet.crypto_coin} · {Number(wallet.balance).toLocaleString(undefined, { maximumFractionDigits: 8 })}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {merchantTransfer.assetType === 'fiat' && (
-                <>
-                  <label>
-                    Provider endpoint URL
-                    <input
-                      required
-                      type="url"
-                      autoComplete="url"
-                      placeholder="https://provider.example.com/collect"
-                      value={providerEndpoint}
-                      onChange={(event) => setProviderEndpoint(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Provider API key
-                    <input
-                      required
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="Enter provider API key"
-                      value={providerApiKey}
-                      onChange={(event) => setProviderApiKey(event.target.value)}
-                    />
-                  </label>
-                </>
-              )}
-              <label>
-                Amount
-                <input
-                  required
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={merchantTransfer.amount}
-                  onChange={(event) => setMerchantTransfer({ ...merchantTransfer, amount: event.target.value })}
-                />
-                <small>
-                  Available: {merchantTransfer.assetType === 'fiat'
-                    ? formatAmount(Number(balance?.balance || 0))
-                    : `${Number(cryptoWallets.find((wallet) => wallet.crypto_coin.toUpperCase() === merchantTransfer.cryptoCoin.toUpperCase())?.balance || 0).toLocaleString(undefined, { maximumFractionDigits: 8 })} ${merchantTransfer.cryptoCoin || 'asset'}`}
-                </small>
-              </label>
-              <label>
-                Note <span className="customer-wallet-optional">(optional)</span>
-                <input
-                  maxLength={200}
-                  placeholder="Add a transfer note"
-                  value={merchantTransfer.reason}
-                  onChange={(event) => setMerchantTransfer({ ...merchantTransfer, reason: event.target.value })}
-                />
-              </label>
-              <div className="customer-wallet-transfer-warning">
-                {merchantTransfer.assetType === 'fiat'
-                  ? 'The server requires the endpoint host to be allowlisted and a compatible provider API. The customer wallet amount is reserved during the request; only status SUCCESS posts the debit and merchant credit. The API key is not saved.'
-                  : 'This immediately debits the recorded customer crypto balance and credits the merchant crypto ledger. No on-chain transaction is sent.'}
-              </div>
-              <div className="customer-wallet-modal-actions">
-                <button
-                  type="button"
-                  className="customer-wallet-secondary-button"
-                  disabled={loading}
-                  onClick={() => {
-                    setMerchantTransferOpen(false);
-                    setProviderEndpoint('');
-                    setProviderApiKey('');
-                    setProviderRequestReference('');
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="customer-wallet-primary-button"
-                  disabled={loading || !merchantTransfer.merchantId || !merchantTransfer.amount
-                    || (merchantTransfer.assetType === 'crypto' && !merchantTransfer.cryptoCoin)
-                    || (merchantTransfer.assetType === 'fiat' && (!providerEndpoint.trim() || !providerApiKey.trim()))}
-                >
-                  {loading ? 'Calling provider…' : merchantTransfer.assetType === 'fiat' ? 'CALL THE PROVIDER' : 'Confirm transfer'}
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
-      )}
     </div>
   );
 }

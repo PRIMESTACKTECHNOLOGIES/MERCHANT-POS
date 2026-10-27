@@ -11,6 +11,9 @@ type VaultBankCardProps = {
     expiry: string;
     cvv: string;
     cardholderName?: string;
+    card_type?: string;
+    credit_limit?: number;
+    status?: string;
   } | null;
   detailsBusy?: boolean;
   detailsError?: string;
@@ -92,6 +95,10 @@ export default function VaultBankCard({
               <span className="vault-bank-card-label">VALID THRU</span>
               <strong>{expiry}</strong>
             </div>
+            <div>
+              <span className="vault-bank-card-label">TYPE</span>
+              <strong style={{ color: '#ffd700', letterSpacing: '0.05em' }}>CREDIT</strong>
+            </div>
           </div>
           <img className="vault-bank-card-visa" src={VISA_LOGO} alt="Visa" />
         </div>
@@ -116,6 +123,26 @@ export default function VaultBankCard({
           <div><span>Valid thru</span><strong>{revealedDetails?.expiry || expiry}</strong></div>
           <div><span>CVV</span><strong>{detailsBusy ? "Loading…" : revealedDetails?.cvv || cvv}</strong></div>
           <div><span>Currency</span><strong>{currency}</strong></div>
+          <div>
+            <span>Card type</span>
+            <strong style={{ color: '#16a34a', textTransform: 'uppercase' }}>
+              {revealedDetails?.card_type || 'credit'}
+            </strong>
+          </div>
+          <div>
+            <span>Credit limit</span>
+            <strong>
+              {revealedDetails?.credit_limit
+                ? `${currency} ${Number(revealedDetails.credit_limit).toLocaleString()}`
+                : `${currency} 5,000,000`}
+            </strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong style={{ color: '#16a34a' }}>
+              {revealedDetails?.status || 'ACTIVE'}
+            </strong>
+          </div>
           {detailsError && <p className="vault-bank-card-details-error">{detailsError}</p>}
         </div>
       )}

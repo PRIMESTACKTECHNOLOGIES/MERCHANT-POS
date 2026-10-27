@@ -57,8 +57,6 @@ export interface Customer {
   wallet_id?: string;
   wallet_code?: string;
   wallet_balance?: number;
-  /** Portal login PIN issued to this customer (shown to the merchant). */
-  portal_pin?: string | null;
   // KYC / identity
   id_type?: string;
   id_number?: string;
@@ -81,11 +79,6 @@ export interface Customer {
 export interface WalletBalance {
   balance: number;
   currency: string;
-}
-
-export interface CustomerWalletBalance extends WalletBalance {
-  id: string;
-  wallet_code?: string;
 }
 
 export interface WalletCard {
@@ -208,7 +201,6 @@ export interface Batch {
   stored_count?: number;
   upload_timestamp?: string;
   created_at?: string;
-  createdAt?: string;
 }
 
 export interface Product {
@@ -232,15 +224,6 @@ export interface Settings {
   license_number?: string;
   tax_id?: string;
   paymentConfig?: Array<Record<string, unknown>>;
-  terminal?: {
-    offlineMode: boolean;
-    autoUpdate: boolean;
-    features: {
-      manualEntry: boolean;
-      refunds: boolean;
-      tips: boolean;
-    };
-  };
   terminal_id?: string;
 }
 
@@ -289,25 +272,18 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
     const res = await fetch(url, { ...options, headers });
 
     if (!res.ok) {
-      const contentType = res.headers.get("content-type");
       const text = await res.text().catch(() => "");
-      
-      let errorMessage = res.statusText || `Request failed (${res.status})`;
-
-      if (contentType?.includes("application/json")) {
-        try {
-          const json = JSON.parse(text || "{}");
-          if (json?.error) errorMessage = json.error;
-          else if (json?.message) errorMessage = json.message;
-        } catch {
-          // fallback to statusText
+      let errorMessage = res.statusText || "Request failed";
+      try {
+        const json = JSON.parse(text || "{}");
+        if (json?.error) {
+          errorMessage = json.error;
         }
-      } else if (contentType?.includes("text/html") || text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
-        // If it's an HTML error page (like Render 502/504), don't show the HTML source.
-        errorMessage = `${res.status} ${res.statusText || 'Server Error'}`;
-      } else if (text && text.length < 200) {
-        // Only use plain text if it's reasonably short
-        errorMessage = text;
+
+      } catch {
+        if (text) {
+          errorMessage = text;
+        }
       }
 
       if (res.status === 401 || res.status === 403) {
@@ -343,7 +319,6 @@ export interface VaultStats {
   confirmedRealFundsByCurrency?: Record<string, number>;
   vaultBalancesByCurrency?: Record<string, number>;
   totalMerchantBalances: number;
-  merchantBalancesByCurrency?: Record<string, number>;
   totalPendingSettlement: number;
   totalPendingPayouts: number;
   totalOfflineApprovals: number;
@@ -648,90 +623,8 @@ export async function registerTerminal(name: string) {
   return res.json();
 }
 
-export async function verifyTerminal(
-  merchantId: string,
-  terminalId: string,
-  secretKey: string,
-  backendUrl?: string
-): Promise<{ valid: boolean; error?: string; merchantName?: string; terminalName?: string }> {
-  const base = backendUrl || BASE_URL;
-  const res = await fetch(`${base}/merchant/v1/terminal/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ merchantId, terminalId, secretKey }),
-  });
-  const data = await res.json().catch(() => ({} as any));
-  if (!res.ok) {
-    return { valid: false, error: data?.error || `Verify failed (HTTP ${res.status})` };
-  }
-  return {
-    valid: Boolean(data?.valid),
-    error: data?.error,
-    merchantName: data?.merchantName,
-    terminalName: data?.terminalName,
-  };
-}
-
-export const TERMINAL_CREDS_KEY = "pos_terminal_creds";
-
-export interface SavedTerminalCreds {
-  backendUrl: string;
-  merchantId: string;
-  terminalId: string;
-  secretKey: string;
-  savedAt: number;
-  merchantName?: string;
-  terminalName?: string;
-}
-
-export function saveTerminalCreds(creds: SavedTerminalCreds): void {
-  localStorage.setItem(TERMINAL_CREDS_KEY, JSON.stringify(creds));
-}
-
-export function getTerminalCreds(): SavedTerminalCreds | null {
-  try {
-    const raw = localStorage.getItem(TERMINAL_CREDS_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as SavedTerminalCreds;
-  } catch {
-    return null;
-  }
-}
-
-export function clearTerminalCreds(): void {
-  localStorage.removeItem(TERMINAL_CREDS_KEY);
-}
-
-export const PENDING_CUSTOMER_KEY = "pos_pending_new_customer";
-
-export interface PendingCustomer {
-  name: string;
-  email?: string;
-  phone?: string;
-  queuedAt: number;
-}
-
-export function enqueuePendingCustomer(c: Omit<PendingCustomer, "queuedAt">): void {
-  localStorage.setItem(
-    PENDING_CUSTOMER_KEY,
-    JSON.stringify({ ...c, queuedAt: Date.now() })
-  );
-}
-
-export function dequeuePendingCustomer(): PendingCustomer | null {
-  try {
-    const raw = localStorage.getItem(PENDING_CUSTOMER_KEY);
-    if (!raw) return null;
-    localStorage.removeItem(PENDING_CUSTOMER_KEY);
-    return JSON.parse(raw) as PendingCustomer;
-  } catch {
-    localStorage.removeItem(PENDING_CUSTOMER_KEY);
-    return null;
-  }
-}
-
 export async function regenerateTerminalSecret(merchantId: string, terminalId: string) {
-  const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/terminals/terminal/regenerate-secret`, {
+  const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/terminal/regenerate-secret`, {
     method: "POST",
     body: JSON.stringify({ merchantId, terminalId }),
   });
@@ -753,60 +646,12 @@ export async function forceTerminalReboot(merchantId: string, terminalId: string
 }
 
 export async function deleteTerminal(merchantId: string, terminalId: string) {
-  const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/terminals/terminal/${encodeURIComponent(merchantId)}/${encodeURIComponent(terminalId)}`, {
+  const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/terminal/${encodeURIComponent(merchantId)}/${encodeURIComponent(terminalId)}`, {
     method: "DELETE",
   });
   if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new Error(data?.error || "Failed to delete terminal");
+    throw new Error("Failed to delete terminal");
   }
-  return res.json();
-}
-
-export interface MerchantWalletBalance {
-  currency: string;
-  balance: number;
-}
-
-export interface MerchantProfile {
-  merchantId: string;
-  merchantName: string;
-  supportEmail: string | null;
-  testMode: boolean;
-  licenseNumber: string | null;
-  taxId: string | null;
-  address: string | null;
-  phone: string | null;
-  bankName: string | null;
-  bankAccountHolder: string | null;
-  bankIban: string | null;
-  bankSwiftCode: string | null;
-  terminalCount: number;
-  wallets: MerchantWalletBalance[];
-  totalBalance: number;
-  createdAt: string | null;
-  updatedAt: string | null;
-  deletable: boolean;
-  deleteBlockers: string[];
-}
-
-export async function fetchMerchantProfiles(): Promise<MerchantProfile[]> {
-  const res = await fetchWithAuth(`${BASE_URL}/api/merchants`);
-  const data = await res.json();
-  if (!Array.isArray(data)) {
-    throw new Error(data?.error || "Invalid merchant profiles response from server");
-  }
-  return data;
-}
-
-// fetchWithAuth throws with the server's error message, which carries the exact
-// reason a profile is blocked (non-zero balance / audit-trail history), so the
-// message is deliberately not swallowed here.
-export async function deleteMerchantProfile(merchantId: string, confirmationName: string) {
-  const res = await fetchWithAuth(`${BASE_URL}/api/merchants/${encodeURIComponent(merchantId)}`, {
-    method: "DELETE",
-    body: JSON.stringify({ confirmationName }),
-  });
   return res.json();
 }
 
@@ -982,10 +827,6 @@ export async function chargePayment(
     entryMode?: string;
     authCode?: string;
     protocolVersion?: "NORMAL" | "101.1" | "101.6" | "201.3";
-    /** Parsed EMV TLV data read from the card (contactless/chip). */
-    emv?: Record<string, any> | null;
-    /** Raw EMV TLV hex read from the card — forwarded to the acquirer as field 55. */
-    tlvRaw?: string | null;
   }
 ) {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/payments/charge`, {
@@ -1272,20 +1113,6 @@ export async function deleteCustomer(customerId: string, confirmationName: strin
   return data;
 }
 
-export interface CustomerPinEntry {
-  id: string;
-  name: string;
-  pin: string | null;
-}
-
-/** Make sure every customer profile has a PIN, and return all of them for handout. */
-export async function issueAllCustomerPins(): Promise<{ ok: boolean; issued: number; customers: CustomerPinEntry[] }> {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/customers/pins/issue-all`, { method: 'POST' });
-  const data = await res.json().catch(() => ({} as any));
-  if (!res.ok) throw new Error(data.error || 'Failed to issue customer PINs');
-  return data;
-}
-
 export async function getCustomerProfile(customerId: string): Promise<Customer> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/customers/${customerId}/profile`);
   if (!res.ok) throw new Error('Customer not found');
@@ -1300,23 +1127,15 @@ export async function updateCustomerKYC(customerId: string, kyc: Partial<Custome
   if (!res.ok) { const e = await res.json().catch(() => ({} as any)); throw new Error(e.error || 'KYC update failed'); }
   return res.json();
 }
-export async function getWalletBalance(customerId: string, currency?: string): Promise<WalletBalance> {
-  const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/balance/${encodeURIComponent(customerId)}${query}`);
-  if (!res.ok) throw new Error('Wallet balance could not be loaded');
+export async function getWalletBalance(customerId: string): Promise<WalletBalance> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/balance/${customerId}`);
+  if (!res.ok) return { balance: 0, currency: 'USD' };
   return res.json();
 }
-export async function getWalletTransactions(customerId: string, currency?: string): Promise<WalletTransaction[]> {
-  const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/transactions/${encodeURIComponent(customerId)}${query}`);
-  if (!res.ok) throw new Error('Wallet transactions could not be loaded');
+export async function getWalletTransactions(customerId: string): Promise<WalletTransaction[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/transactions/${customerId}`);
+  if (!res.ok) return [];
   return res.json();
-}
-export async function getCustomerWalletBalances(customerId: string): Promise<CustomerWalletBalance[]> {
-  const res = await fetchWithAuth(`${BASE_URL}/api/wallet/customer/${encodeURIComponent(customerId)}/balances`);
-  if (!res.ok) throw new Error('Customer wallets could not be loaded');
-  const data = await res.json() as { wallets?: CustomerWalletBalance[] };
-  return Array.isArray(data.wallets) ? data.wallets : [];
 }
 export async function topupWallet(customerId: string, amount: number, source?: string, reference?: string) {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/topup`, { method: 'POST', body: JSON.stringify({ customerId, amount, source, reference }) });
@@ -1392,8 +1211,8 @@ export async function debitWallet(customerId: string, amount: number, source?: s
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Debit failed'); }
   return res.json();
 }
-export async function walletTransfer(senderCustomerId: string, receiverCustomerId: string, amount: number, note?: string, currency = 'USD'): Promise<WalletTransfer> {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/transfer`, { method: 'POST', body: JSON.stringify({ senderCustomerId, receiverCustomerId, amount, note, currency }) });
+export async function walletTransfer(senderCustomerId: string, receiverCustomerId: string, amount: number, note?: string): Promise<WalletTransfer> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/transfer`, { method: 'POST', body: JSON.stringify({ senderCustomerId, receiverCustomerId, amount, note }) });
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Transfer failed'); }
   return res.json();
 }
@@ -1423,39 +1242,6 @@ export async function sendToHotWallet(params: {
     body: JSON.stringify(params),
   });
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Send to hot wallet failed'); }
-  return res.json();
-}
-export async function callProviderAndSendToMerchant(params: {
-  customerId: string;
-  merchantId: string;
-  amountMinor: number;
-  currency: string;
-  endpointUrl: string;
-  apiKey: string;
-  requestReference: string;
-  reason?: string;
-}): Promise<{
-  success: boolean;
-  reference: string;
-  providerReference: string;
-  amount: number;
-  currency: string;
-  customerId: string;
-  merchantId: string;
-  cryptoCoin?: string;
-}> {
-  const localHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-  if (window.location.protocol !== 'https:' && !localHosts.has(window.location.hostname)) {
-    throw new Error('Use the wallet over HTTPS before entering a provider API key');
-  }
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/provider-send-to-merchant`, {
-    method: 'POST',
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({} as ApiErrorPayload));
-    throw new Error(error.error || 'Provider transfer failed');
-  }
   return res.json();
 }
 export async function getBankAccounts(customerId: string): Promise<BankAccount[]> {
@@ -1817,9 +1603,8 @@ export async function getCryptoTransactions(customerId: string): Promise<CryptoT
   return res.json();
 }
 
-export async function getMerchantBalance(merchantId: string, currency?: string): Promise<MerchantWallet> {
-  const q = currency ? `?currency=${encodeURIComponent(currency)}` : '';
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant-balance/${encodeURIComponent(merchantId)}${q}`);
+export async function getMerchantBalance(merchantId: string): Promise<MerchantWallet> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant-balance/${encodeURIComponent(merchantId)}`);
   if (!res.ok) {
     console.error(`[API] getMerchantBalance failed: ${res.status} ${res.statusText}`);
     try {
@@ -1828,7 +1613,7 @@ export async function getMerchantBalance(merchantId: string, currency?: string):
     } catch {
       console.error('[API] Could not parse error response');
     }
-    return { id: '', merchant_id: merchantId, balance: 0, currency: currency || 'USD' };
+    return { id: '', merchant_id: merchantId, balance: 0, currency: 'USD' };
   }
   const data = await res.json();
   console.log('[API] getMerchantBalance success:', data);
@@ -1836,32 +1621,14 @@ export async function getMerchantBalance(merchantId: string, currency?: string):
     id: data.id ?? '',
     merchant_id: data.merchant_id ?? data.merchantId ?? merchantId,
     balance: Number(data.balance ?? 0),
-    currency: data.currency ?? currency ?? 'USD',
+    currency: data.currency ?? 'USD',
     created_at: data.created_at,
     updated_at: data.updated_at,
   };
 }
 
-// Lists EVERY currency wallet the merchant holds so a non-USD balance (e.g. the
-// EUR settlement wallet) is not hidden behind a USD-only lookup.
-export async function getMerchantWallets(merchantId: string): Promise<MerchantWallet[]> {
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant-wallets/${encodeURIComponent(merchantId)}`);
-  if (!res.ok) return [];
-  const data = await res.json();
-  const rows = (Array.isArray(data) ? data : []) as Array<Partial<MerchantWallet> & { merchantId?: string }>;
-  return rows.map((w) => ({
-    id: w.id ?? '',
-    merchant_id: w.merchant_id ?? w.merchantId ?? merchantId,
-    balance: Number(w.balance ?? 0),
-    currency: w.currency ?? 'USD',
-    created_at: w.created_at,
-    updated_at: w.updated_at,
-  }));
-}
-
-export async function getMerchantTransactions(merchantId: string, currency?: string): Promise<MerchantWalletTransaction[]> {
-  const q = currency ? `?currency=${encodeURIComponent(currency)}` : '';
-  const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant-transactions/${encodeURIComponent(merchantId)}${q}`);
+export async function getMerchantTransactions(merchantId: string): Promise<MerchantWalletTransaction[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/merchant-transactions/${encodeURIComponent(merchantId)}`);
   if (!res.ok) return [];
   const data = await res.json();
   const txns = (Array.isArray(data) ? data : []) as Array<Partial<MerchantWalletTransaction> & {
@@ -2301,7 +2068,6 @@ export async function syncOfflineWalletPayments(): Promise<{ synced: number; fai
 // ── Offline PIN sale upload queue for POS EMV offline approvals ─────────────
 export interface OfflinePinSalePayload {
   merchantId: string;
-  customerId: string;
   terminalId?: string;
   amountMinor: number;
   currency: string;

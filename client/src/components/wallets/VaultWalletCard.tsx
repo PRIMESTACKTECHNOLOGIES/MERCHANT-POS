@@ -57,7 +57,7 @@ export default function VaultWalletCard({
             <span>{displayName}</span>
             <strong>CVV {cvv}</strong>
           </div>
-          <div className="vault-card-operator">SANDBOX WALLET CARD · {card.currency}</div>
+          <div className="vault-card-operator">VAULT BANK WALLET CARD · {card.currency}</div>
         </section>
       </div>
 
@@ -66,7 +66,7 @@ export default function VaultWalletCard({
           {showBack ? 'Show front' : 'Show back'}
         </button>
         <button type="button" onClick={onReveal} disabled={busy}>
-          {revealed ? 'Hide details' : busy ? 'Loading…' : 'Reveal sandbox details'}
+          {revealed ? 'Hide details' : busy ? 'Loading…' : 'Reveal card details'}
         </button>
       </div>
     </div>

@@ -1,14 +1,6 @@
 import { TLVParser } from './tlv-parser';
 import type { EMVTag } from './tlv-parser';
-import { hexToBytes } from './emv-utils';
-
-interface ActionCodeTransactionData {
-  amount: number;
-  currencyCode: string;
-  terminalCountryCode: string;
-  transactionType: string;
-  terminalType: string;
-}
+import { hexToBytes, isBitSet } from './emv-utils';
 
 export interface ActionCodeResult {
   decision: 'APPROVE' | 'DECLINE' | 'ONLINE';
@@ -48,7 +40,13 @@ export class ActionCodeProcessor {
   evaluateActionCodes(
     cardData: string,
     terminalData: string,
-    transactionData: ActionCodeTransactionData
+    transactionData: {
+      amount: number;
+      currencyCode: string;
+      terminalCountryCode: string;
+      transactionType: string;
+      terminalType: string;
+    }
   ): ActionCodeResult {
     try {
       const cardTags = TLVParser.parseTLV(cardData);
@@ -127,7 +125,13 @@ export class ActionCodeProcessor {
     source: string,
     cardTags: EMVTag[],
     terminalTags: EMVTag[],
-    transactionData: ActionCodeTransactionData
+    transactionData: {
+      amount: number;
+      currencyCode: string;
+      terminalCountryCode: string;
+      transactionType: string;
+      terminalType: string;
+    }
   ): ActionCodeResult {
     try {
       const bytes = hexToBytes(actionCode);
@@ -148,10 +152,11 @@ export class ActionCodeProcessor {
 
       // Check each bit according to EMV specifications
       const checks = [
-        ...this.checkByte1(byte1, cardTags),
-        ...this.checkByte2(byte2, cardTags),
-        ...this.checkByte3(byte3, cardTags, transactionData),
-        ...this.checkByte4(byte4),
+        ...this.checkByte1(byte1, cardTags, terminalTags, transactionData),
+        ...this.checkByte2(byte2, cardTags, terminalTags, transactionData),
+        ...this.checkByte3(byte3, cardTags, terminalTags, transactionData),
+        ...this.checkByte4(byte4, cardTags, terminalTags, transactionData),
+        ...this.checkByte5(byte5, cardTags, terminalTags, transactionData)
       ];
 
       // Find the most restrictive decision
@@ -205,7 +210,7 @@ export class ActionCodeProcessor {
     }
   }
 
-  private checkByte1(byte1: number, cardTags: EMVTag[]): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
+  private checkByte1(byte1: number, cardTags: EMVTag[], terminalTags: EMVTag[], transactionData: any): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
     const checks: Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> = [];
 
     // Bit 8: Offline data authentication was not performed
@@ -259,7 +264,7 @@ export class ActionCodeProcessor {
 
     return checks;
   }
-  private checkByte2(byte2: number, cardTags: EMVTag[]): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
+  private checkByte2(byte2: number, cardTags: EMVTag[], terminalTags: EMVTag[], transactionData: any): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
     const checks: Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> = [];
 
     // Bit 8: Card number not on application effective date
@@ -333,7 +338,7 @@ export class ActionCodeProcessor {
     return checks;
   }
 
-  private checkByte3(byte3: number, cardTags: EMVTag[], transactionData: ActionCodeTransactionData): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
+  private checkByte3(byte3: number, cardTags: EMVTag[], terminalTags: EMVTag[], transactionData: any): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
     const checks: Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> = [];
 
     // Bit 8: PIN entry required and PIN pad not present or not working
@@ -400,7 +405,7 @@ export class ActionCodeProcessor {
     return checks;
   }
 
-  private checkByte4(byte4: number): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
+  private checkByte4(byte4: number, cardTags: EMVTag[], terminalTags: EMVTag[], transactionData: any): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
     const checks: Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> = [];
 
     // Bit 8: Default TDOL used
@@ -428,6 +433,15 @@ export class ActionCodeProcessor {
     }
 
     // Bits 4-1: RFU
+
+    return checks;
+  }
+
+  private checkByte5(byte5: number, cardTags: EMVTag[], terminalTags: EMVTag[], transactionData: any): Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> {
+    const checks: Array<{ decision: 'APPROVE' | 'DECLINE' | 'ONLINE'; reason: string }> = [];
+
+    // All bits are RFU in byte 5
+    // Reserved for future use
 
     return checks;
   }

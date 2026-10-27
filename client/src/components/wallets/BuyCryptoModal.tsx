@@ -62,10 +62,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
   const selectedCrypto = cryptoOptions.find(c => c.value === formData.crypto_currency);
   const availableNetworks = selectedCrypto?.networks || [];
 
-  const handleInputChange = <Field extends keyof BuyCryptoFormData>(
-    field: Field,
-    value: BuyCryptoFormData[Field]
-  ) => {
+  const handleInputChange = (field: string, value: any) => {
     const newFormData = { ...formData, [field]: value };
 
     // Reset network if it's not available for selected crypto
@@ -74,13 +71,6 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
     }
 
     setFormData(newFormData);
-  };
-
-  const handlePaymentMethodChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = event.target.value;
-    if (value === 'transak' || value === 'wallet_balance') {
-      handleInputChange('payment_method', value);
-    }
   };
 
   const handleInitiateBuy = async () => {
@@ -175,9 +165,9 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
       } else {
         throw new Error(result.error || 'Unknown error');
       }
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error('Failed to initiate buy crypto:', err);
-      onError?.(err instanceof Error ? err.message : 'Failed to initiate purchase');
+      onError?.(err.message || 'Failed to initiate purchase');
     } finally {
       setLoading(false);
     }
@@ -297,7 +287,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
                     type="radio"
                     value="wallet_balance"
                     checked={false}
-                    onChange={handlePaymentMethodChange}
+                    onChange={(e) => handleInputChange('payment_method', e.target.value)}
                     disabled={loading}
                   />
                   <span>Provider-backed wallet</span>
@@ -308,7 +298,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
                     type="radio"
                     value="wallet_balance"
                     checked={formData.payment_method === 'wallet_balance'}
-                    onChange={handlePaymentMethodChange}
+                    onChange={(e) => handleInputChange('payment_method', e.target.value)}
                     disabled={loading}
                   />
                   <span>Pay from Wallet</span>
@@ -319,7 +309,7 @@ const BuyCryptoModal: React.FC<BuyCryptoModalProps> = ({
                     type="radio"
                     value="transak"
                     checked={formData.payment_method === 'transak'}
-                    onChange={handlePaymentMethodChange}
+                    onChange={(e) => handleInputChange('payment_method', e.target.value)}
                     disabled={loading}
                   />
                   <span>Pay with Transak</span>

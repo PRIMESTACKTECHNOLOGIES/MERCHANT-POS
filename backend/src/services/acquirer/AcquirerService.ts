@@ -25,6 +25,9 @@ export interface AcquirerAuthRequest {
   stan?:           string;        // 6-digit STAN
   terminalId?:     string;
   posEntryMode?:   string;        // '01' manual, '05' chip, '91' contactless
+  processingCode?: string;        // DE3 (e.g. 000000 / 003000)
+  posCondition?:   string;        // DE25 POS condition code
+  mti?:            string;        // ISO 8583 MTI override (0100/0200)
 }
 
 export interface AcquirerAuthResponse {
@@ -35,8 +38,8 @@ export interface AcquirerAuthResponse {
   approvalCode?: string;          // 6-digit auth code
   message?:      string;
   raw?:          any;             // full acquirer response for audit
-  fundsType?:    'internal' | 'external'; // 'internal' = vault card (ledger), 'external' = real VISA/MC card (real funds)
-  cardType?:     'vault' | 'external';
+  mti?:          string;          // echoed MTI from response (0110/0210)
+  rrn?:          string;          // DE37 retrieval reference number
 }
 
 // ── Capture (201.3) ──────────────────────────────────────────────────────────
@@ -49,6 +52,11 @@ export interface AcquirerCaptureRequest {
   protocol:        '201.3';
   stan?:           string;
   terminalId?:     string;
+  processingCode?: string;    // DE3 override (default 000000 / 004000 completion)
+  posEntryMode?:   string;    // DE22 POS entry mode
+  posCondition?:   string;    // DE25
+  mti?:            string;    // MTI override (0200 / 0220)
+  batchId?:        string;
 }
 
 export interface AcquirerCaptureResponse {
@@ -58,6 +66,9 @@ export interface AcquirerCaptureResponse {
   captureRef?:  string;
   message?:     string;
   raw?:         any;
+  mti?:         string;
+  rrn?:         string;
+  batchRef?:    string;
 }
 
 // ── Reversal ─────────────────────────────────────────────────────────────────

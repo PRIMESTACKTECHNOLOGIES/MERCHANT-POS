@@ -226,12 +226,8 @@ export class VaultEngine {
     }
     const result = await db.query(
       `SELECT COALESCE(SUM(
-          CASE
-            WHEN type IN ('VAULT_TO_MERCHANT', 'VAULT_TO_BANK') THEN -ABS(amount)
-            WHEN type IN ('MERCHANT_TO_VAULT', 'BATCH_TO_VAULT', 'CARD_CAPTURE') THEN ABS(amount)
-            WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
-            ELSE amount
-          END
+          CASE WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
+               ELSE amount END
         ), 0) AS balance
          FROM vault_ledger
         WHERE currency = ? AND status = 'COMPLETED'`,
@@ -249,12 +245,8 @@ export class VaultEngine {
     const limit = Math.min(Math.max(Number(filters.limit) || 500, 1), 1000);
     const result = await db.query(
       `SELECT id, ts, type, merchant_id,
-              CASE
-                WHEN type IN ('VAULT_TO_MERCHANT', 'VAULT_TO_BANK') THEN -ABS(amount)
-                WHEN type IN ('MERCHANT_TO_VAULT', 'BATCH_TO_VAULT', 'CARD_CAPTURE') THEN ABS(amount)
-                WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
-                ELSE amount
-              END AS amount,
+              CASE WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
+                   ELSE amount END AS amount,
               currency, reference, status, meta
          FROM vault_ledger
         ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}

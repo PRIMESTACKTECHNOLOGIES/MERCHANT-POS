@@ -104,28 +104,20 @@ const FIELD_DEFS: Record<number, FieldDef> = {
   2:  { type: 'n',   length: 19,  llvar:  true  },  // PAN
   3:  { type: 'n',   length: 6                  },  // Processing Code
   4:  { type: 'n',   length: 12                 },  // Amount
-  7:  { type: 'n',   length: 10                 },  // Transmission DateTime (MMDDHHmmss)
+  7:  { type: 'n',   length: 10                 },  // Transmission DateTime
   11: { type: 'n',   length: 6                  },  // STAN
-  12: { type: 'n',   length: 6                  },  // Time, local (HHmmss)
-  13: { type: 'n',   length: 4                  },  // Date, local (MMDD)
   14: { type: 'n',   length: 4                  },  // Expiry (YYMM)
-  18: { type: 'n',   length: 4                  },  // MCC
   22: { type: 'n',   length: 3                  },  // POS Entry Mode
   23: { type: 'n',   length: 3                  },  // PAN Sequence
   25: { type: 'n',   length: 2                  },  // POS Condition Code
   35: { type: 'ans', length: 37,  llvar:  true  },  // Track 2 (LLVAR)
   37: { type: 'ans', length: 12                 },  // RRN
-  38: { type: 'ans', length: 8                  },  // Approval Code (ISO spec: 6 chars; padded to 8)
+  38: { type: 'ans', length: 8                  },  // Approval Code
   39: { type: 'ans', length: 2                  },  // Response Code
   41: { type: 'ans', length: 8                  },  // Terminal ID
   42: { type: 'ans', length: 15                 },  // Merchant ID
-  43: { type: 'ans', length: 40                 },  // Card acceptor name/location
-  45: { type: 'ans', length: 76,  llvar:  true  },  // Track 1 data (LLVAR, max 76 chars)
   49: { type: 'n',   length: 3                  },  // Currency Code
   55: { type: 'b',   length: 255, lllvar: true  },  // EMV / ICC Data
-  64: { type: 'b',   length: 8                  },  // MAC (DE64)
-  70: { type: 'n',   length: 3                  },  // Network Management Info Code
-  90: { type: 'n',   length: 42                 },  // Original data elements
 };
 
 function packField(de: number, value: string): string {
@@ -204,22 +196,6 @@ function buildTrack2(pan: string, expiry: string): string {
   return `${cleanPan}=${exp}2010000000000000`;
 }
 
-/**
- * Build Track 1 data (DE45).
- * Format: %B<PAN>^<NAME>^<YYMM><SERVICE_CODE><DISCRETIONARY>?
- * Max 76 chars per ISO 7813.
- * PCI note: service code 201 = international/normal; no CVV in discretionary data.
- */
-function buildTrack1(pan: string, expiry: string, cardholderName = 'CARDHOLDER/NAME'): string {
-  const cleanPan = pan.replace(/\D/g, '');
-  const exp      = expiry.replace(/\D/g, '').slice(0, 4); // YYMM
-  // Name: max 26 chars, uppercase, format SURNAME/FIRST MI
-  const name     = cardholderName.toUpperCase().replace(/[^A-Z /]/g, '').slice(0, 26);
-  // Discretionary data: zeros (no CVV — PCI compliance)
-  const disc     = '0000000000000000000';
-  return `%B${cleanPan}^${name}^${exp}201${disc}?`.slice(0, 76);
-}
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export interface AuthRequestFields {
@@ -236,11 +212,6 @@ export interface AuthRequestFields {
   panSequence?:         string;
   posCondition?:        string;
   emvField55?:          string; // pre-built hex
-  cardholderName?:      string; // for Track 1
-  merchantName?:        string; // for DE43
-  merchantCity?:        string; // for DE43
-  merchantCountry?:     string; // for DE43
-  mcc?:                 string; // merchant category code (DE18)
 }
 
 /** Pack an ISO 8583 0100/0200 Authorization / Financial Request */
@@ -273,19 +244,6 @@ export async function packAuthRequest(fields: AuthRequestFields): Promise<string
 
   const expiry   = (fields.expiry ?? '3005').replace(/\D/g, '');
   const track2   = buildTrack2(pan, expiry);
-  const track1   = buildTrack1(pan, expiry, fields.cardholderName);
-
-  // DE43: card acceptor name/location — 22+13+2 = 40 chars
-  const acName    = (fields.merchantName    ?? process.env.PROCESSOR_NAME    ?? 'PRIMESTACK').substring(0, 22).padEnd(22, ' ');
-  const acCity    = (fields.merchantCity    ?? process.env.MERCHANT_CITY     ?? 'DUBAI').substring(0, 13).padEnd(13, ' ');
-  const acCountry = (fields.merchantCountry ?? process.env.MERCHANT_COUNTRY  ?? 'AE').substring(0, 2).toUpperCase();
-  const de43      = `${acName}${acCity}${acCountry}`.substring(0, 40).padEnd(40, ' ');
-
-  // DE7 local time components
-  const now7 = new Date();
-  const p2   = (n: number) => String(n).padStart(2, '0');
-  const de12 = `${p2(now7.getUTCHours())}${p2(now7.getUTCMinutes())}${p2(now7.getUTCSeconds())}`;
-  const de13 = `${p2(now7.getUTCMonth() + 1)}${p2(now7.getUTCDate())}`;
 
   const fieldMap: Record<number, string> = {
     2:  pan,
@@ -293,10 +251,7 @@ export async function packAuthRequest(fields: AuthRequestFields): Promise<string
     4:  String(fields.amountMinor),
     7:  fields.transmissionDateTime,
     11: fields.stan,
-    12: de12,                           // ✅ DE12: local time HHmmss
-    13: de13,                           // ✅ DE13: local date MMDD
     14: expiry,
-    18: (fields.mcc ?? process.env.MCC ?? '5999').padStart(4, '0').slice(0, 4), // ✅ DE18: MCC
     22: fields.posEntryMode,
     23: fields.panSequence ?? '001',
     25: fields.posCondition ?? '00',
@@ -304,8 +259,6 @@ export async function packAuthRequest(fields: AuthRequestFields): Promise<string
     37: fields.rrn,
     41: fields.terminalId,
     42: fields.merchantId,
-    43: de43,                           // ✅ DE43: card acceptor name/location
-    45: track1,                         // ✅ DE45: Track 1 data
     49: fields.currencyCode,
     55: field55,
   };
@@ -315,20 +268,6 @@ export async function packAuthRequest(fields: AuthRequestFields): Promise<string
   const bitmap     = buildBitmap(presentDEs);
   let body = '';
   for (const de of presentDEs) body += packField(de, fieldMap[de]);
-
-  // ── DE64 MAC (HMAC-SHA256, truncated to 8 bytes = 16 hex chars) ───────────
-  // Appended AFTER the body so the MAC covers the entire message.
-  const macKeyHex = (process.env.ACQUIRER_MAC_KEY || '').trim();
-  let mac64 = '';
-  if (macKeyHex && /^[0-9a-fA-F]+$/.test(macKeyHex) && macKeyHex.length >= 16) {
-    const macKey  = Buffer.from(macKeyHex, 'hex');
-    const msgBuf  = Buffer.from(mti + bitmap + body, 'utf8');
-    mac64 = require('crypto').createHmac('sha256', macKey).update(msgBuf).digest('hex').slice(0, 16).toUpperCase();
-    // Include DE64 in the bitmap by rebuilding with it
-    const presentDEsWithMac = [...presentDEs, 64].sort((a, b) => a - b);
-    const bitmapWithMac = buildBitmap(presentDEsWithMac);
-    return mti + bitmapWithMac + body + packField(64, mac64);
-  }
 
   return mti + bitmap + body;
 }
@@ -611,58 +550,21 @@ export function parseField55Tags(tlvHex: string): Record<string, string> {
   const clean = normalizeHex(tlvHex);
   const result: Record<string, string> = {};
   let i = 0;
-
-  while (i < clean.length - 2) {
-    // ── Tag parsing (BER-TLV) ───────────────────────────────────────────────
-    // Tag byte 1: if low 5 bits are all 1 (0x1F), tag continues into next byte(s)
+  while (i < clean.length - 4) {
+    // Handle 2-byte tags (starting with 9F, 5F, etc.)
     let tag: string;
-    const firstNibble = parseInt(clean.slice(i, i + 2), 16);
-    if ((firstNibble & 0x1F) === 0x1F) {
-      // Multi-byte tag: read next byte; if its bit 7 is set, continue (up to 3 bytes total)
-      tag = clean.slice(i, i + 2);
-      i += 2;
-      if (i + 2 > clean.length) break;
-      tag += clean.slice(i, i + 2);
-      i += 2;
-      // 3-byte tags (rare but valid per BER-TLV)
-      if ((parseInt(tag.slice(2, 4), 16) & 0x80) !== 0) {
-        if (i + 2 > clean.length) break;
-        tag += clean.slice(i, i + 2);
-        i += 2;
-      }
-      tag = tag.toUpperCase();
+    const firstByte = parseInt(clean.slice(i, i + 2), 16);
+    if ((firstByte & 0x1F) === 0x1F) {
+      tag = clean.slice(i, i + 4).toUpperCase();
+      i += 4;
     } else {
       tag = clean.slice(i, i + 2).toUpperCase();
       i += 2;
     }
-
     if (i + 2 > clean.length) break;
-
-    // ── Length parsing (BER definite form) ──────────────────────────────────
-    // Single-byte length: 0x00–0x7F
-    // 0x81 xx        → length = xx (1 subsequent byte)
-    // 0x82 xx xx     → length = xx xx (2 subsequent bytes)
-    const lenByte = parseInt(clean.slice(i, i + 2), 16);
+    const len = parseInt(clean.slice(i, i + 2), 16);
     i += 2;
-
-    let len: number;
-    if ((lenByte & 0x80) === 0) {
-      // Short form: length is the byte itself (0–127)
-      len = lenByte;
-    } else {
-      // Long form: low 7 bits = number of subsequent length bytes
-      const numLenBytes = lenByte & 0x7F;
-      if (numLenBytes === 0 || numLenBytes > 4 || i + numLenBytes * 2 > clean.length) break;
-      let lenVal = 0;
-      for (let b = 0; b < numLenBytes; b++) {
-        lenVal = (lenVal << 8) | parseInt(clean.slice(i, i + 2), 16);
-        i += 2;
-      }
-      len = lenVal;
-    }
-
     if (i + len * 2 > clean.length) break;
-
     result[tag] = clean.slice(i, i + len * 2).toUpperCase();
     i += len * 2;
   }

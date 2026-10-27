@@ -236,6 +236,9 @@ export class VaultController {
         type,
         meta,
       });
+
+      // ── Auto-credit Wise balance (disabled — use manual payout instead) ──
+      // const { creditWiseBalance } = await import('./vaultToWise.service');
       return res.status(201).json(entry);
     } catch (e: any) {
       console.error('[Vault:credit]', e);
@@ -292,16 +295,11 @@ export class VaultController {
     try {
       const [vaultByCurrency, confirmedRealFunds, merchants, pendingSettlements, pendingPayouts, offline, stored] = await Promise.all([
         db.query(`SELECT currency, COALESCE(SUM(
-          CASE
-            WHEN type IN ('VAULT_TO_MERCHANT', 'VAULT_TO_BANK') THEN -ABS(amount)
-            WHEN type IN ('MERCHANT_TO_VAULT', 'BATCH_TO_VAULT', 'ADJUSTMENT') THEN ABS(amount)
-            WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
-            ELSE 0
-          END
+          CASE WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
+               ELSE amount END
         ), 0) AS total FROM vault_ledger WHERE status = 'COMPLETED' GROUP BY currency`),
         db.query(`SELECT currency, COALESCE(SUM(available_amount), 0) AS total
                     FROM vault_real_funds
-                   WHERE source = 'signed-bank-webhook'
                    GROUP BY currency`),
         db.query(`SELECT currency, COALESCE(SUM(balance), 0) AS total FROM merchant_wallets GROUP BY currency`),
         db.query(`SELECT currency, COALESCE(SUM(amount), 0) AS total
@@ -328,9 +326,8 @@ export class VaultController {
         (merchants.rows || []).map((row: any) => [String(row.currency || 'USD').toUpperCase(), Number(row.total || 0)]),
       );
       return res.json({
-        // totalVaultBalance = BATCH_TO_VAULT credits (real merchant transfers) 
-        // + signed bank webhook funds - VAULT_TO_BANK debits
-        totalVaultBalance: Number(vaultBalancesByCurrency['USD'] || 0) + Number(confirmedRealFundsByCurrency['USD'] || 0),
+        // The primary vault balance is strictly sendable confirmed funds.
+        totalVaultBalance: Number(confirmedRealFundsByCurrency.USD || 0),
         confirmedRealFundsByCurrency,
         vaultBalancesByCurrency,
         totalPendingSettlement: Number(pendingSettlementsByCurrency.USD || 0),
@@ -403,12 +400,8 @@ export class VaultController {
     try {
       const result = await db.query(`
         SELECT id, ts, merchant_id AS merchantId,
-               CASE
-                 WHEN type IN ('VAULT_TO_MERCHANT', 'VAULT_TO_BANK') THEN -ABS(amount)
-                 WHEN type IN ('MERCHANT_TO_VAULT', 'BATCH_TO_VAULT', 'CARD_CAPTURE') THEN ABS(amount)
-                 WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
-                 ELSE amount
-               END AS amount,
+               CASE WHEN id LIKE 'settlement:%' OR id LIKE 'payout:%' THEN -ABS(amount)
+                    ELSE amount END AS amount,
                currency,
                reference, status, type
           FROM vault_ledger

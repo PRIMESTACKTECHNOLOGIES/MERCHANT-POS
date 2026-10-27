@@ -7,7 +7,6 @@ export interface LedgerEntry {
   id: string;
   transactionId: string;
   merchantId?: string;
-  customerId?: string | null;
   type: 'credit' | 'debit';
   amount: number;
   currency: string;

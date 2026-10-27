@@ -40,7 +40,7 @@ export class CardRiskManagement {
       const cardTags = TLVParser.parseTLV(cardData);
       
       // Check offline counters
-      const counterCheck = this.checkOfflineCounters(cardTags);
+      const counterCheck = this.checkOfflineCounters(cardTags, amount);
       if (counterCheck.decline) {
         return counterCheck;
       }
@@ -85,7 +85,7 @@ export class CardRiskManagement {
     }
   }
 
-  private checkOfflineCounters(cardTags: EMVTag[]): CardRiskResult {
+  private checkOfflineCounters(cardTags: EMVTag[], amount: number): CardRiskResult {
     // Get offline counters from card
     const offlineCounter = TLVParser.getTagValue(cardTags, '9F53');
     const offlineAccumulator = TLVParser.getTagValue(cardTags, '9F5D');
@@ -242,7 +242,7 @@ export class CardRiskManagement {
 
     // Check IAC-Denial
     if (iacDenial) {
-      const shouldDeny = this.evaluateIAC(iacDenial, amount);
+      const shouldDeny = this.evaluateIAC(iacDenial, amount, cardTags);
       if (shouldDeny) {
         return {
           proceed: false,
@@ -258,7 +258,7 @@ export class CardRiskManagement {
 
     // Check IAC-Online
     if (iacOnline) {
-      const shouldGoOnline = this.evaluateIAC(iacOnline, amount);
+      const shouldGoOnline = this.evaluateIAC(iacOnline, amount, cardTags);
       if (shouldGoOnline) {
         return {
           proceed: true,
@@ -274,7 +274,7 @@ export class CardRiskManagement {
 
     // Check IAC-Default
     if (iacDefault) {
-      const shouldGoOnline = this.evaluateIAC(iacDefault, amount);
+      const shouldGoOnline = this.evaluateIAC(iacDefault, amount, cardTags);
       if (shouldGoOnline) {
         return {
           proceed: true,
@@ -298,7 +298,7 @@ export class CardRiskManagement {
     };
   }
 
-  private evaluateIAC(iac: string, amount: number): boolean {
+  private evaluateIAC(iac: string, amount: number, cardTags: EMVTag[]): boolean {
     // EMV Book 3 §10.7 — IAC evaluation against TVR bits
     // Only trigger if the corresponding TVR bit is ALSO set.
     // For a software POS, TVR bits we actually set come from our checks:

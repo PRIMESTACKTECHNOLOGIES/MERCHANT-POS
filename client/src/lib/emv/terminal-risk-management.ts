@@ -5,6 +5,8 @@
  * based on floor limits, random selection, and merchant/terminal policy.
  */
 
+import { TLVParser } from './tlv-parser';
+import type { EMVTag } from './tlv-parser';
 
 export interface TerminalLimits {
   floorLimit: number;              // e.g. 5000 = 50.00 in minor units
@@ -83,7 +85,7 @@ export class TerminalRiskManagement {
         reason: 'Terminal risk checks passed'
       };
 
-    } catch {
+    } catch (err) {
       return {
         proceed: true,
         requiresOnline: true,

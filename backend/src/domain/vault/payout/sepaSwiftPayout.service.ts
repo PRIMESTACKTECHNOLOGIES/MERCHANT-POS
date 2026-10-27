@@ -1,12 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../../config/db';
 import { convertCurrency } from './fx.service';
-import {
-  buildFullSepaXml,
-  buildMt103Batch,
-  type SepaTransaction,
-  type Mt103Transaction,
-} from '../../payments/authenticationEngine.service';
 
 export type VaultPayoutType = 'SEPA' | 'SWIFT';
 export type VaultPayoutStatus = 'PENDING' | 'SENT' | 'CONFIRMED' | 'FAILED';
@@ -72,64 +66,49 @@ export async function createVaultPayout(params: VaultPayoutInput) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SEPA — ISO 20022 pain.001.001.09 (fully compliant via authenticationEngine)
-// ─────────────────────────────────────────────────────────────────────────────
+function xmlEscape(value: unknown): string {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
 
 export async function buildSepaPacs008Batch() {
   const result = await db.query(`SELECT * FROM vault_payouts WHERE status = 'PENDING' AND type = 'SEPA' ORDER BY created_at`);
-  const txns: any[] = result.rows;
-  if (!txns.length) return { xml: null, txns: [] };
-
-  const transactions: SepaTransaction[] = txns.map((txn) => ({
-    id:              txn.id,
-    amount:          Number(txn.amount),
-    currency:        String(txn.currency).toUpperCase(),
-    beneficiaryName: txn.beneficiary_name,
-    beneficiaryIban: txn.beneficiary_iban,
-    beneficiaryBic:  txn.beneficiary_bic,
-    reference:       txn.reference || txn.id,
-    endToEndId:      txn.id.slice(0, 35),
-  }));
-
-  // buildFullSepaXml adds GrpHdr, Dbtr, DbtrAcct, DbtrAgt, ReqdExctnDt, ChrgBr
-  // Uses MERCHANT_IBAN + MERCHANT_BIC from .env — set these before sending to real SEPA rails
-  const xml = buildFullSepaXml(transactions, {
-    msgId: `VAULT-SEPA-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`,
-  });
-
+  const txns = result.rows;
+  const transactions = txns.map((txn: any) => `
+      <CdtTrfTxInf>
+        <PmtId><EndToEndId>${xmlEscape(txn.id)}</EndToEndId></PmtId>
+        <Amt><InstdAmt Ccy="${xmlEscape(txn.currency)}">${Number(txn.amount).toFixed(2)}</InstdAmt></Amt>
+        <Cdtr><Nm>${xmlEscape(txn.beneficiary_name)}</Nm></Cdtr>
+        <CdtrAcct><Id><IBAN>${xmlEscape(txn.beneficiary_iban)}</IBAN></Id></CdtrAcct>
+        <CdtrAgt><FinInstnId><BICFI>${xmlEscape(txn.beneficiary_bic)}</BICFI></FinInstnId></CdtrAgt>
+        <RmtInf><Ustrd>${xmlEscape(txn.reference || '')}</Ustrd></RmtInf>
+      </CdtTrfTxInf>`).join('');
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03">
+  <CstmrCdtTrfInitn>
+    <PmtInf>
+      <PmtInfId>VAULT-SEPA-BATCH-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <NbOfTxs>${txns.length}</NbOfTxs>${transactions}
+    </PmtInf>
+  </CstmrCdtTrfInitn>
+</Document>`;
   return { xml, txns };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SWIFT — MT103 (fully compliant via authenticationEngine)
-// ─────────────────────────────────────────────────────────────────────────────
-
 export async function buildSwiftMt103Batch() {
   const result = await db.query(`SELECT * FROM vault_payouts WHERE status = 'PENDING' AND type = 'SWIFT' ORDER BY created_at`);
-  const txns: any[] = result.rows;
-  if (!txns.length) return { content: null, txns: [] };
-
-  const transactions: Mt103Transaction[] = txns.map((txn) => ({
-    id:              txn.id,
-    amount:          Number(txn.amount),
-    currency:        String(txn.currency).toUpperCase(),
-    beneficiaryName: txn.beneficiary_name,
-    beneficiaryIban: txn.beneficiary_iban,
-    beneficiaryBic:  txn.beneficiary_bic,
-    reference:       txn.reference || txn.id,
-    // senderAccount / senderName come from MERCHANT_IBAN / MERCHANT_NAME in authEngine env vars
-  }));
-
-  // buildMt103Batch adds :23B:CRED, :32A: with date, :50K: with account, :71A:
-  const content = buildMt103Batch(transactions);
-
-  return { content, txns };
+  const content = result.rows.map((txn: any) => [
+    `:20:${txn.id}`,
+    `:32A:${txn.currency}${Number(txn.amount).toFixed(2).replace('.', ',')}`,
+    `:50K:${txn.beneficiary_name}`,
+    `:59:${txn.beneficiary_iban}`,
+    `:57A:${txn.beneficiary_bic}`,
+    `:70:${txn.reference || ''}`,
+    '-',
+  ].join('\n')).join('\n');
+  return { content, txns: result.rows };
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Status helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function updateStatus(payoutIds: string[], status: VaultPayoutStatus): Promise<number> {
   if (!payoutIds.length) throw new Error('payoutIds must not be empty');
@@ -142,6 +121,6 @@ async function updateStatus(payoutIds: string[], status: VaultPayoutStatus): Pro
   return result.rowCount;
 }
 
-export const markPayoutsSent     = (payoutIds: string[]) => updateStatus(payoutIds, 'SENT');
-export const markPayoutConfirmed = (payoutId: string)   => updateStatus([payoutId], 'CONFIRMED');
-export const markPayoutFailed    = (payoutId: string)   => updateStatus([payoutId], 'FAILED');
+export const markPayoutsSent = (payoutIds: string[]) => updateStatus(payoutIds, 'SENT');
+export const markPayoutConfirmed = (payoutId: string) => updateStatus([payoutId], 'CONFIRMED');
+export const markPayoutFailed = (payoutId: string) => updateStatus([payoutId], 'FAILED');

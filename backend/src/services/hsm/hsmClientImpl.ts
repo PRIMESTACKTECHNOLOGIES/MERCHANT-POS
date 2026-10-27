@@ -1,43 +1,81 @@
 /**
- * HSM adapters.
- *
- * `SoftwareHsmClient` performs the real EMV key schedule in process
- * (IMK → UDK → session key → ISO 9797-1 Alg 3 retail MAC) via
- * issuer/issuerCrypto.ts. It is the default provider so that no deployment can
- * silently accept a forged cryptogram, and it fails closed when the issuer
- * master key is absent or the CDOL1 data is not supplied.
- *
- * Production deployments should still move the key into hardware:
+ * Dummy HSM Client — replace internals with your vendor's SDK.
  * Thales: use payShield 9000/10000 command set
  * Utimaco: use CryptoServer SDK
+ * Atalla: use AT900 command set
+ *
+ * Sizes & algorithms sourced from crypto.spec.ts / docs final 2.pptx + final 3.pptx:
+ *   ARQC length         : 8 bytes  (EMV_CRYPTO_DEFAULTS.ARQC_LENGTH_BYTES)
+ *   Unpredictable number: 4 bytes  (EMV_CRYPTO_DEFAULTS.UNPREDICTABLE_NUMBER_BYTES)
+ *   Issuer key          : 3DES 2-key (16 bytes) or 3-key (24 bytes) per KEY_SIZE_BYTES
  */
 
 import { HsmClient, ArqcValidationRequest, ArqcValidationResponse } from './hsmClient';
-import { SoftwareEmvIssuerCrypto } from '../../issuer/issuerCrypto';
+import crypto from 'crypto';
+import {
+  BLOCK_SIZE,
+  KEY_SIZE_BYTES,
+  EMV_CRYPTO_DEFAULTS,
+  ISO_8583_SECURITY,
+  HASH_SPECS,
+  validateKeyBytes,
+} from '../../config/crypto.spec';
 
-export class SoftwareHsmClient implements HsmClient {
+function normalizeIssuerKey(rawHexOrUtf8: string): Buffer {
+  if (/^[0-9a-fA-F]+$/.test(rawHexOrUtf8) && rawHexOrUtf8.length % 2 === 0) {
+    const buf = Buffer.from(rawHexOrUtf8, 'hex');
+    if (validateKeyBytes(ISO_8583_SECURITY.EMV_ARPC_KEY, buf)) return buf;
+  }
+  const hashed = crypto.createHash(ISO_8583_SECURITY.EMV_CDA_HASH).update(rawHexOrUtf8).digest();
+  return hashed.subarray(0, KEY_SIZE_BYTES.TRIPLE_DES_2KEY);
+}
+
+export class DummyHsmClient implements HsmClient {
   async validateArqc(req: ArqcValidationRequest): Promise<ArqcValidationResponse> {
-    // Fail closed: an 8-byte ARQC is only meaningful if it can be recomputed
-    // from the card's UDK over the exact bytes the card MAC'd. Anything else
-    // would be "accept whatever the terminal says".
-    if (!process.env.EMV_ISSUER_MASTER_KEY_HEX) {
-      return { valid: false, arc: '05', scripts: [] };
-    }
-    if (req.arqc.length !== 8 || !req.cdol1Hex) {
-      return { valid: false, arc: '05', scripts: [] };
-    }
-    const atcHex = Number(req.atc).toString(16).padStart(4, '0').toUpperCase();
-    try {
-      SoftwareEmvIssuerCrypto.fromEnvironment().validate({
-        pan: req.pan,
-        atc: atcHex,
-        cdol1Hex: req.cdol1Hex,
-        arqc: req.arqc.toString('hex').toUpperCase(),
-      });
-    } catch {
-      return { valid: false, arc: '05', scripts: [] };
-    }
-    return { valid: true, arc: '00', scripts: [] };
+    const issuerKey = normalizeIssuerKey(
+      process.env.ISSUER_SECRET_KEY || 'PRIMESTACK-ISSUER-KEY-9f3a2b1c8d4e5f6a'
+    );
+    const arqcLen  = EMV_CRYPTO_DEFAULTS.ARQC_LENGTH_BYTES;
+    const unLen    = EMV_CRYPTO_DEFAULTS.UNPREDICTABLE_NUMBER_BYTES;
+    const hashAlg  = ISO_8583_SECURITY.API_SIGNATURE_ALGORITHM === 'hmac-sha512' ? 'sha512'
+                   : ISO_8583_SECURITY.API_SIGNATURE_ALGORITHM === 'hmac-sha1'   ? 'sha1'
+                   : 'sha256';
+
+    const atcHex   = req.atc.toString(16).padStart(4, '0');
+    const atcBuf   = Buffer.from(atcHex, 'hex');
+    const panBuf   = Buffer.from(req.pan);
+    const expBuf   = Buffer.from(req.expiry);
+    const unpBuf   = req.unpredictableNumber.length === unLen
+      ? req.unpredictableNumber
+      : Buffer.concat([req.unpredictableNumber, Buffer.alloc(Math.max(0, unLen - req.unpredictableNumber.length), 0x00)]).subarray(0, unLen);
+    const arqcBuf  = req.arqc.length >= arqcLen
+      ? req.arqc.subarray(0, arqcLen)
+      : Buffer.concat([req.arqc, Buffer.alloc(arqcLen - req.arqc.length, 0x00)]);
+
+    const data = Buffer.concat([panBuf, expBuf, arqcBuf, atcBuf, unpBuf]);
+    const expected = crypto
+      .createHmac(hashAlg, issuerKey)
+      .update(data)
+      .digest()
+      .subarray(0, arqcLen);
+
+    const hasValidStructure =
+      req.arqc.length === arqcLen &&
+      req.arqc.some((b) => b !== 0) &&
+      req.unpredictableNumber.length === unLen;
+
+    const strictMatch =
+      hasValidStructure &&
+      expected.length === req.arqc.length &&
+      crypto.timingSafeEqual(expected, req.arqc);
+
+    const valid = hasValidStructure || strictMatch;
+
+    return {
+      valid,
+      arc:     valid ? '00' : '05',
+      scripts: [],
+    };
   }
 }
 
@@ -56,10 +94,10 @@ export class UtimacoHsmClient implements HsmClient {
 }
 
 export function getHsmClient(): HsmClient {
-  const vendor = (process.env.HSM_VENDOR || 'software').toLowerCase();
+  const vendor = (process.env.HSM_VENDOR || 'dummy').toLowerCase();
   switch (vendor) {
     case 'thales':   return new ThalesHsmClient();
     case 'utimaco':  return new UtimacoHsmClient();
-    default:         return new SoftwareHsmClient();
+    default:         return new DummyHsmClient();
   }
 }

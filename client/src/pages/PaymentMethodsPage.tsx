@@ -20,18 +20,6 @@ interface PaymentMethod {
   };
 }
 
-const DEFAULT_FLOOR_LIMIT = 1_000_000;
-const DEFAULT_MAX_TRANSACTION_AMOUNT = 1_000_000_000;
-
-const applyRequestedLimits = (methods: PaymentMethod[]) => methods.map((method) => ({
-  ...method,
-  config: {
-    ...method.config,
-    floorLimit: DEFAULT_FLOOR_LIMIT,
-    maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT,
-  },
-}));
-
 // --- Icons as SVG Components ---
 const VisaLogo = () => (
   <svg viewBox="0 0 48 48" className="w-10 h-10">
@@ -120,7 +108,7 @@ export const PaymentMethodsPage = () => {
       offlineCapable: true,
       protocol2013Supported: true,
       logo: "visa",
-      config: { floorLimit: DEFAULT_FLOOR_LIMIT, maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT, requirePin: true, allowOffline: true }
+      config: { floorLimit: 100, maxTransactionAmount: 1000, requirePin: true, allowOffline: true }
     },
     {
       id: "mastercard",
@@ -131,7 +119,7 @@ export const PaymentMethodsPage = () => {
       offlineCapable: true,
       protocol2013Supported: true,
       logo: "mastercard",
-      config: { floorLimit: DEFAULT_FLOOR_LIMIT, maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT, requirePin: true, allowOffline: true }
+      config: { floorLimit: 100, maxTransactionAmount: 1000, requirePin: true, allowOffline: true }
     },
     {
       id: "amex",
@@ -142,7 +130,7 @@ export const PaymentMethodsPage = () => {
       offlineCapable: true,
       protocol2013Supported: true,
       logo: "amex",
-      config: { floorLimit: DEFAULT_FLOOR_LIMIT, maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT, requirePin: false, allowOffline: true }
+      config: { floorLimit: 100, maxTransactionAmount: 5000, requirePin: false, allowOffline: true }
     },
     {
       id: "unionpay",
@@ -153,7 +141,7 @@ export const PaymentMethodsPage = () => {
       offlineCapable: true,
       protocol2013Supported: true,
       logo: "unionpay",
-      config: { floorLimit: DEFAULT_FLOOR_LIMIT, maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT, requirePin: true, allowOffline: true }
+      config: { floorLimit: 100, maxTransactionAmount: 2000, requirePin: true, allowOffline: true }
     },
     {
       id: "applepay",
@@ -164,7 +152,7 @@ export const PaymentMethodsPage = () => {
       offlineCapable: false,
       protocol2013Supported: false,
       logo: "applepay",
-      config: { floorLimit: DEFAULT_FLOOR_LIMIT, maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT, requirePin: false, allowOffline: false }
+      config: { floorLimit: 0, maxTransactionAmount: 500, requirePin: false, allowOffline: false }
     },
     {
       id: "googlepay",
@@ -175,7 +163,7 @@ export const PaymentMethodsPage = () => {
       offlineCapable: false,
       protocol2013Supported: false,
       logo: "googlepay",
-      config: { floorLimit: DEFAULT_FLOOR_LIMIT, maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT, requirePin: false, allowOffline: false }
+      config: { floorLimit: 0, maxTransactionAmount: 500, requirePin: false, allowOffline: false }
     },
     {
       id: "alipay",
@@ -186,7 +174,7 @@ export const PaymentMethodsPage = () => {
       offlineCapable: false,
       protocol2013Supported: false,
       logo: "alipay",
-      config: { floorLimit: DEFAULT_FLOOR_LIMIT, maxTransactionAmount: DEFAULT_MAX_TRANSACTION_AMOUNT, requirePin: false, allowOffline: false }
+      config: { floorLimit: 0, maxTransactionAmount: 1000, requirePin: false, allowOffline: false }
     }
   ];
 
@@ -199,9 +187,7 @@ export const PaymentMethodsPage = () => {
       setLoading(true);
       const settings = await fetchSettings();
       
-      let loadedMethods: PaymentMethod[];
-      const hasServerConfig = Array.isArray(settings?.paymentConfig) && settings.paymentConfig.length > 0;
-      if (hasServerConfig) {
+      if (settings?.paymentConfig && settings.paymentConfig.length > 0) {
         const configuredMethods = settings.paymentConfig
           .map((method) => {
             if (!method || typeof method !== 'object') return null;
@@ -243,29 +229,14 @@ export const PaymentMethodsPage = () => {
             };
           })
           .filter((method): method is PaymentMethod => method !== null);
-        loadedMethods = configuredMethods.length ? configuredMethods : defaultMethods;
+        setMethods(configuredMethods.length ? configuredMethods : defaultMethods);
       } else {
         // Try localStorage fallback
         const saved = localStorage.getItem('payment_methods_v2');
         if (saved) {
-          loadedMethods = JSON.parse(saved) as PaymentMethod[];
+          setMethods(JSON.parse(saved));
         } else {
-          loadedMethods = defaultMethods;
-        }
-      }
-      const normalizedMethods = applyRequestedLimits(loadedMethods);
-      setMethods(normalizedMethods);
-      localStorage.setItem('payment_methods_v2', JSON.stringify(normalizedMethods));
-      const limitsNeedSaving = !hasServerConfig || loadedMethods.some((method) =>
-        method.config.floorLimit !== DEFAULT_FLOOR_LIMIT
-        || method.config.maxTransactionAmount !== DEFAULT_MAX_TRANSACTION_AMOUNT
-      );
-      if (limitsNeedSaving) {
-        try {
-          await updateSettings({ ...settings, paymentConfig: normalizedMethods });
-        } catch (error) {
-          console.error("Failed to persist requested payment limits:", error);
-          showToast("Payment limits are shown but could not be saved to the server", "error");
+          setMethods(defaultMethods);
         }
       }
     } catch (error) {
@@ -500,11 +471,7 @@ export const PaymentMethodsPage = () => {
                 <input
                   type="number"
                   value={selectedMethod.config.floorLimit}
-                  min={DEFAULT_FLOOR_LIMIT}
-                  max={DEFAULT_MAX_TRANSACTION_AMOUNT}
-                  onChange={(e) => updateConfig(selectedMethod.id, {
-                    floorLimit: Math.min(DEFAULT_MAX_TRANSACTION_AMOUNT, Math.max(DEFAULT_FLOOR_LIMIT, Number(e.target.value) || DEFAULT_FLOOR_LIMIT))
-                  })}
+                  onChange={(e) => updateConfig(selectedMethod.id, { floorLimit: parseInt(e.target.value) || 0 })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   disabled={!selectedMethod.protocol2013Supported}
                 />
@@ -520,11 +487,7 @@ export const PaymentMethodsPage = () => {
                 <input
                   type="number"
                   value={selectedMethod.config.maxTransactionAmount}
-                  min={DEFAULT_FLOOR_LIMIT}
-                  max={DEFAULT_MAX_TRANSACTION_AMOUNT}
-                  onChange={(e) => updateConfig(selectedMethod.id, {
-                    maxTransactionAmount: Math.min(DEFAULT_MAX_TRANSACTION_AMOUNT, Math.max(DEFAULT_FLOOR_LIMIT, Number(e.target.value) || DEFAULT_FLOOR_LIMIT))
-                  })}
+                  onChange={(e) => updateConfig(selectedMethod.id, { maxTransactionAmount: parseInt(e.target.value) || 0 })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   disabled={!selectedMethod.protocol2013Supported}
                 />

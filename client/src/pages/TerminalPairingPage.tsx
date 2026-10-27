@@ -227,7 +227,7 @@ export const TerminalPairingPage = () => {
                      <Input 
                        label="Terminal Name" 
                        value={data.terminalName} 
-                       onChange={(e) => setData({...data, terminalName: e.target.value})} 
+                       onChange={(e: any) => setData({...data, terminalName: e.target.value})} 
                        placeholder="e.g. Counter 1, Front Desk" 
                      />
                      <Input 

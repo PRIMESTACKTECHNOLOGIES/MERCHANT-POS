@@ -5,11 +5,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import type { CSSProperties } from 'react';
 import {
   getCustomers,
   getCustomerProfile,
-  getCustomerWalletBalances,
   getWalletBalance,
   getWalletTransactions,
   getCryptoWallets,
@@ -19,9 +17,7 @@ import {
   type WalletBalance,
   type WalletTransaction,
   type CryptoWallet,
-  type CustomerWalletBalance,
 } from '../lib/api';
-import { getErrorMessage } from '../utils/errorMessage';
 
 const PAGES = ['WALLET', 'TRANSACTIONS', 'CRYPTO', 'PROFILE'] as const;
 type Page = typeof PAGES[number];
@@ -76,10 +72,6 @@ export default function CustomerWalletProfilePage() {
   const [balance, setBalance]           = useState<WalletBalance | null>(null);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [cryptos, setCryptos]           = useState<CryptoWallet[]>([]);
-  // Every currency wallet this customer holds. Selecting one swaps the whole
-  // customer wallet view (balance + ledger) to that currency automatically.
-  const [customerWallets, setCustomerWallets] = useState<CustomerWalletBalance[]>([]);
-  const [walletCurrency, setWalletCurrency]   = useState<string>('');
   const [loading, setLoading]           = useState(true);
   const [loadError, setLoadError]       = useState<string | null>(null);
   const [activePage, setActivePage]     = useState<Page>('WALLET');
@@ -104,13 +96,12 @@ export default function CustomerWalletProfilePage() {
       const results = await Promise.allSettled([
         getCustomers(),
         getCustomerProfile(customerId),
-        getCustomerWalletBalances(customerId),
         getWalletBalance(customerId),
         getWalletTransactions(customerId),
         getCryptoWallets(customerId),
       ]);
 
-      const [customersResult, profileResult, walletsResult, balanceResult, transactionsResult, cryptoResult] = results;
+      const [customersResult, profileResult, balanceResult, transactionsResult, cryptoResult] = results;
       const customers = customersResult.status === 'fulfilled' ? customersResult.value : [];
       const profile = profileResult.status === 'fulfilled'
         ? profileResult.value
@@ -119,19 +110,7 @@ export default function CustomerWalletProfilePage() {
       setAllCustomers(customers);
       setCustomer(profile);
       if (profile) setKycForm(profile);
-      const allCurrencyWallets = walletsResult.status === 'fulfilled' ? walletsResult.value : [];
-      setCustomerWallets(allCurrencyWallets);
-      const selectedWallet = allCurrencyWallets.find((wallet) => Number(wallet.balance) !== 0) || allCurrencyWallets[0];
-      if (selectedWallet) {
-        setWalletCurrency(selectedWallet.currency);
-        setBalance({
-          balance: Number(selectedWallet.balance),
-          currency: selectedWallet.currency,
-        });
-      } else if (balanceResult.status === 'fulfilled') {
-        setBalance(balanceResult.value);
-        if (balanceResult.value?.currency) setWalletCurrency(balanceResult.value.currency);
-      }
+      if (balanceResult.status === 'fulfilled') setBalance(balanceResult.value);
       if (transactionsResult.status === 'fulfilled') setTransactions(transactionsResult.value);
       if (cryptoResult.status === 'fulfilled') setCryptos(cryptoResult.value);
 
@@ -151,26 +130,6 @@ export default function CustomerWalletProfilePage() {
     if (p !== 'PROFILE') { setKycEdit(false); setKycMsg(null); }
   }
 
-  // Choosing a currency swaps the whole customer wallet (balance + ledger) to
-  // that currency automatically — the wallet "becomes" the EUR wallet, etc.
-  async function selectCurrency(ccy: string) {
-    if (!customerId || !ccy) return;
-    setWalletCurrency(ccy);
-    const walletRow = customerWallets.find(w => w.currency === ccy);
-    if (walletRow) setBalance({ balance: Number(walletRow.balance), currency: walletRow.currency });
-    try {
-      const [bal, txns] = await Promise.all([
-        getWalletBalance(customerId, ccy),
-        getWalletTransactions(customerId, ccy),
-      ]);
-      setBalance(bal);
-      setTransactions(txns);
-      if (bal?.currency) setWalletCurrency(bal.currency);
-    } catch {
-      // keep the optimistic wallet-row value on failure
-    }
-  }
-
   function handleMouseMove(e: React.MouseEvent) {
     if (!wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
@@ -187,8 +146,8 @@ export default function CustomerWalletProfilePage() {
       setKycForm(result.customer);
       setKycEdit(false);
       setKycMsg({ ok: true, text: 'KYC saved successfully' });
-    } catch (e: unknown) {
-      setKycMsg({ ok: false, text: getErrorMessage(e, 'Save failed') });
+    } catch (e: any) {
+      setKycMsg({ ok: false, text: e.message || 'Save failed' });
     } finally {
       setKycBusy(false);
     }
@@ -206,13 +165,14 @@ export default function CustomerWalletProfilePage() {
     try {
       await deleteCustomer(customerId, confirmation);
       navigate('/wallets');
-    } catch (e: unknown) {
-      setDeleteMsg(getErrorMessage(e, 'Customer deletion failed'));
+    } catch (e: any) {
+      setDeleteMsg(e.message || 'Customer deletion failed');
     } finally {
       setDeleteBusy(false);
     }
   }
 
+  const totalCryptoUSD = cryptos.reduce((s, c) => s + Number(c.balance || 0), 0);
   // Filter to active wallet currency so EUR/USD amounts don't mix
   const activeCurrency = balance?.currency || 'USD';
   const sameCcyTxns = transactions.filter(t => !t.currency || t.currency === activeCurrency);
@@ -389,42 +349,6 @@ export default function CustomerWalletProfilePage() {
                 <div className="cwp-main-stack">
                   <div className="cwp-box">
                     <h2 className="cwp-h2">// Wallet Data</h2>
-                    {customerWallets.length > 0 && (
-                      <div style={{ marginBottom: 12 }}>
-                        <div style={{ fontFamily: 'monospace', fontSize: 9, color: 'var(--muted)', letterSpacing: 1, marginBottom: 6 }}>
-                          CURRENCY WALLETS — SELECT TO SWAP
-                        </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 11 }}>
-                          <thead>
-                            <tr style={{ color: 'var(--muted)', fontSize: 9, textAlign: 'left' }}>
-                              <th style={{ padding: '3px 6px', borderBottom: '1px solid rgba(199,217,136,.2)' }}>CURRENCY</th>
-                              <th style={{ padding: '3px 6px', borderBottom: '1px solid rgba(199,217,136,.2)', textAlign: 'right' }}>BALANCE</th>
-                              <th style={{ padding: '3px 6px', borderBottom: '1px solid rgba(199,217,136,.2)', textAlign: 'right' }}>VIEW</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {customerWallets.map(w => {
-                              const active = w.currency === (balance?.currency || walletCurrency);
-                              return (
-                                <tr
-                                  key={w.currency}
-                                  onClick={() => selectCurrency(w.currency)}
-                                  style={{
-                                    cursor: 'pointer',
-                                    background: active ? 'rgba(199,217,136,.12)' : 'transparent',
-                                    color: active ? 'var(--acid)' : 'var(--green)',
-                                  }}
-                                >
-                                  <td style={{ padding: '4px 6px', fontWeight: active ? 700 : 400 }}>{w.currency}</td>
-                                  <td style={{ padding: '4px 6px', textAlign: 'right' }}>{Number(w.balance).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                                  <td style={{ padding: '4px 6px', textAlign: 'right' }}>{active ? '●' : '→'}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
                     <div className="cwp-form">
                       <b>Balance</b>
                       <span>{balance?.currency} {Number(balance?.balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
@@ -440,7 +364,6 @@ export default function CustomerWalletProfilePage() {
                   <div className="cwp-tbox cwp-scroll">
                     <h2 className="cwp-h2">// Account Info</h2>
                     <p className="cwp-p">ID: <span style={{ color: 'var(--green)', fontFamily: 'monospace', fontSize: 10 }}>{customer.id}</span></p>
-                    <p className="cwp-p">Portal PIN: <span style={{ color: 'var(--acid)', fontFamily: 'monospace', letterSpacing: 2 }}>{customer.portal_pin || 'N/A'}</span></p>
                     <p className="cwp-p">Phone: <span style={{ color: 'var(--green)' }}>{customer.phone || 'N/A'}</span></p>
                     <p className="cwp-p">KYC: <span style={{ color: kycStatusColor[kycStatus] || 'var(--muted)' }}>{kycStatus}</span></p>
                     <p className="cwp-p">Risk: <span style={{ color: riskColor[riskLevel] || 'var(--muted)' }}>{riskLevel}</span></p>
@@ -449,9 +372,9 @@ export default function CustomerWalletProfilePage() {
                 </div>
               </div>
               <div className="cwp-mrow">
-                <div className="cwp-meter"><label>CREDITS <span>{creditPct}%</span></label><i style={{ '--value': creditPct + '%' } as CSSProperties} /></div>
-                <div className="cwp-meter"><label>DEBITS <span>{debitPct}%</span></label><i style={{ '--value': debitPct + '%' } as CSSProperties} /></div>
-                <div className="cwp-meter"><label>ACTIVITY <span>{activityPct}%</span></label><i style={{ '--value': activityPct + '%' } as CSSProperties} /></div>
+                <div className="cwp-meter"><label>CREDITS <span>{creditPct}%</span></label><i style={{ ['--value' as any]: creditPct + '%' }} /></div>
+                <div className="cwp-meter"><label>DEBITS <span>{debitPct}%</span></label><i style={{ ['--value' as any]: debitPct + '%' }} /></div>
+                <div className="cwp-meter"><label>ACTIVITY <span>{activityPct}%</span></label><i style={{ ['--value' as any]: activityPct + '%' }} /></div>
               </div>
             </div>
 
@@ -536,12 +459,6 @@ export default function CustomerWalletProfilePage() {
                 <div className="cwp-kyc-section">
                   <div className="cwp-kyc-title">▸ STATUS</div>
                   <div className="cwp-kyc-grid">
-                    <div className="cwp-kyc-field">
-                      <span className="cwp-kyc-label">Portal PIN</span>
-                      <span className="cwp-kyc-val" style={{ color: 'var(--acid)', fontFamily: 'monospace', letterSpacing: 3 }}>
-                        {customer.portal_pin || 'not issued'}
-                      </span>
-                    </div>
                     <div className="cwp-kyc-field">
                       <span className="cwp-kyc-label">KYC Status</span>
                       {kycEdit ? (

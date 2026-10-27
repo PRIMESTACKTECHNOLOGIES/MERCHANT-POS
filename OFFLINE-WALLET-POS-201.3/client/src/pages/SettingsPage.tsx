@@ -130,7 +130,7 @@ const FieldRow = ({ label, value, subtext }: { label: string; value: React.React
   </div>
 );
 
-const Toggle = ({ checked, onChange, label, description, disabled = false }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description?: string; disabled?: boolean }) => (
+const Toggle = ({ checked, onChange, label, description }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description?: string }) => (
   <div className="flex items-center justify-between py-3">
     <div>
       <div className="text-sm font-medium text-gray-900">{label}</div>
@@ -138,8 +138,7 @@ const Toggle = ({ checked, onChange, label, description, disabled = false }: { c
     </div>
     <button 
       onClick={() => onChange(!checked)}
-      disabled={disabled}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${checked ? 'bg-blue-600' : 'bg-gray-200'} ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${checked ? 'bg-blue-600' : 'bg-gray-200'}`}
     >
       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
     </button>
@@ -393,12 +392,12 @@ export const SettingsPage = () => {
                 myfatoorahTestMode: settingsData.myfatoorah_test_mode !== undefined ? settingsData.myfatoorah_test_mode : true
             },
             terminal: {
-                offlineMode: settingsData.terminal?.offlineMode ?? true,
-                autoUpdate: false,
+                offlineMode: true,
+                autoUpdate: true,
                 features: {
-                    manualEntry: settingsData.terminal?.features?.manualEntry ?? false,
-                    refunds: false,
-                    tips: false
+                    manualEntry: false,
+                    refunds: true,
+                    tips: true
                 }
             }
         };
@@ -450,63 +449,8 @@ export const SettingsPage = () => {
             paypal_client_id: settings.developer.paypalClientId,
             paypal_client_secret: settings.developer.paypalClientSecret,
             myfatoorah_api_token: settings.developer.myfatoorahApiToken,
-            myfatoorah_test_mode: settings.developer.myfatoorahTestMode,
-            features: settings.terminal?.features || { manualEntry: false, refunds: false, tips: false },
-            business: settings.business,
-            banking: settings.banking,
-            notifications: settings.notifications,
-            terminal: settings.terminal
+            myfatoorah_test_mode: settings.developer.myfatoorahTestMode
         });
-
-        try {
-          const [freshProfile, freshSettings] = await Promise.all([
-            getProfile().catch(() => null),
-            fetchSettings().catch(() => null),
-          ]);
-          if (freshProfile) {
-            setSettings(prev => prev ? ({
-              ...prev,
-              profile: {
-                ...prev.profile,
-                name: freshProfile.full_name || freshProfile.display_name || prev.profile.name,
-                displayName: freshProfile.display_name || prev.profile.displayName,
-                email: freshProfile.email || prev.profile.email,
-                phone: freshProfile.phone || prev.profile.phone,
-                country: freshProfile.country || prev.profile.country,
-                timezone: freshProfile.timezone || prev.profile.timezone,
-                companyName: freshProfile.company || prev.profile.companyName,
-                avatarUrl: freshProfile.avatar_url || prev.profile.avatarUrl,
-                theme: freshProfile.theme_preference || prev.profile.theme,
-                language: freshProfile.language_preference || prev.profile.language,
-              }
-            }) : prev);
-          }
-          if (freshSettings) {
-            setSettings(prev => prev ? ({
-              ...prev,
-              business: freshSettings.business || prev.business,
-              banking: freshSettings.banking || prev.banking,
-              notifications: freshSettings.notifications || prev.notifications,
-              terminal: freshSettings.terminal || prev.terminal,
-              developer: {
-                ...prev.developer,
-                apiKey: freshSettings.api_key ?? prev.developer.apiKey,
-                webhookUrl: freshSettings.webhook_url ?? prev.developer.webhookUrl,
-                testMode: typeof freshSettings.test_mode === 'boolean'
-                  ? freshSettings.test_mode
-                  : (typeof freshSettings.test_mode === 'number' ? freshSettings.test_mode === 1 : prev.developer.testMode),
-                paypalClientId: freshSettings.paypal_client_id ?? prev.developer.paypalClientId,
-                paypalClientSecret: freshSettings.paypal_client_secret ?? prev.developer.paypalClientSecret,
-                myfatoorahApiToken: freshSettings.myfatoorah_api_token ?? prev.developer.myfatoorahApiToken,
-                myfatoorahTestMode: typeof freshSettings.myfatoorah_test_mode === 'boolean'
-                  ? freshSettings.myfatoorah_test_mode
-                  : (typeof freshSettings.myfatoorah_test_mode === 'number' ? freshSettings.myfatoorah_test_mode === 1 : prev.developer.myfatoorahTestMode),
-              }
-            }) : prev);
-          }
-        } catch (_e) {
-          // Reload is best-effort; the save itself already succeeded.
-        }
 
         setMsg({ text: "Settings saved successfully", type: 'success' });
     } catch (e: any) {
@@ -827,10 +771,9 @@ export const SettingsPage = () => {
                />
                <Toggle 
                  label="Auto-Update Firmware" 
-                 description="Unavailable: this build has no firmware update agent."
-                 checked={false}
-                 onChange={() => undefined}
-                 disabled
+                 description="Install updates between 2am-4am"
+                 checked={settings.terminal.autoUpdate} 
+                 onChange={(v) => setSettings({...settings, terminal: {...settings.terminal, autoUpdate: v}})} 
                />
                <div className="pt-4">
                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Allowed Features</div>
@@ -868,19 +811,8 @@ export const SettingsPage = () => {
                           }
                         })}
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" 
-                        disabled
                       />
-                      Process Refunds <span className="text-xs text-gray-400">(Unavailable)</span>
-                    </label>
-                    <label className="flex items-center gap-2 text-sm text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={false}
-                        onChange={() => undefined}
-                        disabled
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      Add Tips <span className="text-xs text-gray-400">(Unavailable)</span>
+                      Process Refunds
                     </label>
                  </div>
                </div>

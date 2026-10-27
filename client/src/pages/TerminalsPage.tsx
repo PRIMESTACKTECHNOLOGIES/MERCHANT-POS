@@ -64,8 +64,8 @@ export const TerminalsPage = () => {
       setLoading(true);
       setLoadError(null);
       const data = await fetchTerminals();
-      setTerminals((Array.isArray(data) ? data : []).filter(Boolean).map((t) => {
-        let status: NonNullable<Terminal['status']> = 'REGISTERED'; // default — any terminal in DB is registered
+      setTerminals((Array.isArray(data) ? data : []).filter(Boolean).map((t: any) => {
+        let status = 'REGISTERED'; // default — any terminal in DB is registered
         if (t.lastBatchAt) {
           // Has synced at least once — check if recently active
           const lastSeen = new Date(t.lastBatchAt).getTime();
@@ -74,14 +74,14 @@ export const TerminalsPage = () => {
         }
         return {
           ...t,
-          status,
+          status: status as any,
           ipAddress: '-',
           appVersion: 'v1.0'
         };
       }));
-    } catch (e: unknown) {
+    } catch (e: any) {
       console.error(e);
-      const message = e instanceof Error ? e.message : "Failed to load terminals";
+      const message = e?.message || "Failed to load terminals";
       setLoadError(message);
       showToast(message, "error");
     } finally {

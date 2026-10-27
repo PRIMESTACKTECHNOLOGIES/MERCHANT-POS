@@ -21,32 +21,10 @@ export type OfflineOpType =
   | 'pos_transaction'
   | 'wallet_topup_card';
 
-export interface OfflineOpPayloads {
-  wallet_debit: {
-    customerId: string;
-    amount: number;
-    source?: string;
-  };
-  wallet_transfer: {
-    senderCustomerId: string;
-    receiverCustomerId: string;
-    amount: number;
-    note?: string;
-  };
-  pos_transaction: Record<string, unknown>;
-  wallet_topup_card: {
-    customerId: string;
-    amount: number;
-    cardNumber: string;
-    panMasked: string;
-    expiry: string;
-    cvv: string;
-    emvData?: unknown;
-  };
-}
-
-interface OfflineOpBase {
+export interface OfflineOp {
   id:         string;
+  type:       OfflineOpType;
+  payload:    Record<string, any>;
   createdAt:  string;
   attempts:   number;
   synced:     boolean;
@@ -54,18 +32,6 @@ interface OfflineOpBase {
   signature?: string;
   signedAt?:  string;
 }
-
-export type OfflineOp = {
-  [T in OfflineOpType]: OfflineOpBase & {
-    type: T;
-    payload: OfflineOpPayloads[T];
-  };
-}[OfflineOpType];
-
-export type OfflineOpFor<T extends OfflineOpType> = OfflineOpBase & {
-  type: T;
-  payload: OfflineOpPayloads[T];
-};
 
 const KEY = 'pos_offline_ops';
 
@@ -83,9 +49,9 @@ function save(ops: OfflineOp[]) {
 }
 
 /** Enqueue an offline operation */
-export function enqueue<T extends OfflineOpType>(type: T, payload: OfflineOpPayloads[T]): OfflineOpFor<T> {
+export function enqueue(type: OfflineOpType, payload: Record<string, any>): OfflineOp {
   const opId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const op: OfflineOpFor<T> = {
+  const op: OfflineOp = {
     id:        opId,
     type,
     payload,
@@ -100,7 +66,7 @@ export function enqueue<T extends OfflineOpType>(type: T, payload: OfflineOpPayl
   op.signature = signed.signature;
   op.signedAt = signed.createdAt;
   const ops = load();
-  ops.push(op as OfflineOp);
+  ops.push(op);
   save(ops);
   console.log(`[OfflineQueue] Queued ${type}:`, payload);
   return op;

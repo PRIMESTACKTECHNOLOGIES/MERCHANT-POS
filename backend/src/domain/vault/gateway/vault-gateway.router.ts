@@ -318,7 +318,65 @@ router.post('/settlement', async (req, res) => {
 });
 
 router.post('/real-funds/confirm', async (req, res) => {
-  return fail(res, 410, 'Manual real-funds confirmation is disabled; use the signed bank receipt webhook');
+  const amount = Number(req.body?.amount);
+  const currency = String(req.body?.currency || '').toUpperCase();
+  const externalReference = String(req.body?.externalReference || req.body?.reference || '').trim();
+  if (!Number.isFinite(amount) || amount <= 0 || !/^[A-Z]{3}$/.test(currency) || !externalReference) {
+    return fail(res, 400, 'amount, ISO currency, and externalReference are required');
+  }
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS vault_real_funds (
+        id TEXT PRIMARY KEY,
+        currency TEXT NOT NULL,
+        confirmed_amount REAL NOT NULL,
+        available_amount REAL NOT NULL,
+        external_reference TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL,
+        confirmed_at TEXT NOT NULL
+      )
+    `);
+    const existing = await db.query(
+      'SELECT * FROM vault_real_funds WHERE external_reference = ? LIMIT 1',
+      [externalReference],
+    );
+    if (existing.rows?.[0]) return res.json({ success: true, realFunds: existing.rows[0], idempotent: true });
+    const now = new Date().toISOString();
+    const id = uuidv4();
+    await db.query(
+      `INSERT INTO vault_real_funds
+        (id, currency, confirmed_amount, available_amount, external_reference, source, confirmed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, currency, amount, amount, externalReference, String(req.body?.source || 'external-bank-confirmation'), now],
+    );
+    const ledgerReference = `real-funds:${externalReference}`;
+    const existingLedger = await db.query(
+      `SELECT id FROM vault_ledger
+        WHERE reference = ? AND type = 'BATCH_TO_VAULT' AND status = 'COMPLETED'
+        LIMIT 1`,
+      [ledgerReference],
+    );
+    if (!existingLedger.rows?.length) {
+      await vaultEngine.creditVault({
+        amount,
+        currency,
+        reference: ledgerReference,
+        merchantId: req.body?.merchantId ? String(req.body.merchantId) : null,
+        type: 'BATCH_TO_VAULT',
+        meta: {
+          source: String(req.body?.source || 'external-bank-confirmation'),
+          externalReference,
+          realFundsId: id,
+        },
+      });
+    }
+    return res.status(201).json({
+      success: true,
+      realFunds: { id, currency, confirmed_amount: amount, available_amount: amount, external_reference: externalReference, confirmed_at: now },
+    });
+  } catch (error: any) {
+    return fail(res, 400, error?.message || 'Real funds confirmation failed');
+  }
 });
 
 router.post('/debit', async (req, res) => {

@@ -3,6 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
+import {
+  REGULATORY_COMPLIANCE_RA11917,
+  PROCESSOR_SECURITY_POLICY,
+  HASH_SPECS,
+  type ComplianceTrainingCategory,
+} from '../../config/crypto.spec';
 
 /**
  * ENTERPRISE SECURITY SERVICE
@@ -13,7 +19,28 @@ import QRCode from 'qrcode';
  * - Withdrawal Limits
  * - IP Whitelisting
  * - Security Monitoring
+ *
+ * Regulatory (RA 11917 IRR / final 1.pdf):
+ * - Min age: security staff 21, security officer/consultant 25
+ * - 18 mandatory training categories (PLTC, SecurityManager, K9, Armored, Crisis, etc.)
+ * - Max 1 small-arm firearm per security staff
+ * - SDDO (Security Duty Detail Order) max validity: 30 days
+ * - Pre-licensing PNP-SOSIA 3-person inspection team required
+ * - Dual control + MFA mandatory for crypto admin per PROCESSOR_SECURITY_POLICY
  */
+
+export interface SecurityStaffProfile {
+  id?: string;
+  fullName?: string;
+  age: number;
+  role: 'security_staff' | 'security_officer' | 'security_consultant' | 'security_manager' | 'crypto_admin';
+  highestDegree?: 'high_school' | 'bachelor' | 'masters' | 'phd';
+  yearsExperience?: number;
+  completedTraining: readonly ComplianceTrainingCategory[];
+  hasLicense?: boolean;
+  firearmsAssignedCount?: number;
+  mfaEnabled?: boolean;
+}
 
 export class SecurityService {
 
@@ -203,35 +230,6 @@ export class SecurityService {
     }
 
     return false;
-  }
-
-  /**
-   * Assign role to user
-   */
-  async assignRole(userId: string, roleId: string, assignedBy: string, expiresAt?: string) {
-    // Check if already assigned
-    const existing = await db.query(`
-      SELECT * FROM user_role_assignments WHERE user_id = ? AND role_id = ?
-    `, [userId, roleId]);
-
-    if (existing.rowCount > 0) {
-      throw new Error('Role already assigned to user');
-    }
-
-    await db.query(`
-      INSERT INTO user_role_assignments (id, user_id, role_id, assigned_by, expires_at)
-      VALUES (?, ?, ?, ?, ?)
-    `, [uuidv4(), userId, roleId, assignedBy, expiresAt || null]);
-
-    await this.logSecurityEvent({
-      event_type: 'ROLE_ASSIGNED',
-      severity: 'info',
-      user_id: assignedBy,
-      action: `Assign role ${roleId} to user ${userId}`,
-      resource_type: 'user_role',
-      resource_id: userId,
-      status: 'success'
-    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -726,6 +724,260 @@ export class SecurityService {
       SET acknowledged_by = ?, acknowledged_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [acknowledgedBy, alertId]);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // REGULATORY COMPLIANCE — RA 11917 IRR (final 1.pdf)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  private readonly REQUIRED_STAFF_TRAINING_MIN: readonly ComplianceTrainingCategory[] =
+    REGULATORY_COMPLIANCE_RA11917.MANDATORY_TRAINING_CATEGORIES;
+
+  validateStaffCompliance(staff: SecurityStaffProfile): {
+    compliant: boolean;
+    failures: string[];
+    warnings: string[];
+  } {
+    const failures: string[] = [];
+    const warnings: string[] = [];
+    const RC = REGULATORY_COMPLIANCE_RA11917;
+    const PSP = PROCESSOR_SECURITY_POLICY;
+
+    const minAge =
+      staff.role === 'security_consultant' || staff.role === 'security_officer' ||
+      staff.role === 'security_manager' || staff.role === 'crypto_admin'
+        ? RC.MIN_SECURITY_OFFICER_AGE
+        : RC.MIN_SECURITY_STAFF_AGE;
+    if (!Number.isFinite(staff.age) || staff.age < minAge) {
+      failures.push(`Age ${staff.age} below minimum ${minAge} for role "${staff.role}" (RA 11917)`);
+    }
+
+    if (staff.role === 'security_consultant') {
+      const degreeOk =
+        staff.highestDegree === 'masters' || staff.highestDegree === 'phd' ||
+        staff.highestDegree === 'bachelor';
+      const yearsOk =
+        (staff.highestDegree === 'bachelor' && (staff.yearsExperience || 0) >= RC.MIN_CONSULTANT_EXPERIENCE_YEARS) ||
+        (staff.highestDegree === 'masters' || staff.highestDegree === 'phd');
+      if (!degreeOk || !yearsOk) {
+        failures.push(`Security Consultant requires (Master's degree) OR (Bachelor's + ${RC.MIN_CONSULTANT_EXPERIENCE_YEARS}yr experience) — RA 11917 IRR`);
+      }
+    }
+
+    if (staff.role === 'security_manager' && !staff.highestDegree && RC.MIN_DEGREE_FOR_SECURITY_MANAGER) {
+      warnings.push('Security Manager: degree verification recommended per RA 11917');
+    }
+
+    const missingTraining = this.REQUIRED_STAFF_TRAINING_MIN.filter(
+      (cat) => !staff.completedTraining.includes(cat)
+    );
+    if (missingTraining.length > 0) {
+      failures.push(`Missing mandatory training categories (RA 11917): ${missingTraining.join(', ')}`);
+    }
+
+    if (!staff.hasLicense && RC.PRE_LICENSING_INSPECTION_REQUIRED && staff.role !== 'crypto_admin') {
+      warnings.push(`License (I-TO-PSTA → LTO-PSTA via Chief PNP) recommended for role "${staff.role}" — pre-licensing SOSIA inspection required`);
+    }
+
+    const firearmRatio = this.validateFirearmCustodyRatio(staff.firearmsAssignedCount || 0, 1);
+    if (!firearmRatio.compliant) {
+      failures.push(...firearmRatio.failures);
+    }
+
+    if (staff.role === 'crypto_admin' && PSP.REQUIRE_MFA_FOR_CRYPTO_ADMIN && !staff.mfaEnabled) {
+      failures.push('Crypto Admin requires MFA enabled (PROCESSOR_SECURITY_POLICY.REQUIRE_MFA_FOR_CRYPTO_ADMIN)');
+    }
+
+    return {
+      compliant: failures.length === 0,
+      failures,
+      warnings,
+    };
+  }
+
+  validateSddoValidity(validityDays: number): {
+    compliant: boolean;
+    failures: string[];
+  } {
+    const maxDays = REGULATORY_COMPLIANCE_RA11917.SDDO_MAX_VALIDITY_DAYS;
+    if (!Number.isFinite(validityDays) || validityDays <= 0) {
+      return { compliant: false, failures: [`SDDO validity must be a positive number of days`] };
+    }
+    if (validityDays > maxDays) {
+      return {
+        compliant: false,
+        failures: [`SDDO validity ${validityDays}d exceeds RA 11917 max of ${maxDays} days`],
+      };
+    }
+    return { compliant: true, failures: [] };
+  }
+
+  validateFirearmCustodyRatio(firearmCount: number, staffCount: number): {
+    compliant: boolean;
+    failures: string[];
+  } {
+    const failures: string[] = [];
+    const maxPerStaff = REGULATORY_COMPLIANCE_RA11917.FIREARMS_PER_SECURITY_STAFF_MAX;
+    if (staffCount <= 0 && firearmCount > 0) {
+      failures.push(`Cannot assign ${firearmCount} firearms to 0 staff`);
+    } else if (staffCount > 0 && firearmCount / staffCount > maxPerStaff) {
+      failures.push(
+        `Firearm ratio ${firearmCount}:${staffCount} exceeds RA 11917 limit of ${maxPerStaff} per security staff (small arms only)`
+      );
+    }
+    if (REGULATORY_COMPLIANCE_RA11917.SMALL_ARMS_ONLY_FOR_GUARD_FORCES) {
+      // Marking only; caliber verification requires firearms registry integration
+    }
+    return { compliant: failures.length === 0, failures };
+  }
+
+  async enforceCryptoAdminMfaRequirement(userId: string): Promise<void> {
+    if (!PROCESSOR_SECURITY_POLICY.REQUIRE_MFA_FOR_CRYPTO_ADMIN) return;
+    const isCryptoAdmin = await this.checkPermission(userId, 'crypto.admin');
+    if (!isCryptoAdmin) return;
+    const mfaCheck = await db.query(`
+      SELECT 1 FROM mfa_tokens WHERE user_id = ? AND verified = 1 LIMIT 1
+    `, [userId]);
+    if (mfaCheck.rowCount === 0) {
+      throw new Error('SECURITY: crypto.admin role requires verified MFA (PROCESSOR_SECURITY_POLICY.REQUIRE_MFA_FOR_CRYPTO_ADMIN)');
+    }
+  }
+
+  async validateKeyCeremonyDualControl(initiatorId: string, approverId: string): Promise<{
+    compliant: boolean;
+    failures: string[];
+  }> {
+    const failures: string[] = [];
+    const PSP = PROCESSOR_SECURITY_POLICY;
+    const RC = REGULATORY_COMPLIANCE_RA11917;
+
+    if (PSP.DUAL_CONTROL_FOR_KEY_CEREMONY) {
+      if (!initiatorId || !approverId) {
+        failures.push('Key ceremony requires both initiator and approver (dual control)');
+      } else if (initiatorId === approverId) {
+        failures.push('Key ceremony initiator and approver must be different people (dual control / N-of-M: ' + PSP.KEY_SPLIT_N_OF_M + ')');
+      } else {
+          const initPerm = await this.checkPermission(initiatorId, 'keys.initiate');
+          const apprPerm = await this.checkPermission(approverId, 'keys.approve');
+          if (!initPerm) failures.push(`Initiator ${initiatorId} lacks keys.initiate permission`);
+          if (!apprPerm) failures.push(`Approver ${approverId} lacks keys.approve permission`);
+        }
+    }
+
+    if (PSP.REQUIRE_MFA_FOR_CRYPTO_ADMIN) {
+      const initMfa = await db.query(`SELECT 1 FROM mfa_tokens WHERE user_id = ? AND verified = 1 LIMIT 1`, [initiatorId]);
+      const apprMfa = approverId ? await db.query(`SELECT 1 FROM mfa_tokens WHERE user_id = ? AND verified = 1 LIMIT 1`, [approverId]) : { rowCount: 0 };
+      if (initiatorId && initMfa.rowCount === 0) failures.push('Key ceremony initiator must have verified MFA');
+      if (approverId && apprMfa.rowCount === 0 && PSP.DUAL_CONTROL_FOR_KEY_CEREMONY) failures.push('Key ceremony approver must have verified MFA');
+    }
+
+    if (RC.COUNTER_SIGN_CHAIN_OF_CUSTODY && PSP.AUDIT_ALL_KEY_OPERATIONS) {
+      // Chain-of-custody countersign requirement is enforced by logSecurityEvent on caller side; no DB assertion here
+    }
+
+    return { compliant: failures.length === 0, failures };
+  }
+
+  validatePreLicensingInspection(team: {
+    leaderRank: string;
+    memberCount: number;
+    authority: string;
+    letterOrderIssued: boolean;
+  }): { compliant: boolean; failures: string[] } {
+    const RC = REGULATORY_COMPLIANCE_RA11917;
+    const failures: string[] = [];
+    if (!RC.PRE_LICENSING_INSPECTION_REQUIRED) return { compliant: true, failures: [] };
+    if (!team.letterOrderIssued) {
+      failures.push('Pre-licensing inspection requires Letter Order by SOSIA Chief (RA 11917 Sec 48)');
+    }
+    if (team.memberCount < RC.INSPECTION_MIN_MEMBERS) {
+      failures.push(`Inspection team must have min ${RC.INSPECTION_MIN_MEMBERS} members (RA 11917 Sec 48)`);
+    }
+    const authNorm = (s: string) => s.toUpperCase().replace(/[^A-Z]/g, '');
+    if (authNorm(team.authority) !== authNorm(RC.INSPECTION_AUTHORITY)) {
+      failures.push(`Inspection must be conducted by ${RC.INSPECTION_AUTHORITY} (RA 11917)`);
+    }
+    const leaderRankOk = /Police Commissioned Officer/i.test(team.leaderRank) || /PCO/i.test(team.leaderRank) || /Commissioned/i.test(team.leaderRank);
+    if (!leaderRankOk && RC.INSPECTOR_MIN_RANK) {
+      failures.push(`Inspection team leader must be a ${RC.INSPECTOR_MIN_RANK} (RA 11917 Sec 48)`);
+    }
+    return { compliant: failures.length === 0, failures };
+  }
+
+  getRegulatoryComplianceSummary(): Readonly<Record<string, unknown>> {
+    const RC = REGULATORY_COMPLIANCE_RA11917;
+    const PSP = PROCESSOR_SECURITY_POLICY;
+    return Object.freeze({
+      regulator: RC.INSPECTION_AUTHORITY,
+      licenseType: RC.LICENSE_TYPE,
+      licenseValidityYears: RC.LICENSE_VALIDITY_YEARS,
+      approverChain: {
+        iToPsta: RC.I_TO_PSTA_GRANTING_AUTHORITY,
+        ltoPsta: RC.LTO_PSTA_APPROVAL_AUTHORITY,
+      },
+      minAges: {
+        securityStaff: RC.MIN_SECURITY_STAFF_AGE,
+        officerOrConsultant: RC.MIN_SECURITY_OFFICER_AGE,
+      },
+      maxFirearmsPerStaff: RC.FIREARMS_PER_SECURITY_STAFF_MAX,
+      sddoMaxDays: RC.SDDO_MAX_VALIDITY_DAYS,
+      requiredTrainingCount: RC.MANDATORY_TRAINING_CATEGORIES.length,
+      reinspectionIntervalYears: RC.PERIODIC_REINSPECTION_INTERVAL_YEARS,
+      cryptoAdminRequiresMfa: PSP.REQUIRE_MFA_FOR_CRYPTO_ADMIN,
+      dualControlForKeyCeremony: PSP.DUAL_CONTROL_FOR_KEY_CEREMONY,
+      keySplitNofM: PSP.KEY_SPLIT_N_OF_M,
+      storageRequirement: RC.STORAGE_REQUIREMENTS_FOR_CRYPTO,
+      hashAuditTrailRequired: RC.COUNTER_SIGN_CHAIN_OF_CUSTODY,
+    });
+  }
+
+  async assignRole(userId: string, roleId: string, assignedBy: string, expiresAt?: string) {
+    if (roleId.toLowerCase().includes('crypto') || roleId.toLowerCase().includes('admin')) {
+      const result = await db.query(`SELECT permissions FROM user_roles WHERE id = ? LIMIT 1`, [roleId]);
+      if (result.rowCount > 0) {
+        const perms = JSON.parse((result.rows[0] as any).permissions || '[]') as string[];
+        if (perms.includes('crypto.admin') || perms.includes('*')) {
+          const mfaOk = await db.query(`SELECT 1 FROM mfa_tokens WHERE user_id = ? AND verified = 1 LIMIT 1`, [userId]);
+          if (mfaOk.rowCount === 0 && PROCESSOR_SECURITY_POLICY.REQUIRE_MFA_FOR_CRYPTO_ADMIN) {
+            throw new Error('Cannot assign crypto/admin role: user must have verified MFA first (PROCESSOR_SECURITY_POLICY.REQUIRE_MFA_FOR_CRYPTO_ADMIN)');
+          }
+        }
+      }
+    }
+    return this.assignRoleCore(userId, roleId, assignedBy, expiresAt);
+  }
+
+  private async assignRoleCore(userId: string, roleId: string, assignedBy: string, expiresAt?: string) {
+    // Check if already assigned
+    const existing = await db.query(`
+      SELECT * FROM user_role_assignments WHERE user_id = ? AND role_id = ?
+    `, [userId, roleId]);
+
+    if (existing.rowCount > 0) {
+      throw new Error('Role already assigned to user');
+    }
+
+    await db.query(`
+      INSERT INTO user_role_assignments (id, user_id, role_id, assigned_by, expires_at)
+      VALUES (?, ?, ?, ?, ?)
+    `, [uuidv4(), userId, roleId, assignedBy, expiresAt || null]);
+
+    await this.logSecurityEvent({
+      event_type: 'ROLE_ASSIGNED',
+      severity: 'info',
+      user_id: assignedBy,
+      action: `Assign role ${roleId} to user ${userId}`,
+      resource_type: 'user_role',
+      resource_id: userId,
+      status: 'success'
+    });
+  }
+
+  hashAuditRecord(recordId: string, recordJson: string): string {
+    return crypto
+      .createHash(PROCESSOR_SECURITY_POLICY.HASH_MIN_APPROVED)
+      .update(recordId + '|' + recordJson)
+      .digest('hex');
   }
 }
 

@@ -75,9 +75,6 @@ const StatusBadge = ({ status }: { status: string }) => {
     ERROR: "bg-red-50 text-red-700 border-red-100 ring-red-500/20",
     OFFLINE_APPROVED: "bg-blue-50 text-blue-700 border-blue-100 ring-blue-500/20",
     STORED: "bg-gray-100 text-gray-700 border-gray-200 ring-gray-500/20",
-    SYNCED: "bg-green-50 text-green-700 border-green-100 ring-green-500/20",
-    VOIDED_UNVERIFIED: "bg-gray-100 text-gray-700 border-gray-200 ring-gray-500/20",
-    PENDING_CAPTURE: "bg-orange-50 text-orange-800 border-orange-200 ring-orange-500/20",
   };
 
   const dotColors: Record<string, string> = {
@@ -87,13 +84,10 @@ const StatusBadge = ({ status }: { status: string }) => {
     ERROR: "bg-red-500",
     OFFLINE_APPROVED: "bg-blue-500",
     STORED: "bg-gray-500",
-    SYNCED: "bg-green-500",
-    VOIDED_UNVERIFIED: "bg-gray-500",
-    PENDING_CAPTURE: "bg-orange-500",
   };
 
   const s = status?.toUpperCase() || 'PENDING';
-  const displayStatus = s.replaceAll('_', ' ');
+  const displayStatus = s.replace('_', ' ');
 
   return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ring-1 ring-inset ${styles[s] || styles.PENDING}`}>
@@ -108,7 +102,6 @@ const StatusBadge = ({ status }: { status: string }) => {
 export const TransactionsPage = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedTxn, setSelectedTxn] = useState<Transaction | null>(null);
   
   // Filters
@@ -122,14 +115,19 @@ export const TransactionsPage = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    setLoadError(null);
     try {
-      const serverData = await fetchTransactions();
+      // Fetch server transactions
+      let serverData: Transaction[] = [];
+      try {
+        serverData = await fetchTransactions();
+      } catch (e) {
+        console.warn("Failed to fetch server transactions", e);
+      }
+
       const sorted = [...serverData].sort((a, b) => new Date(b.txnTimestamp).getTime() - new Date(a.txnTimestamp).getTime());
       setTransactions(sorted);
     } catch (e) {
-      console.error("Failed to load transactions:", e);
-      setLoadError(e instanceof Error ? e.message : "Transactions could not be loaded.");
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -343,20 +341,6 @@ export const TransactionsPage = () => {
     </div>
   );
 
-  if (loadError) return (
-    <div className="mx-auto max-w-2xl rounded-xl border border-red-200 bg-red-50 p-6 text-red-900">
-      <h1 className="text-lg font-semibold">Transactions could not be loaded</h1>
-      <p className="mt-2 text-sm">{loadError}</p>
-      <button
-        type="button"
-        onClick={fetchData}
-        className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800"
-      >
-        Retry
-      </button>
-    </div>
-  );
-
   return (
     <div className="animate-fade-in space-y-6 pb-12">
       
@@ -472,11 +456,8 @@ export const TransactionsPage = () => {
             <option value="ALL">All Status</option>
             <option value="APPROVED">Approved</option>
             <option value="DECLINED">Declined</option>
-            <option value="PENDING">Pending</option>
-            <option value="PENDING_CAPTURE">Pending Capture</option>
             <option value="OFFLINE_APPROVED">Offline Approved</option>
             <option value="STORED">Stored</option>
-            <option value="VOIDED_UNVERIFIED">Voided · unverified</option>
           </select>
         </div>
       </div>

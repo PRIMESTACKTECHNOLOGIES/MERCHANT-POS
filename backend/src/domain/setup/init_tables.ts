@@ -1,4 +1,4 @@
-import { db } from "../../config/db";
+﻿import { db } from "../../config/db";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { v4 as uuidv4 } from 'uuid';
@@ -73,7 +73,6 @@ export const initTables = async () => {
       parseAddCol(`ALTER TABLE vault_ledger ADD COLUMN meta TEXT NOT NULL DEFAULT '{}'`),
       // pos2013_transactions â€” columns added over time
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN auth_code TEXT`),
-      parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN customer_id TEXT`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN local_txn_id TEXT NOT NULL DEFAULT ''`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN txn_type TEXT`),
       parseAddCol(`ALTER TABLE pos2013_transactions ADD COLUMN auth_mode TEXT`),
@@ -100,7 +99,6 @@ export const initTables = async () => {
       // merchant_settings extended fields
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN features TEXT`),
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN extended_settings TEXT`),
-      parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN payment_config TEXT`),
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN terminal_id TEXT`),
       // merchant_settings bank account fields (for manual payouts)
       parseAddCol(`ALTER TABLE merchant_settings ADD COLUMN bank_name TEXT`),
@@ -218,9 +216,6 @@ export const initTables = async () => {
         test_mode INTEGER DEFAULT 0, -- Boolean
         merchant_name TEXT,
         support_email TEXT,
-        features TEXT,
-        extended_settings TEXT,
-        payment_config TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -285,7 +280,6 @@ export const initTables = async () => {
       CREATE TABLE IF NOT EXISTS pos2013_transactions (
         id TEXT PRIMARY KEY,
         merchant_id TEXT NOT NULL,
-        customer_id TEXT,
         terminal_id TEXT NOT NULL,
         batch_id TEXT NOT NULL,
         local_txn_id TEXT NOT NULL,
@@ -317,10 +311,10 @@ export const initTables = async () => {
       );
     `);
 
-    try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_scope
-      ON pos2013_transactions (merchant_id, terminal_id, batch_id, local_txn_id);`); } catch { /* ignore if already exists or column missing */ }
-    try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_rrn
-      ON pos2013_transactions (merchant_id, rrn) WHERE rrn IS NOT NULL;`); } catch { /* rrn column may not exist yet */ }
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_scope
+      ON pos2013_transactions (merchant_id, terminal_id, batch_id, local_txn_id);`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pos2013_txn_rrn
+      ON pos2013_transactions (merchant_id, rrn) WHERE rrn IS NOT NULL;`);
 
     // â”€â”€ Protocol Rules â€” constraints per protocol (101.1 / 101.6 / 201.3) â”€â”€â”€â”€â”€â”€â”€â”€
     // Defines what is required for each protocol. Checked BEFORE auth code lookup.
@@ -346,7 +340,7 @@ export const initTables = async () => {
     const protocolRulesSeed = [
       { id: 'rule-101.1', protocol: '101.1', code_type: 'approval_code', requires_cvv: 0, requires_online: 1, requires_offline: 0, min_amount: 0, max_amount: 9999999999, description: 'Voice Auth â€” approval code from issuer, no CVV required' },
       { id: 'rule-101.6', protocol: '101.6', code_type: 'token',          requires_cvv: 0, requires_online: 1, requires_offline: 0, min_amount: 0, max_amount: 9999999999, description: 'EMV Chip / Online token â€” dynamic code, CVV optional' },
-      { id: 'rule-201.3', protocol: '201.3', code_type: 'auth_code',      requires_cvv: 1, requires_online: 0, requires_offline: 1, min_amount: 0, max_amount: 9999999999, description: 'Offline Batch â€” pre-auth code + CVV both required' },
+      { id: 'rule-201.3', protocol: '201.3', code_type: 'auth_code',      requires_cvv: 0, requires_online: 0, requires_offline: 1, min_amount: 0, max_amount: 9999999999, description: 'Offline Batch - pre-auth code, no CVV required (EMV chip TC authenticates)' },
     ];
     for (const rule of protocolRulesSeed) {
       try {
@@ -360,7 +354,10 @@ export const initTables = async () => {
       } catch { /* ignore */ }
     }
 
-    // â”€â”€ Card Authorizations â€” pre-authorized codes for protocol validation â”€â”€
+    // Live-correct any previously seeded wrong requires_cvv for 201.3 in existing databases
+    try { await db.query(`UPDATE protocol_rules SET requires_cvv = 0 WHERE protocol = '201.3' AND requires_cvv != 0`); } catch { /* ignore */ }
+
+    // Card Authorizations - pre-authorized codes for protocol validation
     // Stores valid auth codes per card / protocol for 101.1, 101.6, 201.3.
     // When a POS transaction arrives with an auth code, it must match a row here.
     await db.query(`
@@ -419,6 +416,106 @@ export const initTables = async () => {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║ PROTOCOL 101.1 — VOICE AUTHORIZATION ENGINE TABLES                     ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+
+    // inbound_funds_101 — operator-registered voice-auth funds
+    // Funds MUST exist here before a 101.1 capture is allowed.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS inbound_funds_101 (
+        id              TEXT PRIMARY KEY,
+        auth_code       TEXT NOT NULL,
+        amount_minor    INTEGER NOT NULL,
+        currency        TEXT NOT NULL DEFAULT 'USD',
+        pan_last4       TEXT NOT NULL,
+        cardholder_name TEXT,
+        merchant_id     TEXT NOT NULL,
+        source          TEXT,
+        registered_by   TEXT,
+        notes           TEXT,
+        status          TEXT NOT NULL DEFAULT 'ACTIVE',
+        capture_ref     TEXT,
+        captured_at     TEXT,
+        registered_at   TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      )
+    `);
+    try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_inbound101_authcode_merchant ON inbound_funds_101 (auth_code, merchant_id)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_inbound101_status ON inbound_funds_101 (status, merchant_id)`); } catch(_) {}
+
+    // voice_auth_events — protocol event log for 101.1 (mirrors pos1011_events pattern)
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS voice_auth_events (
+        id            TEXT PRIMARY KEY,
+        txn_id        TEXT NOT NULL,
+        protocol_code TEXT NOT NULL,
+        event_type    TEXT NOT NULL,
+        amount_minor  INTEGER NOT NULL,
+        currency      TEXT NOT NULL,
+        merchant_id   TEXT NOT NULL,
+        auth_code     TEXT,
+        status        TEXT NOT NULL,
+        meta_json     TEXT NOT NULL DEFAULT '{}',
+        created_at    TEXT NOT NULL
+      )
+    `);
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_vauth_events_txn ON voice_auth_events (txn_id)`); } catch(_) {}
+
+    // inbound_transaction_registrations — generic inbound fund registration
+    // (used by InboundTransactionService for 101.1/SWIFT/Visa deposits)
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS inbound_transaction_registrations (
+        id                       TEXT PRIMARY KEY,
+        protocol                 TEXT NOT NULL DEFAULT '101.1',
+        authorization_code       TEXT NOT NULL,
+        amount                   REAL NOT NULL,
+        currency                 TEXT NOT NULL DEFAULT 'USD',
+        beneficiary_name         TEXT,
+        beneficiary_account      TEXT,
+        sender_bic               TEXT,
+        receiver_bic             TEXT,
+        uetr                     TEXT,
+        deposit_code             TEXT,
+        cusip                    TEXT,
+        fed_wire_code            TEXT,
+        swift_mt_type            TEXT,
+        iso20022_type            TEXT,
+        settlement_status        TEXT NOT NULL DEFAULT 'PENDING_VERIFICATION',
+        fund_verification_status TEXT NOT NULL DEFAULT 'UNVERIFIED',
+        verification_provider    TEXT,
+        verification_reference   TEXT,
+        verified_at              TEXT,
+        merchant_id              TEXT,
+        customer_id              TEXT,
+        pan_masked               TEXT,
+        card_registered          INTEGER DEFAULT 0,
+        raw_document             TEXT,
+        meta_json                TEXT,
+        created_at               TEXT NOT NULL,
+        updated_at               TEXT NOT NULL
+      )
+    `);
+
+    // fund_verification_audits — per-attempt audit trail for external verifications
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS fund_verification_audits (
+        id                  TEXT PRIMARY KEY,
+        registration_id     TEXT NOT NULL,
+        provider            TEXT NOT NULL,
+        verification_method TEXT NOT NULL,
+        request_payload     TEXT,
+        response_payload    TEXT,
+        result_status       TEXT NOT NULL,
+        result_reason       TEXT,
+        verified_amount     REAL,
+        verified_currency   TEXT,
+        external_reference  TEXT,
+        created_at          TEXT NOT NULL
+      )
+    `);
+    try { await db.query(`CREATE INDEX IF NOT EXISTS idx_fva_registration ON fund_verification_audits (registration_id)`); } catch(_) {}
 
     // Local offline funds ledger for machine-offline receipt persistence
     await db.query(`
@@ -569,24 +666,20 @@ export const initTables = async () => {
       `);
 
     // Seed Admin User
-    // IMPORTANT: Only set the password when creating the user for the first time.
-    // Never overwrite an existing password — that would reset any password changes
-    // made via the dashboard or reset endpoint every time the server restarts.
     const adminUsername = process.env.ADMIN_USERNAME || "admin";
     const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+    const hash = await bcrypt.hash(adminPassword, 10);
     const userRes = await db.query("SELECT * FROM admin_users WHERE username = ?", [adminUsername]);
 
     let adminId: string;
     if (userRes.rowCount === 0) {
-      // First boot — create the user with the configured password
-      const hash = await bcrypt.hash(adminPassword, 10);
       adminId = uuidv4();
       await db.query("INSERT INTO admin_users (id, username, password_hash, full_name) VALUES (?, ?, ?, ?)", [adminId, adminUsername, hash, "System Administrator"]);
-      console.log(`[Auth] Default admin user created: ${adminUsername}`);
+      console.log(`âœ… Default admin user created: ${adminUsername} / ${adminPassword}`);
     } else {
-      // User already exists — NEVER touch the password. Preserve whatever is stored.
+      await db.query("UPDATE admin_users SET password_hash = ? WHERE username = ?", [hash, adminUsername]);
       adminId = (userRes.rows[0] as any).id;
-      console.log(`[Auth] Admin user exists: ${adminUsername} — password unchanged`);
+      console.log(`âœ… Admin password ensured for ${adminUsername}`);
     }
 
     // Seed Security Roles
@@ -702,8 +795,6 @@ export const initTables = async () => {
     await db.query(`
       CREATE TABLE IF NOT EXISTS customers (
         id TEXT PRIMARY KEY,
-        merchant_id TEXT,
-        created_by_admin_user_id TEXT,
         name TEXT NOT NULL,
         email TEXT,
         phone TEXT,
@@ -753,17 +844,6 @@ export const initTables = async () => {
         await db.query(`ALTER TABLE customers ADD COLUMN ${col} ${def}`);
       } catch { /* column already exists â€” ignore */ }
     }
-
-    // Customer merchant ownership isolation
-    try {
-      await db.query(`ALTER TABLE customers ADD COLUMN merchant_id TEXT`);
-    } catch { /* column already exists */ }
-    try {
-      await db.query(`ALTER TABLE customers ADD COLUMN created_by_admin_user_id TEXT`);
-    } catch { /* column already exists */ }
-    try {
-      await db.query(`CREATE INDEX IF NOT EXISTS idx_customers_merchant ON customers(merchant_id)`);
-    } catch { /* ignore */ }
 
     // Customer Wallets Table â€” one wallet per (customer, currency) so AED stays AED, USD stays USD
     await db.query(`
@@ -833,32 +913,6 @@ export const initTables = async () => {
         reference TEXT,
         description TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS merchant_wallet_transaction_voids (
-        id TEXT PRIMARY KEY,
-        transaction_id TEXT NOT NULL UNIQUE,
-        merchant_id TEXT NOT NULL,
-        currency TEXT NOT NULL,
-        amount REAL NOT NULL,
-        reason TEXT NOT NULL,
-        original_record TEXT NOT NULL,
-        voided_at TEXT NOT NULL
-      );
-    `);
-
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS customer_wallet_transaction_voids (
-        id TEXT PRIMARY KEY,
-        transaction_id TEXT NOT NULL UNIQUE,
-        customer_id TEXT NOT NULL,
-        currency TEXT NOT NULL,
-        amount REAL NOT NULL,
-        reason TEXT NOT NULL,
-        original_record TEXT NOT NULL,
-        voided_at TEXT NOT NULL
       );
     `);
 
@@ -1816,18 +1870,6 @@ export const initTables = async () => {
       )
     `);
     await db.query(`
-      CREATE TABLE IF NOT EXISTS bank_incoming_receipts (
-        provider_transaction_id TEXT PRIMARY KEY,
-        reference TEXT NOT NULL,
-        amount REAL NOT NULL,
-        currency TEXT NOT NULL,
-        allocation_status TEXT NOT NULL,
-        merchant_id TEXT,
-        payload_sha256 TEXT NOT NULL,
-        received_at TEXT NOT NULL
-      )
-    `);
-    await db.query(`
       CREATE TABLE IF NOT EXISTS offline_txns (
         id TEXT PRIMARY KEY,
         merchant_id TEXT NOT NULL,
@@ -1935,8 +1977,8 @@ export const initTables = async () => {
         SELECT 'batch:' || b.id, b.batch_id, b.merchant_id,
                COALESCE(SUM(t.amount_minor), 0) / 100.0,
                COALESCE(MAX(t.currency), 'USD'),
-               CASE WHEN LOWER(b.status) = 'settled' THEN 'SETTLED'
-                    WHEN LOWER(b.status) IN ('declined', 'failed', 'capture_failed') THEN 'FAILED'
+               CASE WHEN LOWER(b.status) IN ('accepted', 'settled', 'uploaded', 'processed') THEN 'SETTLED'
+                    WHEN LOWER(b.status) IN ('declined', 'failed') THEN 'FAILED'
                     ELSE 'PENDING' END,
                COALESCE(b.settlement_code, b.batch_id),
                COALESCE(b.processed_at, b.upload_timestamp, b.created_at)
@@ -1944,27 +1986,6 @@ export const initTables = async () => {
           LEFT JOIN pos2013_transactions t ON t.batch_id = b.batch_id
          GROUP BY b.id, b.batch_id, b.merchant_id, b.status, b.settlement_code,
                   b.processed_at, b.upload_timestamp, b.created_at
-      `);
-      await db.query(`
-        UPDATE batch_settlement
-          SET status = 'PENDING'
-         WHERE UPPER(status) = 'SETTLED'
-          AND EXISTS (
-            SELECT 1
-              FROM pos2013_batches b
-             WHERE b.batch_id = batch_settlement.batch_id
-               AND b.merchant_id = batch_settlement.merchant_id
-               AND UPPER(b.status) IN ('RECEIVED', 'PENDING', 'UPLOADED', 'EXPORTED', 'PROCESSED', 'PARTIAL')
-          )
-          AND NOT EXISTS (
-            SELECT 1
-              FROM bank_incoming_receipts r
-             WHERE UPPER(r.allocation_status) = 'ALLOCATED'
-               AND r.merchant_id = batch_settlement.merchant_id
-               AND UPPER(r.currency) = UPPER(batch_settlement.currency)
-               AND ABS(r.amount - batch_settlement.amount) < 0.000001
-               AND (r.reference = batch_settlement.settlement_ref OR r.reference = batch_settlement.batch_id)
-          )
       `);
       await db.query(`
         INSERT OR IGNORE INTO payout_instructions
@@ -2115,23 +2136,6 @@ export const initTables = async () => {
       if (!colNames.has('meta')) await db.query(`ALTER TABLE vault_accounts ADD COLUMN meta TEXT`);
       await db.query(`UPDATE vault_accounts SET available_balance = balance WHERE available_balance = 0 AND balance != 0`);
     } catch (_) { /* ignore */ }
-    await db.query(
-      `UPDATE vault_accounts
-          SET balance = 0, available_balance = 0, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-          AND currency = 'USD'
-          AND bic = ?
-          AND iban = ?
-          AND balance = ?
-          AND available_balance = ?`,
-      [
-        'PROC-VAULT-USD-002',
-        'PROCESSOR_BIC_PLACEHOLDER',
-        'PROCESSOR_IBAN_PLACEHOLDER',
-        6499.5,
-        1999.5,
-      ],
-    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS vault_entries (
@@ -2149,25 +2153,6 @@ export const initTables = async () => {
         created_at TEXT NOT NULL
       )
     `);
-    // Keep known smoke-test payouts for audit, but exclude them from posted balances.
-    await db.query(
-      `UPDATE vault_entries
-          SET status = 'VOIDED'
-        WHERE account_id = ?
-          AND currency = 'USD'
-          AND direction = 'debit'
-          AND amount = ?
-          AND source IN ('vault_card_payout', 'vault_card_payout_settled')
-          AND status = 'POSTED'
-          AND metadata LIKE ?
-          AND metadata LIKE ?`,
-      [
-        'PROC-VAULT-USD-002',
-        0.25,
-        '%"merchant_id":"SMOKE-TEST-MID"%',
-        '%"vault_card_id":"329eadbd-51fd-45cd-990f-f20d420cee80"%',
-      ],
-    );
     await db.query(`
       CREATE TABLE IF NOT EXISTS vault_payout_requests (
         id TEXT PRIMARY KEY,
@@ -2219,6 +2204,16 @@ export const initTables = async () => {
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_vault_cards_status ON vault_cards(status)`); } catch(_) {}
     try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_cards_number ON vault_cards(card_number)`); } catch(_) {}
 
+    // Canonical Wise EUR settlement vault used by MT103 sweep confirmations.
+    try {
+      await db.query(
+        `INSERT OR IGNORE INTO vault_accounts
+          (id, bank_name, bic, iban, currency, balance, reserved_hold, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        ['VAULT-WISE-EUR-001', 'Wise Europe Bank', 'WISEBANKBIC', 'DE12345678901234567890', 'EUR'],
+      );
+    } catch (_) { /* ignore duplicate/legacy schema issues */ }
+
     // Migration: extend vault_beneficiaries with type + address_json + metadata if missing
     try {
       const pragma = await db.query(`PRAGMA table_info("vault_beneficiaries")`);
@@ -2246,22 +2241,6 @@ export const initTables = async () => {
         meta          TEXT NULL
       );
     `);
-    await db.query(
-      `UPDATE accounts
-          SET balance = 0
-        WHERE ((id = ? AND currency = 'EUR') OR (id = ? AND currency = 'USD'))
-          AND bic = ?
-          AND iban = ?
-          AND meta LIKE ?
-          AND balance <> 0`,
-      [
-        'PROC-VAULT-EUR-001',
-        'PROC-VAULT-USD-002',
-        'PROCESSOR_BIC_PLACEHOLDER',
-        'PROCESSOR_IBAN_PLACEHOLDER',
-        '%"seeded":true%',
-      ],
-    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS beneficiaries (
@@ -2344,11 +2323,27 @@ export const initTables = async () => {
     try { await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_cards_pan ON wallet_cards(card_number)`); } catch(_) {}
     try { await db.query(`CREATE INDEX IF NOT EXISTS idx_wallet_cards_wallet ON wallet_cards(wallet_id)`); } catch(_) {}
 
+    // Seed sample vault accounts for testing only if they don't exist
+    try {
+      const now = new Date().toISOString();
+      const acc1 = await db.query(`SELECT COUNT(*) c FROM accounts WHERE id = ?`, ['PROC-VAULT-EUR-001']);
+      if ((acc1.rows?.[0]?.c || 0) === 0) {
+        await db.query(
+          `INSERT INTO accounts (id, currency, bic, iban, bank_name, balance, meta) VALUES (?,?,?,?,?,?,?)`,
+          ['PROC-VAULT-EUR-001', 'EUR', 'PROCESSOR_BIC_PLACEHOLDER', 'PROCESSOR_IBAN_PLACEHOLDER', 'Protocol 201.3 Settlement Bank', 510000000, JSON.stringify({ seeded: true, at: now })]
+        );
+      }
+      const acc2 = await db.query(`SELECT COUNT(*) c FROM accounts WHERE id = ?`, ['PROC-VAULT-USD-002']);
+      if ((acc2.rows?.[0]?.c || 0) === 0) {
+        await db.query(
+          `INSERT INTO accounts (id, currency, bic, iban, bank_name, balance, meta) VALUES (?,?,?,?,?,?,?)`,
+          ['PROC-VAULT-USD-002', 'USD', 'PROCESSOR_BIC_PLACEHOLDER', 'PROCESSOR_IBAN_PLACEHOLDER', 'Protocol 201.3 Settlement Bank', 4998363, JSON.stringify({ seeded: true, at: now })]
+        );
+      }
+    } catch (_) { /* ignore race */ }
+
     console.log("Tables initialized successfully (SQLite)");
   } catch (error) {
-    // Log the error but DO NOT rethrow — a partial init is better than no init.
-    // The server will still start and serve requests. Missing tables will be
-    // created on the next restart or caught per-request.
-    console.error("Error initializing tables (non-fatal):", error);
+    console.error("Error initializing tables:", error);
   }
 };

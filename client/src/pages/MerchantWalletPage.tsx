@@ -4,43 +4,14 @@ import { resolveApiBaseUrl } from "../lib/backendUrl";
 
 const API = resolveApiBaseUrl({ envValue: import.meta.env.VITE_API_URL, currentOrigin: window.location.origin });
 
-interface MerchantWallet {
-  balance: number | string;
-  currency: string;
-}
-
-interface MerchantTransaction {
-  id?: string;
-  created_at?: string;
-  type?: string;
-  amount?: number | string;
-  reference?: string;
-  description?: string;
-  currency?: string;
-  source?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function apiFetch(path: string, options?: RequestInit): Promise<unknown> {
+async function apiFetch(path: string, options?: RequestInit) {
   const token = localStorage.getItem("token") || localStorage.getItem("jwt_token");
   const res = await fetch(`${API}${path}`, {
     ...options,
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options?.headers || {}) },
   });
-  const body: unknown = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const message = isRecord(body)
-      ? typeof body.error === "string"
-        ? body.error
-        : typeof body.message === "string"
-          ? body.message
-          : `Error ${res.status}`
-      : `Error ${res.status}`;
-    throw new Error(message);
-  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || body.message || `Error ${res.status}`);
   return body;
 }
 
@@ -51,8 +22,8 @@ function getMerchantId() {
 export function MerchantWalletPage() {
   const [revealed, setRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [wallet, setWallet] = useState<MerchantWallet | null>(null);
-  const [transactions, setTransactions] = useState<MerchantTransaction[]>([]);
+  const [wallet, setWallet] = useState<any>(null);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [error, setError] = useState("");
   const [sendBusy, setSendBusy] = useState(false);
   const [sendAmount, setSendAmount] = useState("");
@@ -62,33 +33,10 @@ export function MerchantWalletPage() {
   const load = async () => {
     setLoading(true); setError("");
     try {
-      const walletData = await apiFetch(`/wallet/merchant-balance/${encodeURIComponent(merchantId)}`);
-      if (!isRecord(walletData) ||
-          (typeof walletData.balance !== "number" && typeof walletData.balance !== "string")) {
-        throw new Error("Invalid merchant wallet response");
-      }
-      const currency = typeof walletData.currency === "string" ? walletData.currency : "USD";
-      setWallet({
-        balance: walletData.balance,
-        currency,
-      });
-
-      const transactionData = await apiFetch(`/wallet/merchant-transactions/${encodeURIComponent(merchantId)}?currency=${encodeURIComponent(currency)}`);
-      const rows = Array.isArray(transactionData)
-        ? transactionData
-        : isRecord(transactionData) && Array.isArray(transactionData.transactions)
-          ? transactionData.transactions
-          : [];
-      setTransactions(rows.filter(isRecord).map((row): MerchantTransaction => ({
-        id: typeof row.id === "string" ? row.id : undefined,
-        created_at: typeof row.created_at === "string" ? row.created_at : undefined,
-        type: typeof row.type === "string" ? row.type : undefined,
-        amount: typeof row.amount === "number" || typeof row.amount === "string" ? row.amount : undefined,
-        reference: typeof row.reference === "string" ? row.reference : undefined,
-        description: typeof row.description === "string" ? row.description : undefined,
-        currency: typeof row.currency === "string" ? row.currency : undefined,
-        source: typeof row.source === "string" ? row.source : undefined,
-      })));
+      const w = await apiFetch(`/api/merchant/${merchantId}/wallet`);
+      setWallet(w);
+      const t = await apiFetch(`/api/merchant/${merchantId}/transactions?limit=20`);
+      setTransactions(t.transactions || t || []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally { setLoading(false); }
@@ -203,7 +151,7 @@ export function MerchantWalletPage() {
               </tr>
             </thead>
             <tbody>
-              {transactions.slice(0, 15).map((t, i) => (
+              {transactions.slice(0, 15).map((t: any, i: number) => (
                 <tr key={t.id || i} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/50">
                   <td className="px-4 py-2.5 text-xs text-gray-500">{t.created_at ? new Date(t.created_at).toLocaleDateString() : "—"}</td>
                   <td className="px-4 py-2.5">

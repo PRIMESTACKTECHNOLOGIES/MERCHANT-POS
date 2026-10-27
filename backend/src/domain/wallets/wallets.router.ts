@@ -15,20 +15,16 @@ router.post('/offline/sync', wcc.sync.bind(wcc));
 
 // ── Merchant wallet ────────────────────────────────────────────────────────
 router.get('/merchant-balance/:merchantId',      wc.getMerchantBalance.bind(wc));
-router.get('/merchant-wallets/:merchantId',      wc.getMerchantWallets.bind(wc));
 router.get('/merchant-transactions/:merchantId', wc.getMerchantTransactions.bind(wc));
 router.post('/merchant/transfer-to-customer',    wc.merchantToCustomerTransfer.bind(wc));
 router.post('/merchant/settle-emv-2013',         wc.settleEmv2013.bind(wc));
 
 // ── Customers ──────────────────────────────────────────────────────────────
-router.get('/customers',                              wc.getCustomers.bind(wc));
-router.get('/customers-by-merchant/:merchantId',       wc.getCustomersByMerchant.bind(wc));
-router.post('/customers',                              wc.createCustomer.bind(wc));
-router.post('/customers/pins/issue-all',               authenticateToken, wc.issueAllCustomerPins.bind(wc));
-router.delete('/customers/:customerId',                authenticateToken, wc.deleteCustomer.bind(wc));
-router.get('/customers/:customerId/profile',           wc.getCustomerProfile.bind(wc));
-router.patch('/customers/:customerId/kyc',             wc.updateCustomerKYC.bind(wc));
-router.post('/customers/:customerId/pin',              authenticateToken, wc.setCustomerPin.bind(wc));
+router.get('/customers',                    wc.getCustomers.bind(wc));
+router.post('/customers',                   wc.createCustomer.bind(wc));
+router.delete('/customers/:customerId',     authenticateToken, wc.deleteCustomer.bind(wc));
+router.get('/customers/:customerId/profile', wc.getCustomerProfile.bind(wc));
+router.patch('/customers/:customerId/kyc',  wc.updateCustomerKYC.bind(wc));
 
 // ── Fiat wallet ────────────────────────────────────────────────────────────
 router.post('/topup',                   wc.topup.bind(wc));
@@ -37,18 +33,19 @@ router.post('/debit',                   wc.debit.bind(wc));
 router.get('/balance/:customerId',      wc.getBalance.bind(wc));
 router.get('/transactions/:customerId', wc.getTransactions.bind(wc));
 
-// ── Card validation & provider credentials ─────────────────────────────────
-router.post('/validate-card',           wc.validateCard.bind(wc));
-router.post('/test-provider-credentials', wc.testProviderCredentials.bind(wc));
-router.post('/send-to-merchant-wallet', wc.sendFundsToMerchantWallet.bind(wc));
-
 // ── Wallet-to-wallet transfer ──────────────────────────────────────────────
 router.post('/transfer', wc.walletTransfer.bind(wc));
 
 // ── Send customer asset to hot wallet ─────────────────────────────────────
-router.post('/send-to-hot-wallet', authenticateToken, wc.sendToHotWallet.bind(wc));
-router.post('/provider-send-to-merchant', authenticateToken, wc.callProviderAndSendToMerchant.bind(wc));
-router.post('/provider-pull-to-merchant', authenticateToken, wc.pullProviderFundsToMerchant.bind(wc));
+router.post('/send-to-hot-wallet', wc.sendToHotWallet.bind(wc));
+
+// ── Send customer wallet funds to merchant wallet (real fund provider first)
+router.post('/send-to-merchant-wallet', wc.sendCustomerFundsToMerchantWallet.bind(wc));
+
+// ── Runtime fund provider creds (interactive popup — in-memory, not persisted)
+router.post('/runtime/fund-provider-creds',        wc.setRuntimeFundProviderCreds.bind(wc));
+router.post('/runtime/fund-provider-creds/clear',  wc.clearRuntimeFundProviderCreds.bind(wc));
+router.get( '/runtime/fund-provider-creds/status', wc.getRuntimeFundProviderCredsStatus.bind(wc));
 
 // ── Bank accounts ──────────────────────────────────────────────────────────
 router.post('/bank-accounts',              wc.addBankAccount.bind(wc));

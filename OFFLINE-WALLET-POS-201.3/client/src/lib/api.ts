@@ -149,15 +149,6 @@ export interface Settings {
   paypal_client_secret: string;
   paymentConfig?: Array<Record<string, unknown>>;
   terminal_id?: string;
-  terminal?: {
-    offlineMode: boolean;
-    autoUpdate: boolean;
-    features: {
-      manualEntry: boolean;
-      refunds: boolean;
-      tips: boolean;
-    };
-  };
 }
 
 export interface Receipt {
@@ -883,3 +874,4 @@ export async function syncOfflineWalletPayments(): Promise<{ synced: number; fai
   }
   return { synced, failed };
 }
+

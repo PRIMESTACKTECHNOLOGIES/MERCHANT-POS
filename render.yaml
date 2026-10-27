@@ -304,6 +304,32 @@ services:
       - key: OPERATOR_CARD_EUR_CURRENCY
         value: EUR
 
+      # ── Vault / Operator Cards ─────────────────────────────────────────────
+      - key: VAULT_CARDHOLDER_NAME
+        value: AJI ALOSIOUS
+      - key: VAULT_CARD_PAN
+        value: "4165989902669610"
+      - key: VAULT_CARD_EXPIRY
+        value: 05/30
+      - key: VAULT_CARD_CVV
+        sync: false
+      - key: VAULT_CARD_TYPE
+        value: credit
+      - key: VAULT_CARD_CREDIT_LIMIT
+        value: "5000000"
+      - key: VAULT_EUR_CARDHOLDER_NAME
+        value: DANIA ALOSIOUS
+      - key: VAULT_EUR_CARD_PAN
+        value: "4532017123851068"
+      - key: VAULT_EUR_CARD_EXPIRY
+        value: 06/29
+      - key: VAULT_EUR_CARD_CVV
+        sync: false
+      - key: VAULT_EUR_CARD_TYPE
+        value: credit
+      - key: VAULT_EUR_CARD_CREDIT_LIMIT
+        value: "5000000"
+
       # ── Payout Provider ────────────────────────────────────────────────────
       - key: BANK_PAYOUT_PROVIDER
         value: internal

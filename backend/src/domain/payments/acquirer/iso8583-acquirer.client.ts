@@ -2,82 +2,49 @@ import { acquirerConfig } from '../../../config/acquirer';
 import { IsoTcpClient } from './iso-tcp.client';
 import { Iso8583Codec, IsoMessage } from './iso8583.codec';
 import { iso8583HeaderFraming } from './headerFraming';
-import { Iso8583HeaderMode } from './headerBuilder';
 import {
   AcquirerAuthRequest,
   AcquirerAuthResponse,
   AcquirerCaptureRequest,
   AcquirerCaptureResponse,
 } from './acquirer.types';
-import { createIso8583MacEngine, Iso8583MacEngine } from './iso8583.security';
-import { getResponseCodeInfo, isApprovalCode, getCardholderMessage } from './iso8583.responseCodes';
-
-export interface Iso8583RouteOverride {
-  /** Endpoint host, overriding ACQUIRER_HOST (per-scheme sponsor route). */
-  host?: string;
-  /** Endpoint port, overriding ACQUIRER_PORT. */
-  port?: number;
-  /** Request timeout in ms, overriding ACQUIRER_TIMEOUT_MS. */
-  timeoutMs?: number;
-  /** Framing mode for this route, overriding ISO8583_HEADER. */
-  header?: Iso8583HeaderMode;
-  /** Live-socket cache key — the scheme route this link serves (e.g. "VISA"). */
-  key?: string;
-  /** MAC data element for this route (64 primary, 128 secondary). */
-  macField?: number;
-}
+import { createIso8583MacEngine } from './iso8583.security';
 
 export class Iso8583AcquirerClient {
   private readonly tcp: IsoTcpClient;
-  private readonly macEngine: Iso8583MacEngine;
-  private readonly codec: Iso8583Codec;
+  private readonly macEngine = createIso8583MacEngine({
+    keyMode: acquirerConfig.keyMode,
+    macAlgorithm: acquirerConfig.macAlgorithm,
+    macKey: acquirerConfig.macKey,
+    dukptIpek: acquirerConfig.dukptIpek,
+    dukptKsn: acquirerConfig.dukptKsn,
+    macField: acquirerConfig.macField,
+    macLength: acquirerConfig.macLength,
+  });
+  private readonly codec = new Iso8583Codec(undefined, {
+    framing: iso8583HeaderFraming,
+    mac: {
+      field: acquirerConfig.macField ?? 64,
+      calculate: (messageWithoutMac) => this.macEngine.calculateMac(messageWithoutMac, this.macEngine.getKeyProvider().getMacKey()),
+      verify: (messageWithoutMac, receivedMac) => this.macEngine.verifyMac(messageWithoutMac, this.macEngine.getKeyProvider().getMacKey(), receivedMac),
+    },
+    macEngine: this.macEngine,
+    keyProvider: this.macEngine.getKeyProvider(),
+  });
 
-  constructor(route: Iso8583RouteOverride = {}) {
-    const host = route.host || acquirerConfig.host;
-    const port = route.port || acquirerConfig.port;
-    if (!host || !port) {
+  constructor() {
+    if (!acquirerConfig.host || !acquirerConfig.port) {
       throw new Error('ACQUIRER_HOST and ACQUIRER_PORT are required for ISO8583');
     }
-
-    const macField = route.macField ?? acquirerConfig.macField ?? 64;
-
-    this.macEngine = createIso8583MacEngine({
-      keyMode: acquirerConfig.keyMode,
-      macAlgorithm: acquirerConfig.macAlgorithm,
-      macKey: acquirerConfig.macKey,
-      dukptIpek: acquirerConfig.dukptIpek,
-      dukptKsn: acquirerConfig.dukptKsn,
-      macField,
-      macLength: acquirerConfig.macLength,
-    });
-
-    this.codec = new Iso8583Codec(undefined, {
-      framing: iso8583HeaderFraming,
-      mac: {
-        field: macField,
-        calculate: (messageWithoutMac) => this.macEngine.calculateMac(messageWithoutMac, this.macEngine.getKeyProvider().getMacKey()),
-        verify: (messageWithoutMac, receivedMac) => this.macEngine.verifyMac(messageWithoutMac, this.macEngine.getKeyProvider().getMacKey(), receivedMac),
-      },
-      macEngine: this.macEngine,
-      keyProvider: this.macEngine.getKeyProvider(),
-    });
-
-    this.tcp = new IsoTcpClient(
-      host,
-      port,
-      route.timeoutMs ?? acquirerConfig.timeoutMs,
-      route.key ?? `${host}:${port}`,
-      route.header,
-    );
+    this.tcp = new IsoTcpClient(acquirerConfig.host, acquirerConfig.port, acquirerConfig.timeoutMs);
   }
 
   async authorize(req: AcquirerAuthRequest): Promise<AcquirerAuthResponse> {
     const response = this.codec.unpack(await this.tcp.send(this.codec.pack(this.buildAuth(req))));
     const responseCode = String(response.fields[39] || '96');
-    const info = getResponseCodeInfo(responseCode);
-    const success = info.action === 'APPROVE';
-    const partialApproval = info.action === 'PARTIAL';
-    const referral = info.action === 'REFERRAL';
+    const success = responseCode === '00';
+    const referral = responseCode === '01' || responseCode === '02';
+    const partialApproval = responseCode === '10';
     const approvedAmountMinor = partialApproval ? this.amountFromField(response.fields[4]) : undefined;
     return {
       success,
@@ -86,9 +53,13 @@ export class Iso8583AcquirerClient {
       approvedAmountMinor,
       authRef: this.stringField(response.fields[37]),
       approvalCode: this.stringField(response.fields[38]),
-      message: getCardholderMessage(responseCode),
-      retryable: info.retryable,
-      issuerRetry: info.issuerRetry,
+      message: success
+        ? 'Approved'
+        : referral
+          ? 'Call issuer'
+          : partialApproval
+            ? 'Partial approval'
+            : this.declineMessage(responseCode),
     };
   }
 
@@ -155,6 +126,17 @@ export class Iso8583AcquirerClient {
     if (value === undefined) return undefined;
     const amount = Number(Buffer.isBuffer(value) ? value.toString('ascii') : value);
     return Number.isSafeInteger(amount) ? amount : undefined;
+  }
+
+  private declineMessage(responseCode: string): string {
+    switch (responseCode) {
+      case '05': return 'Do not honor';
+      case '51': return 'Insufficient funds';
+      case '54': return 'Expired card';
+      case '57': return 'Transaction not permitted';
+      case '91': return 'Issuer unavailable';
+      default: return 'Declined';
+    }
   }
 
   private buildCapture(req: AcquirerCaptureRequest): IsoMessage {

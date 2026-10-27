@@ -1,15 +1,5 @@
 import { db } from "../../config/db";
 
-const DEFAULT_TERMINAL_SETTINGS = {
-  offlineMode: true,
-  autoUpdate: false,
-  features: {
-    manualEntry: false,
-    refunds: false,
-    tips: false
-  }
-};
-
 export class SettingsService {
   async getSettings(merchantId: string) {
     try {
@@ -30,15 +20,6 @@ export class SettingsService {
           banking: extended.banking || {},
           notifications: extended.notifications || { email: false, sms: false, alerts: {} },
           security: extended.security || { twoFactorEnabled: false, activeDevices: [] },
-          terminal: {
-            ...DEFAULT_TERMINAL_SETTINGS,
-            ...(extended.terminal || {}),
-            autoUpdate: false,
-            features: {
-              ...DEFAULT_TERMINAL_SETTINGS.features,
-              ...(extended.terminal?.features || {})
-            }
-          },
           paymentConfig
         };
       }
@@ -56,8 +37,7 @@ export class SettingsService {
         support_email: "support@demo.com",
         paypal_client_id: "AZ78gCo54gfr-itujBtnWMJyFYAYsrONPvIDRJq252pL_kcm3PWt-uS2rRwNTJFhZRRIDc0QRPS0QBWk",
         paypal_client_secret: "EAnAkvmZ4OeAqgr4fTN7gqrc0wiDpovMP7Uni4bOu5Zoh8sDgLhbYZ9Lv4DxJAEr0aFtDJIY0Xj_n9ny",
-        terminal: DEFAULT_TERMINAL_SETTINGS,
-        features: DEFAULT_TERMINAL_SETTINGS.features,
+        features: { manualEntry: false, refunds: false, tips: false },
         business: {},
         banking: {},
         notifications: {},
@@ -71,37 +51,24 @@ export class SettingsService {
       const { 
         api_key, webhook_url, test_mode, merchant_name, support_email, 
         paypal_client_id, paypal_client_secret, features,
-        business, banking, notifications,         security, paymentConfig, terminal
+        business, banking, notifications, security, paymentConfig
       } = data;
       
       const featuresJson = JSON.stringify(features || { manualEntry: false, refunds: false, tips: false });
-
-      // Check if exists
-      const check = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = $1", [merchantId]);
       
       // Store complex objects in extended_settings
-      const existingExtended = check.rows.length > 0 && check.rows[0].extended_settings
-        ? JSON.parse(check.rows[0].extended_settings)
-        : {};
-      const terminalSettings = terminal || existingExtended.terminal || DEFAULT_TERMINAL_SETTINGS;
       const extendedSettings = {
         business: business || {},
         banking: banking || {},
         notifications: notifications || {},
-        security: security || {},
-        terminal: {
-          ...DEFAULT_TERMINAL_SETTINGS,
-          ...terminalSettings,
-          autoUpdate: false,
-          features: {
-            ...DEFAULT_TERMINAL_SETTINGS.features,
-            ...(terminalSettings.features || {})
-          }
-        }
+        security: security || {}
       };
       const extendedJson = JSON.stringify(extendedSettings);
       
       const paymentConfigJson = JSON.stringify(paymentConfig || []);
+
+      // Check if exists
+      const check = await db.query("SELECT * FROM merchant_settings WHERE merchant_id = $1", [merchantId]);
       
       if (check.rows.length === 0) {
         // Insert if missing
@@ -121,31 +88,16 @@ export class SettingsService {
         RETURNING *
       `, [merchantId, api_key, webhook_url, test_mode ? 1 : 0, merchant_name, support_email, paypal_client_id, paypal_client_secret, featuresJson, extendedJson, paymentConfigJson]);
       
-      if (!res.rows || res.rows.length === 0) {
-        return {
-          merchant_id: merchantId,
-          ...data,
-          features: features || {},
-          business: business || {},
-          banking: banking || {},
-          notifications: notifications || {},
-          security: security || {},
-          terminal: extendedSettings.terminal,
-          paymentConfig: paymentConfig || []
-        };
-      }
-
       const row = res.rows[0];
       const extended = row.extended_settings ? JSON.parse(row.extended_settings) : {};
       
       return { 
         ...row, 
-        features: JSON.parse(row.features || '{}'),
-        business: extended.business || {},
-        banking: extended.banking || {},
-        notifications: extended.notifications || {},
-        security: extended.security || {},
-        terminal: extended.terminal || DEFAULT_TERMINAL_SETTINGS,
+        features: JSON.parse(row.features),
+        business: extended.business,
+        banking: extended.banking,
+        notifications: extended.notifications,
+        security: extended.security,
         paymentConfig: row.payment_config ? JSON.parse(row.payment_config) : []
       };
     } catch (e) {

@@ -13,7 +13,6 @@
 
 import axios from 'axios';
 import { acquirerConfig } from '../../config/acquirer';
-import { PspAcquirerClient } from './PspAcquirerClient';
 import type {
   IAcquirerClient,
   AcquirerAuthRequest,
@@ -52,10 +51,10 @@ export class HttpAcquirerClient implements IAcquirerClient {
 
   // ── Authorize ───────────────────────────────────────────────────────────────
   async authorize(req: AcquirerAuthRequest): Promise<AcquirerAuthResponse> {
-    const url = `${this.baseUrl}/api/vault/card/authorize`;
+    const url = `${this.baseUrl}/card/authorize`;
 
     try {
-      const res = await axios.post(url, {
+      const payload: Record<string, any> = {
         merchantAccount: req.merchantAccount,
         amountMinor:     req.amountMinor,
         currency:        req.currency,
@@ -67,7 +66,12 @@ export class HttpAcquirerClient implements IAcquirerClient {
         stan:            req.stan,
         terminalId:      req.terminalId,
         posEntryMode:    req.posEntryMode,
-      }, { timeout: this.timeout, headers: this.headers() });
+      };
+      if (req.processingCode) payload.processingCode = req.processingCode;
+      if (req.posCondition)   payload.posCondition   = req.posCondition;
+      if (req.mti)            payload.mti            = req.mti;
+
+      const res = await axios.post(url, payload, { timeout: this.timeout, headers: this.headers() });
 
       const data = res.data || {};
       const rc   = String(data.responseCode || data.response_code || '96');
@@ -80,9 +84,9 @@ export class HttpAcquirerClient implements IAcquirerClient {
         authRef:      data.authRef       || data.auth_ref       || data.reference,
         approvalCode: data.approvalCode  || data.approval_code  || data.authCode,
         message:      data.message       || data.description,
-        fundsType:    data.fundsType     || data.funds_type,
-        cardType:     data.cardType      || data.card_type,
         raw:          data,
+        mti:          data.mti           || data.response_mti,
+        rrn:          data.rrn           || data.retrievalReferenceNumber || data.de37,
       };
     } catch (err: any) {
       const data = err?.response?.data || {};
@@ -93,16 +97,18 @@ export class HttpAcquirerClient implements IAcquirerClient {
         status:       'Declined',
         message:      data.message || err.message || 'Acquirer unreachable',
         raw:          data,
+        mti:          data.mti,
+        rrn:          data.rrn,
       };
     }
   }
 
   // ── Capture ─────────────────────────────────────────────────────────────────
   async capture(req: AcquirerCaptureRequest): Promise<AcquirerCaptureResponse> {
-    const url = `${this.baseUrl}/api/vault/card/capture`;
+    const url = `${this.baseUrl}/card/capture`;
 
     try {
-      const res = await axios.post(url, {
+      const payload: Record<string, any> = {
         merchantAccount:        req.merchantAccount,
         amountMinor:            req.amountMinor,
         currency:               req.currency,
@@ -110,7 +116,13 @@ export class HttpAcquirerClient implements IAcquirerClient {
         authorizationReference: req.authRef,
         stan:                   req.stan,
         terminalId:             req.terminalId,
-      }, { timeout: this.timeout, headers: this.headers() });
+      };
+      if (req.processingCode) payload.processingCode = req.processingCode;
+      if (req.posCondition)   payload.posCondition   = req.posCondition;
+      if (req.mti)            payload.mti            = req.mti;
+      if (req.batchId)        payload.batchId        = req.batchId;
+
+      const res = await axios.post(url, payload, { timeout: this.timeout, headers: this.headers() });
 
       const data = res.data || {};
       const rc   = String(data.responseCode || '96');
@@ -123,6 +135,9 @@ export class HttpAcquirerClient implements IAcquirerClient {
         captureRef:   data.captureRef || data.capture_ref || data.reference,
         message:      data.message,
         raw:          data,
+        mti:          data.mti || data.response_mti,
+        rrn:          data.rrn || data.retrievalReferenceNumber,
+        batchRef:     data.batchRef || data.batch_ref,
       };
     } catch (err: any) {
       const data = err?.response?.data || {};
@@ -132,13 +147,16 @@ export class HttpAcquirerClient implements IAcquirerClient {
         status:       'Declined',
         message:      data.message || err.message || 'Capture failed',
         raw:          data,
+        mti:          data.mti,
+        rrn:          data.rrn,
+        batchRef:     data.batchRef,
       };
     }
   }
 
   // ── Reverse ─────────────────────────────────────────────────────────────────
   async reverse(req: AcquirerReversalRequest): Promise<AcquirerReversalResponse> {
-    const url = `${this.baseUrl}/api/vault/card/reverse`;
+    const url = `${this.baseUrl}/card/reverse`;
 
     try {
       const res = await axios.post(url, {
@@ -173,11 +191,6 @@ export class HttpAcquirerClient implements IAcquirerClient {
 let _client: HttpAcquirerClient | null = null;
 
 export function getAcquirerClient(): IAcquirerClient {
-  // The PSP is the only transport that collects real funds, so it wins over
-  // both the local vault-bank pipe and the ISO 8583 link.
-  if (acquirerConfig.pspBaseUrl) {
-    return new PspAcquirerClient();
-  }
   if ((process.env.ACQUIRER_PROTOCOL || '').toLowerCase() === 'iso8583-tcp') {
     const { VaultBankAcquirerClient } = require('../../domain/payments/acquirer/vault-bank-acquirer.client');
     return new VaultBankAcquirerClient();

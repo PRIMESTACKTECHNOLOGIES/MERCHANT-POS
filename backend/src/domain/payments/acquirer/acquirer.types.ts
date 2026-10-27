@@ -21,10 +21,6 @@ export interface AcquirerAuthResponse {
   authRef?: string;
   approvalCode?: string;
   message?: string;
-  /** True if the same transaction may be retried (system error, not a hard decline) */
-  retryable?: boolean;
-  /** True if the cardholder may retry with the same card at a later time */
-  issuerRetry?: boolean;
 }
 
 export interface AcquirerCaptureRequest {

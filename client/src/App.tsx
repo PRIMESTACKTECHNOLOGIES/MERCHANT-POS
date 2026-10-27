@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { OverviewPage } from "./pages/OverviewPage";
-import { NotificationProvider } from "./contexts/NotificationProvider";
+import { NotificationProvider } from "./contexts/NotificationContext";
 import { TerminalsPage } from "./pages/TerminalsPage";
 import { MerchantProfilesPage } from "./pages/MerchantProfilesPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
@@ -20,7 +20,6 @@ import { WalletTransferPage } from "./pages/WalletTransferPage";
 import { VerifyTransactionPage } from "./pages/VerifyTransactionPage";
 import { HotWalletPage } from "./pages/HotWalletPage";
 import { MerchantWalletPage } from "./pages/MerchantWalletPage";
-import { CustomerFundsPage } from "./pages/CustomerFundsPage";
 import { VaultDashboardPage } from "./pages/VaultDashboardPage";
 import CustomerWalletPage from "./pages/CustomerWalletPage";
 import CustomerWalletProfilePage from "./pages/CustomerWalletProfilePage";
@@ -189,7 +188,6 @@ function App() {
           <Route path="/customer-wallet/:customerId" element={<CustomerWalletPage />} />
           <Route path="/customer-wallet-profile/:customerId" element={<CustomerWalletProfilePage />} />
           <Route path="/hot-wallet" element={<HotWalletPage />} />
-          <Route path="/customer-funds" element={<CustomerFundsPage />} />
           <Route path="/merchant-wallet" element={<MerchantWalletPage />} />
           <Route path="/wallet" element={<Navigate to="/wallets" replace />} />
           <Route path="/customer-wallet" element={<Navigate to="/wallets" replace />} />

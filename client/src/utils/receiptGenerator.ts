@@ -14,23 +14,7 @@ interface Transaction {
   customer_id?: string;
   customer_name?: string;
   customer_email?: string;
-  metadata?: {
-    pan_masked?: string;
-    auth_code?: string;
-    crypto_amount?: string | number;
-    crypto_symbol?: string;
-    network?: string;
-    destination_address?: string;
-    tx_hash?: string;
-    bank_name?: string;
-    account_number?: string;
-    reference?: string;
-    from_customer?: string;
-    to_customer?: string;
-    balance_before?: number;
-    balance_after?: number;
-    fee?: number;
-  };
+  metadata?: any;
 }
 
 interface Customer {

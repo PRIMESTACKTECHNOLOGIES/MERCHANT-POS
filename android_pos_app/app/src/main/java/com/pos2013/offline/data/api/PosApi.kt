@@ -221,7 +221,6 @@ data class PosChargeRequest(
     val stan: String? = null,
     val customerId: String? = null,       // ← REQUIRED for real wallet credit
     val protocol: String? = null,         // ← "101.1" | "101.6" | "201.3"
-    val entryMode: String? = null,        // ← "CHIP_NFC" | "MANUAL" | "CHIP"
     val cardholderName: String? = null    // ← customer name for receipt
 )
 

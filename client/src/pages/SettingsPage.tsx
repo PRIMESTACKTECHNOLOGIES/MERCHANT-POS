@@ -76,16 +76,6 @@ interface FullSettings {
   terminal: TerminalSettings;
 }
 
-const DEFAULTS: FullSettings = {
-  profile: { name: "", displayName: "", email: "", phone: "", country: "", timezone: "", companyName: "", address: "", businessType: "", avatarUrl: "", theme: "light", language: "en" },
-  business: { legalName: "", licenseNumber: "", taxId: "", country: "", industry: "" },
-  banking: { holderName: "", bankName: "", routingNumber: "", accountNumber: "", swiftCode: "", payoutCurrency: "USD", payoutFrequency: "DAILY" },
-  security: { twoFactorEnabled: false, lastLogin: new Date().toISOString(), activeDevices: [] },
-  notifications: { email: true, sms: false, alerts: { failedBatches: true, highValue: true, offline: true, settlement: true } },
-  developer: { apiKey: "", webhookUrl: "" },
-  terminal: { offlineMode: true, autoUpdate: false, features: { manualEntry: true, refunds: false, tips: false } },
-};
-
 const Icons = {
   User: () => <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>,
   Building: () => <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>,
@@ -130,7 +120,7 @@ const FieldRow = ({ label, value, subtext }: { label: string; value: React.React
   </div>
 );
 
-const Toggle = ({ checked, onChange, label, description, disabled = false }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description?: string; disabled?: boolean }) => (
+const Toggle = ({ checked, onChange, label, description }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description?: string }) => (
   <div className="flex items-center justify-between py-3">
     <div>
       <div className="text-sm font-medium text-gray-900">{label}</div>
@@ -138,8 +128,7 @@ const Toggle = ({ checked, onChange, label, description, disabled = false }: { c
     </div>
     <button 
       onClick={() => onChange(!checked)}
-      disabled={disabled}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${checked ? 'bg-blue-600' : 'bg-gray-200'} ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${checked ? 'bg-blue-600' : 'bg-gray-200'}`}
     >
       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
     </button>
@@ -172,7 +161,7 @@ const SettingsDrawer = ({
   onClose: () => void; 
   title: string; 
   children: React.ReactNode;
-  onSave?: () => void | Promise<void>;
+  onSave?: () => void;
 }) => {
   if (!isOpen) return null;
   return (
@@ -190,7 +179,7 @@ const SettingsDrawer = ({
         </div>
         <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 rounded-lg transition-colors">Cancel</button>
-          <button onClick={async () => { await onSave?.(); onClose(); }} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors">Save Changes</button>
+          <button onClick={() => { onSave?.(); onClose(); }} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors">Save Changes</button>
         </div>
       </div>
     </div>
@@ -212,7 +201,7 @@ const Input = ({ label, className = "", ...props }: InputProps) => (
 );
 
 export const SettingsPage = () => {
-  const [settings, setSettings] = useState<FullSettings>(DEFAULTS);
+  const [settings, setSettings] = useState<FullSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -226,12 +215,6 @@ export const SettingsPage = () => {
 
   const [apiKeyRevealed, setApiKeyRevealed] = useState(false);
   const [showAllSessions, setShowAllSessions] = useState(false);
-
-  // ── Safe derived views — never crash on null/undefined terminal or notifications ──
-  const terminal = settings?.terminal ?? DEFAULTS.terminal;
-  const terminalFeatures = terminal?.features ?? DEFAULTS.terminal.features;
-  const notifications = settings?.notifications ?? DEFAULTS.notifications;
-  const notificationAlerts = notifications?.alerts ?? DEFAULTS.notifications.alerts;
 
   const handlePasswordChange = async () => {
     if (!oldPassword || !newPassword || !confirmPassword) {
@@ -309,8 +292,8 @@ export const SettingsPage = () => {
           country: profileData.country || "",
           timezone: profileData.timezone || "",
           companyName: profileData.company || "",
-          address: profileData.address || "",
-          businessType: profileData.business_type || profileData.businessType || "",
+          address: "",
+          businessType: "",
           avatarUrl: profileData.avatar_url || "",
           theme: profileData.theme_preference || "light",
           language: profileData.language_preference || "en"
@@ -361,11 +344,11 @@ export const SettingsPage = () => {
             },
             terminal: {
                 offlineMode: settingsData.terminal?.offlineMode ?? settingsData.offline_mode ?? true,
-                autoUpdate: settingsData.terminal?.autoUpdate ?? false,
+                autoUpdate: settingsData.terminal?.autoUpdate ?? settingsData.auto_update ?? true,
                 features: {
-                    manualEntry: true,
-                    refunds: settingsData.terminal?.features?.refunds ?? false,
-                    tips: settingsData.terminal?.features?.tips ?? false
+                    manualEntry: settingsData.terminal?.features?.manualEntry ?? settingsData.features?.manualEntry ?? false,
+                    refunds: settingsData.terminal?.features?.refunds ?? settingsData.features?.refunds ?? true,
+                    tips: settingsData.terminal?.features?.tips ?? settingsData.features?.tips ?? true
                 }
             }
         };
@@ -373,8 +356,6 @@ export const SettingsPage = () => {
         setSettings(frontendSettings);
       } catch (e) {
         console.error("Failed to load profile from API", e);
-        // Fall back to safe defaults so page is never blank
-        setSettings(prev => prev && prev.profile ? prev : DEFAULTS);
       } finally {
         setLoading(false);
       }
@@ -385,6 +366,12 @@ export const SettingsPage = () => {
 
   const handleSave = async () => {
     if (!settings) return;
+    
+    if (!settings.profile.name || !settings.profile.name.trim()) {
+        setMsg({ text: "Full name is required", type: 'error' });
+        setTimeout(() => setMsg(null), 3000);
+        return;
+    }
 
     setSaving(true);
     
@@ -398,8 +385,6 @@ export const SettingsPage = () => {
             company: (settings.profile.companyName || "").trim(),
             email: (settings.profile.email || "").trim(),
             avatar_url: (settings.profile.avatarUrl || "").trim(),
-            address: (settings.profile.address || "").trim(),
-            business_type: (settings.profile.businessType || "").trim(),
             theme_preference: settings.profile.theme,
             language_preference: settings.profile.language
         });
@@ -409,63 +394,11 @@ export const SettingsPage = () => {
             webhook_url: settings.developer.webhookUrl,
             merchant_name: settings.profile.name,
             support_email: settings.profile.email,
-            features: { manualEntry: true, refunds: terminalFeatures.refunds ?? false, tips: terminalFeatures.tips ?? false },
             business: settings.business,
             banking: settings.banking,
             notifications: settings.notifications,
-            terminal: { ...settings.terminal, features: { ...(settings.terminal?.features || {}), manualEntry: true } }
+            terminal: settings.terminal
         });
-
-        try {
-          const [freshProfile, freshSettings] = await Promise.all([
-            getProfile().catch(() => null),
-            fetchSettings().catch(() => null),
-          ]);
-          if (freshProfile) {
-            setSettings(prev => prev ? ({
-              ...prev,
-              profile: {
-                ...prev.profile,
-                name: freshProfile.full_name || freshProfile.display_name || prev.profile.name,
-                displayName: freshProfile.display_name || prev.profile.displayName,
-                email: freshProfile.email || prev.profile.email,
-                phone: freshProfile.phone || prev.profile.phone,
-                country: freshProfile.country || prev.profile.country,
-                timezone: freshProfile.timezone || prev.profile.timezone,
-                companyName: freshProfile.company || prev.profile.companyName,
-                address: freshProfile.address || prev.profile.address,
-                businessType: freshProfile.business_type || prev.profile.businessType,
-                avatarUrl: freshProfile.avatar_url || prev.profile.avatarUrl,
-                theme: freshProfile.theme_preference || prev.profile.theme,
-                language: freshProfile.language_preference || prev.profile.language,
-              }
-            }) : prev);
-          }
-          if (freshSettings) {
-            setSettings(prev => prev ? ({
-              ...prev,
-              business: freshSettings.business || prev.business,
-              banking: freshSettings.banking || prev.banking,
-              notifications: freshSettings.notifications || prev.notifications,
-              terminal: {
-                ...(prev.terminal || {}),
-                ...(freshSettings.terminal || {}),
-                features: {
-                  manualEntry: true,
-                  refunds: freshSettings.terminal?.features?.refunds ?? prev.terminal?.features?.refunds ?? false,
-                  tips: freshSettings.terminal?.features?.tips ?? prev.terminal?.features?.tips ?? false,
-                }
-              },
-              developer: {
-                ...prev.developer,
-                apiKey: freshSettings.api_key ?? prev.developer.apiKey,
-                webhookUrl: freshSettings.webhook_url ?? prev.developer.webhookUrl,
-              }
-            }) : prev);
-          }
-        } catch (_e) {
-          // Best effort reload; save itself already succeeded.
-        }
 
         setMsg({ text: "Settings saved successfully", type: 'success' });
     } catch (e: any) {
@@ -477,9 +410,8 @@ export const SettingsPage = () => {
     setTimeout(() => setMsg(null), 3000);
   };
 
-  const activeDevices = settings?.security?.activeDevices ?? [];
-  const visibleSessions = showAllSessions ? activeDevices : activeDevices.slice(0, 3);
-  const hasMoreSessions = activeDevices.length > 3;
+  const visibleSessions = settings ? (showAllSessions ? settings.security.activeDevices : settings.security.activeDevices.slice(0, 3)) : [];
+  const hasMoreSessions = !!settings && settings.security.activeDevices.length > 3;
 
   if (loading) return (
     <div className="flex items-center justify-center h-full min-h-[400px]">
@@ -487,6 +419,26 @@ export const SettingsPage = () => {
         <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
         <div className="text-sm text-gray-500 font-medium">Loading Merchant Profile...</div>
       </div>
+    </div>
+  );
+
+  if (!settings) return (
+    <div className="flex flex-col items-center justify-center h-full min-h-[400px] space-y-4">
+      <div className="text-red-500 bg-red-50 p-4 rounded-full">
+         <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+      </div>
+      <div className="text-center">
+        <h3 className="text-lg font-bold text-gray-900">Unable to Load Settings</h3>
+        <p className="text-gray-500 mt-1 max-w-sm mx-auto">
+          We encountered an error loading your merchant profile. Please try refreshing the page or logging in again.
+        </p>
+      </div>
+      <button 
+        onClick={() => window.location.reload()}
+        className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium shadow-sm hover:bg-blue-700 transition-colors"
+      >
+        Retry Connection
+      </button>
     </div>
   );
 
@@ -668,70 +620,72 @@ export const SettingsPage = () => {
              <div className="divide-y divide-gray-50">
                <Toggle 
                  label="Offline Mode" 
-                 description="Allow eligible transactions to be queued while the provider is unavailable. They remain pending until provider capture."
-                 checked={terminal.offlineMode}
-                 onChange={(offlineMode) => setSettings(prev => ({
-                   ...prev,
-                   terminal: { ...(prev.terminal ?? DEFAULTS.terminal), offlineMode }
-                 }))}
+                 description="Allow processing when internet is down"
+                 checked={settings.terminal.offlineMode} 
+                 onChange={(v) => setSettings({...settings, terminal: {...settings.terminal, offlineMode: v}})} 
                />
                <Toggle 
                  label="Auto-Update Firmware" 
-                 description="Unavailable: this build has no firmware update agent."
-                 checked={terminal.autoUpdate}
-                 onChange={(autoUpdate) => setSettings(prev => ({
-                   ...prev,
-                   terminal: { ...(prev.terminal ?? DEFAULTS.terminal), autoUpdate }
-                 }))}
-                 disabled
+                 description="Install updates between 2am-4am"
+                 checked={settings.terminal.autoUpdate} 
+                 onChange={(v) => setSettings({...settings, terminal: {...settings.terminal, autoUpdate: v}})} 
                />
                <div className="pt-4">
                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Allowed Features</div>
                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm text-gray-700 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">
-                      <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                      <span className="font-medium text-green-800">Manual Card Entry — ALWAYS ENABLED</span>
-                      <span className="ml-auto text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded-full">ON</span>
-                    </div>
                     <label className="flex items-center gap-2 text-sm text-gray-700">
                       <input 
                         type="checkbox" 
-                        checked={terminalFeatures.refunds} 
-                        onChange={(e) => setSettings(prev => ({
-                          ...prev, 
+                        checked={settings.terminal.features.manualEntry} 
+                        onChange={(e) => setSettings({
+                          ...settings, 
                           terminal: {
-                            ...(prev.terminal ?? DEFAULTS.terminal), 
+                            ...settings.terminal, 
                             features: {
-                              ...(prev.terminal?.features ?? DEFAULTS.terminal.features), 
-                              refunds: e.target.checked,
-                              manualEntry: true,
+                              ...settings.terminal.features, 
+                              manualEntry: e.target.checked
                             }
                           }
-                        }))}
+                        })}
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" 
-                        disabled
                       />
-                      Process Refunds <span className="text-xs text-gray-400">(No provider refund handler configured)</span>
+                      Manual Card Entry
                     </label>
                     <label className="flex items-center gap-2 text-sm text-gray-700">
                       <input 
                         type="checkbox" 
-                        checked={terminalFeatures.tips} 
-                        onChange={(e) => setSettings(prev => ({
-                          ...prev, 
+                        checked={settings.terminal.features.refunds} 
+                        onChange={(e) => setSettings({
+                          ...settings, 
                           terminal: {
-                            ...(prev.terminal ?? DEFAULTS.terminal), 
+                            ...settings.terminal, 
                             features: {
-                              ...(prev.terminal?.features ?? DEFAULTS.terminal.features), 
-                              tips: e.target.checked,
-                              manualEntry: true,
+                              ...settings.terminal.features, 
+                              refunds: e.target.checked
                             }
                           }
-                        }))}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        disabled
+                        })}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" 
                       />
-                      Accept Tips <span className="text-xs text-gray-400">(No tip amount/capture flow implemented)</span>
+                      Process Refunds
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <input 
+                        type="checkbox" 
+                        checked={settings.terminal.features.tips} 
+                        onChange={(e) => setSettings({
+                          ...settings, 
+                          terminal: {
+                            ...settings.terminal, 
+                            features: {
+                              ...settings.terminal.features, 
+                              tips: e.target.checked
+                            }
+                          }
+                        })}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" 
+                      />
+                      Accept Tips
                     </label>
                  </div>
                </div>
@@ -767,8 +721,8 @@ export const SettingsPage = () => {
                             onClick={async () => {
                                 try {
                                     await revokeSession(device.id);
-                                    const newDevices = activeDevices.filter(d => d.id !== device.id);
-                                    setSettings(prev => ({...prev, security: {...(prev.security ?? DEFAULTS.security), activeDevices: newDevices}}));
+                                    const newDevices = settings.security.activeDevices.filter(d => d.id !== device.id);
+                                    setSettings({...settings, security: {...settings.security, activeDevices: newDevices}});
                                     setMsg({ text: "Session revoked", type: 'success' });
                                 } catch (e) {
                                     setMsg({ text: "Failed to revoke session", type: 'error' });
@@ -781,7 +735,7 @@ export const SettingsPage = () => {
                        )}
                      </div>
                    ))}
-                   {activeDevices.length === 0 && (
+                   {settings.security.activeDevices.length === 0 && (
                        <div className="text-sm text-gray-500 text-center py-2">No active sessions found.</div>
                    )}
                    {hasMoreSessions && (
@@ -789,7 +743,7 @@ export const SettingsPage = () => {
                        onClick={() => setShowAllSessions(!showAllSessions)}
                        className="w-full text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
                      >
-                       {showAllSessions ? "Show fewer sessions" : `View more sessions (${activeDevices.length - 3} more)`}
+                       {showAllSessions ? "Show fewer sessions" : `View more sessions (${settings.security.activeDevices.length - 3} more)`}
                      </button>
                    )}
                  </div>
@@ -807,21 +761,20 @@ export const SettingsPage = () => {
              <div className="divide-y divide-gray-50">
                <Toggle 
                  label="Email Alerts" 
-                 checked={notifications.email} 
-                 onChange={(v) => setSettings(prev => ({...prev, notifications: {...(prev.notifications ?? DEFAULTS.notifications), email: v}}))} 
+                 checked={settings.notifications.email} 
+                 onChange={(v) => setSettings({...settings, notifications: {...settings.notifications, email: v}})} 
                />
                <Toggle 
                  label="SMS Alerts" 
-                 checked={notifications.sms} 
-                 onChange={(v) => setSettings(prev => ({...prev, notifications: {...(prev.notifications ?? DEFAULTS.notifications), sms: v}}))} 
+                 checked={settings.notifications.sms} 
+                 onChange={(v) => setSettings({...settings, notifications: {...settings.notifications, sms: v}})} 
                />
                <div className="pt-4">
                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Notify me when</div>
                  <div className="space-y-2">
-                    {Object.entries(notificationAlerts).map(([key, val]) => (
+                    {Object.entries(settings.notifications.alerts).map(([key, val]) => (
                       <label key={key} className="flex items-center gap-2 text-sm text-gray-700 capitalize">
-                        <input type="checkbox" checked={val}                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        disabled readOnly />
+                        <input type="checkbox" checked={val} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" readOnly />
                         {key.replace(/([A-Z])/g, ' $1').trim()}
                       </label>
                     ))}
@@ -912,18 +865,6 @@ export const SettingsPage = () => {
             value={settings.profile.companyName} 
             onChange={(e) => setSettings({...settings, profile: {...settings.profile, companyName: e.target.value}})}
           />
-          <Input 
-            label="Business Type" 
-            placeholder="Retail, E-commerce, Hospitality..."
-            value={settings.profile.businessType} 
-            onChange={(e) => setSettings({...settings, profile: {...settings.profile, businessType: e.target.value}})}
-          />
-          <Input 
-            label="Address" 
-            placeholder="Street, City, Country"
-            value={settings.profile.address} 
-            onChange={(e) => setSettings({...settings, profile: {...settings.profile, address: e.target.value}})}
-          />
         </div>
       </SettingsDrawer>
 
@@ -941,7 +882,7 @@ export const SettingsPage = () => {
           </div>
           <Input 
             label="Account Holder Name (Beneficiary)"
-            placeholder="Registered business name"
+            placeholder="PRIMESTACK TECHNOLOGIES LLC"
             value={settings.banking.holderName} 
             onChange={(e) => setSettings({...settings, banking: {...settings.banking, holderName: e.target.value}})} 
           />
@@ -959,6 +900,7 @@ export const SettingsPage = () => {
           />
           <Input 
             label="Account Number / IBAN"
+            placeholder="343612919064346"
             value={settings.banking.accountNumber} 
             onChange={(e) => setSettings({...settings, banking: {...settings.banking, accountNumber: e.target.value}})} 
           />
@@ -1098,7 +1040,7 @@ export const SettingsPage = () => {
           <div className="pt-6 border-t border-gray-100">
             <h3 className="text-sm font-bold text-gray-900 mb-3">Device Management</h3>
             <div className="space-y-3">
-               {activeDevices.map((device) => (
+               {settings.security.activeDevices.map((device) => (
                  <div key={device.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
                     <div className="flex items-center gap-3">
                       <div className="text-gray-400">
@@ -1119,8 +1061,8 @@ export const SettingsPage = () => {
                         onClick={async () => {
                           try {
                             await revokeSession(device.id);
-                            const newDevices = activeDevices.filter(d => d.id !== device.id);
-                            setSettings(prev => ({...prev, security: {...(prev.security ?? DEFAULTS.security), activeDevices: newDevices}}));
+                            const newDevices = settings.security.activeDevices.filter(d => d.id !== device.id);
+                            setSettings({...settings, security: {...settings.security, activeDevices: newDevices}});
                             setMsg({ text: "Session revoked", type: 'success' });
                           } catch {
                             setMsg({ text: "Failed to revoke session", type: 'error' });

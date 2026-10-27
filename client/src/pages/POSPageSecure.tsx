@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   chargePayment,
   fetchSettings,
@@ -9,6 +9,7 @@ import {
   topupWalletWithCard,
   saveOfflinePinSale,
   getOfflinePinSales,
+  syncOfflinePinSales,
   checkBackendHealth,
   type Customer,
 } from '../lib/api';
@@ -17,8 +18,6 @@ import { processEMVOffline, syncEMVTransactions } from '../lib/emv/emv-pos-bridg
 import { useToast } from '../components/ui/toastContext';
 import { CURRENCIES, getCurrency, getTerminalCurrency, setTerminalCurrency } from '../lib/currencies';
 
-type PosProtocol = 'NORMAL' | '101.1' | '101.6' | '201.3';
-
 interface TransactionRecord {
   localTxnId: string;
   stan: string;
@@ -26,28 +25,11 @@ interface TransactionRecord {
   cardLast4: string;
   entryMode: 'MANUAL' | 'NFC';
   status: 'PENDING' | 'SYNCED' | 'FAILED';
-  protocolVersion?: PosProtocol;
   channel?: 'ONLINE' | 'OFFLINE';
   settlementCode?: string;
   timestamp: number;
   error?: string;
 }
-
-const getReceiptOutcome = (transaction: TransactionRecord) => {
-  if (transaction.status === 'FAILED') {
-    return transaction.channel ? `${transaction.channel} · DECLINED` : 'DECLINED';
-  }
-  if (transaction.status === 'PENDING') {
-    return transaction.channel ? `${transaction.channel} · PENDING` : 'PENDING';
-  }
-  if (transaction.status === 'SYNCED' && transaction.channel === 'ONLINE') {
-    return 'ONLINE · PROVIDER APPROVED';
-  }
-  if (transaction.status === 'SYNCED' && transaction.channel === 'OFFLINE') {
-    return 'OFFLINE · SYNCED';
-  }
-  return 'SYNCED · CHANNEL UNKNOWN';
-};
 
 export const POSPageSecure = () => {
   const [amount, setAmount] = useState("0");
@@ -63,17 +45,7 @@ export const POSPageSecure = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [cardEntryMode, setCardEntryMode] = useState<'MANUAL' | 'NFC'>('MANUAL');
   const [forceOffline, setForceOffline] = useState(false);
-  const [terminalSettings, setTerminalSettings] = useState({
-    offlineMode: false,
-    manualEntry: false
-  });
-  const [nfcStatus, setNfcStatus] = useState({
-    enabled: false,
-    connected: false,
-    loading: true,
-    readerName: '',
-    error: '',
-  });
+  const [nfcStatus, setNfcStatus] = useState({ enabled: false, connected: false, loading: true });
   const [merchantConfig, setMerchantConfig] = useState({
     merchantId: 'MRC-1001',
     terminalId: 'WEB-TERMINAL',
@@ -97,17 +69,10 @@ export const POSPageSecure = () => {
     expiry: "", 
     cvv: "" 
   });
-  // EMV data (tag set incl. the ARQC) captured by the last NFC tap. Forwarded to
-  // the processor as field 55 so a contactless charge carries real card data.
-  const [nfcEmvData, setNfcEmvData] = useState<{ emv: Record<string, any>; tlvRaw: string | null } | null>(null);
   const [voiceAuth, setVoiceAuth] = useState(false);
   const [voiceAuthCode, setVoiceAuthCode] = useState("");
-  const [posProtocol, setPosProtocol] = useState<PosProtocol>('NORMAL');
-  // Set when a contactless tap must complete the sale automatically. A tap is
-  // expected to deduct, so the captured EMV card is charged without a second
-  // manual confirmation (protocols that need an authorization code still open the form).
-  const [autoChargeAfterTap, setAutoChargeAfterTap] = useState(false);
-
+  const [posProtocol, setPosProtocol] = useState<'NORMAL' | '101.1' | '101.6' | '201.3'>('NORMAL');
+  
   const { showToast } = useToast();
 
   const loadTransactions = useCallback(() => {
@@ -167,10 +132,6 @@ export const POSPageSecure = () => {
           support_email?: string;
           license_number?: string;
           tax_id?: string;
-          terminal?: {
-            offlineMode?: boolean;
-            features?: { manualEntry?: boolean };
-          };
           business?: {
             licenseNumber?: string;
             taxId?: string;
@@ -193,54 +154,21 @@ export const POSPageSecure = () => {
           licenseNumber: typedSettings.license_number || business?.licenseNumber || '',
           taxId: typedSettings.tax_id || business?.taxId || business?.tax_id || '',
         });
-        setTerminalSettings({
-          offlineMode: typedSettings.terminal?.offlineMode ?? false,
-          manualEntry: typedSettings.terminal?.features?.manualEntry ?? false
-        });
       }
     } catch (error) {
       console.warn('Using default merchant config', error);
     }
   };
 
-  // ── NFC reader status poll ────────────────────────────────────────────────
-  // The ACR122U is hot-pluggable, so the reader is re-checked continuously:
-  // plugging it in must flip the badge to "NFC Ready" without a page reload.
-  // A single transient API failure must not report the reader as unplugged,
-  // hence the failure counter before the status downgrades.
-  const nfcPollFailures = useRef(0);
-
-  const fetchNfcStatus = useCallback(async () => {
+  const fetchNfcStatus = async () => {
     try {
       const status = await getAcr122uStatus();
-      nfcPollFailures.current = 0;
-      setNfcStatus({
-        enabled: !!status.enabled,
-        connected: !!status.connected,
-        loading: false,
-        readerName: status.readerName || '',
-        error: status.error || '',
-      });
+      setNfcStatus({ enabled: !!status.enabled, connected: !!status.connected, loading: false });
     } catch (error) {
-      nfcPollFailures.current += 1;
-      if (nfcPollFailures.current >= 2) {
-        setNfcStatus(prev => ({
-          ...prev,
-          enabled: false,
-          connected: false,
-          loading: false,
-          error: 'NFC service unreachable',
-        }));
-      }
       console.warn('NFC status fetch failed', error);
+      setNfcStatus({ enabled: false, connected: false, loading: false });
     }
-  }, []);
-
-  useEffect(() => {
-    void fetchNfcStatus();
-    const interval = window.setInterval(() => { void fetchNfcStatus(); }, 3000);
-    return () => window.clearInterval(interval);
-  }, [fetchNfcStatus]);
+  };
 
   // Load merchant config and pending transactions on mount
   useEffect(() => {
@@ -267,6 +195,8 @@ export const POSPageSecure = () => {
       try { await checkBackendHealth(2500); setIsOnline(true); } catch { setIsOnline(false); }
     }, 10_000);
 
+    fetchNfcStatus();
+
     return () => {
       cancelled = true;
       window.clearInterval(h);
@@ -284,6 +214,19 @@ export const POSPageSecure = () => {
     showToast('Syncing pending data...', 'info');
     let synced = 0;
     const errors: string[] = [];
+
+    try {
+      const offlineResult = await syncOfflinePinSales();
+      if (offlineResult.synced > 0) {
+        synced += offlineResult.synced;
+      }
+      if (offlineResult.failed > 0) {
+        errors.push(`Offline PIN upload failed for ${offlineResult.failed}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(message || 'Offline PIN sync failed');
+    }
 
     try {
       const emvResult = await syncEMVTransactions(
@@ -317,13 +260,12 @@ export const POSPageSecure = () => {
 
   const buildReceiptText = (txn: TransactionRecord) => {
     const dt = new Date(txn.timestamp);
-    const statusLabel = txn.status === "SYNCED" && txn.channel === 'ONLINE'
-      ? 'PROVIDER APPROVED'
-      : txn.status;
+    const statusLabel = txn.status === "SYNCED" ? "APPROVED" : txn.status === "FAILED" ? "FAILED" : "PENDING";
+    const authMode = txn.status === "SYNCED" ? "ONLINE_APPROVED" : txn.status === "FAILED" ? "DECLINED" : "OFFLINE_PENDING";
     const entryMode = txn.entryMode || "MANUAL";
     const merchantId = merchantConfig.merchantId;
     const terminalId = merchantConfig.terminalId;
-    const currencyCode = getCurrency(currency).code;
+    const currency = "USD";
 
     const lines: string[] = [];
     const line = (s: string) => lines.push(s);
@@ -343,22 +285,21 @@ export const POSPageSecure = () => {
     if (merchantReceiptInfo.supportEmail) line(`Email: ${merchantReceiptInfo.supportEmail}`);
     line(`Date: ${dt.toLocaleDateString()} ${dt.toLocaleTimeString()}`);
     sep();
-    line(`Protocol: ${txn.protocolVersion || "NOT RECORDED"}`);
-    line(`Channel: ${txn.channel || "UNKNOWN"}`);
     line(`Txn ID: ${txn.localTxnId}`);
     line(`STAN: ${txn.stan}`);
+    line(`Channel: ${txn.channel || (txn.status === "SYNCED" ? "ONLINE" : "OFFLINE")}`);
     sep();
     line(`Card: **** **** **** ${txn.cardLast4}`);
     line(`Entry: ${entryMode}`);
-    line(`Outcome: ${getReceiptOutcome(txn)}`);
+    line(`Auth: ${authMode}`);
     sep();
-    line(`Amount: ${getCurrency(currency).symbol}${txn.amount.toFixed(getCurrency(currency).decimals)} ${currencyCode}`);
+    line(`Amount: $${txn.amount.toFixed(2)} ${currency}`);
     line(`Status: ${statusLabel}`);
     if (txn.settlementCode) {
-      if (txn.status === "SYNCED" && txn.channel === "ONLINE") {
+      if (txn.status === "SYNCED") {
         line(`Settlement: ${txn.settlementCode}`);
       } else if (txn.status === "PENDING") {
-        line(`Reference: ${txn.settlementCode}`);
+        line(`Offline Code: ${txn.settlementCode}`);
       } else {
         line(`Ref: ${txn.settlementCode}`);
       }
@@ -439,39 +380,22 @@ export const POSPageSecure = () => {
       return false;
     }
     
-    // A contactless tap supplies the expiry inside the chip data (field 55), and
-    // some cards expose it only in Track 2 — or not at all. The operator must
-    // never be asked to type an expiry for a tap, so the MM/YY check applies to
-    // typed expiry values and to non-tap flows only.
-    const tappedWithEmv = cardEntryMode === 'NFC' && !!nfcEmvData;
-    if (cardData.expiry) {
-      if (!cardData.expiry.match(/^\d{2}\/\d{2}$/)) {
-        showToast('Expiry must be in MM/YY format', 'error');
-        return false;
-      }
-
-      const [month, year] = cardData.expiry.split('/').map(Number);
-      const now = new Date();
-      const expiryDate = new Date(2000 + year, month - 1);
-
-      if (expiryDate < now) {
-        showToast('Card has expired', 'error');
-        return false;
-      }
-    } else if (!tappedWithEmv) {
+    if (!cardData.expiry.match(/^\d{2}\/\d{2}$/)) {
       showToast('Expiry must be in MM/YY format', 'error');
       return false;
     }
     
-    // A contactless tap carries no CVV — the reader-supplied EMV data (ARQC)
-    // replaces it, so the CVV check must not block a tap capture.
-    if (posProtocol !== '101.1' && cardEntryMode !== 'NFC' && cardData.cvv.length < 3) {
-      showToast(`CVV must be at least 3 digits for ${posProtocol === 'NORMAL' ? 'normal card transactions' : posProtocol}`, 'error');
+    const [month, year] = cardData.expiry.split('/').map(Number);
+    const now = new Date();
+    const expiryDate = new Date(2000 + year, month - 1);
+    
+    if (expiryDate < now) {
+      showToast('Card has expired', 'error');
       return false;
     }
-    // CVV-less tap captures are only valid when the reader actually supplied EMV data.
-    if (cardEntryMode === 'NFC' && !nfcEmvData) {
-      showToast('Tap the card on the reader first so the EMV data can be captured', 'error');
+    
+    if (posProtocol !== '101.1' && cardData.cvv.length < 3) {
+      showToast(`CVV must be at least 3 digits for ${posProtocol === 'NORMAL' ? 'normal card transactions' : posProtocol}`, 'error');
       return false;
     }
     if (posProtocol !== 'NORMAL' && !voiceAuthCode.trim()) {
@@ -488,93 +412,26 @@ export const POSPageSecure = () => {
       showToast('Enter a valid amount', 'error');
       return;
     }
-    if (!terminalSettings.manualEntry) {
-      showToast('Manual card entry is disabled in Terminal Settings', 'error');
-      return;
-    }
     setShowCardForm(true);
   };
 
   const handleReaderTap = async () => {
-    // The status badge can be up to one poll interval stale, and the backend
-    // re-enumerates a just-plugged reader, so a "not connected" badge warns but
-    // never blocks the capture attempt.
-    if (!nfcStatus.connected) {
-      showToast('NFC reader not connected yet — checking for a card anyway...', 'info');
-      void fetchNfcStatus();
-    }
-
     setLoading(true);
     try {
       const amountForNfc = Math.round(parseFloat(amount || '0') * Math.pow(10, getCurrency(currency).decimals));
       const result = await readAcr122uCard(amountForNfc, currency);
-
-      if (result?.success && result?.card?.emvReady) {
-        // Capture the tapped card: PAN from EMV tag 5A (fallback Track 2 / tag
-        // 57), expiry from tag 5F24 (YYMMDD → MM/YY). Without this the reader
-        // detected the card but the operator still had to type everything.
-        const emv: Record<string, any> = result.emv || {};
-        const panRaw: string = emv['5A'] || (emv['57'] ? String(emv['57']).split('D')[0] : '') || '';
-        const pan = panRaw.replace(/\s/g, '').replace(/F/gi, '').substring(0, 16);
-        if (!pan || pan.length < 13) {
-          showToast('NFC read did not return a usable card number', 'error');
-          return;
-        }
-
-        // Expiry sources, in order of authority:
-        //   1. 5F24 Application Expiration Date (YYMMDD) — often omitted on
-        //      contactless cards.
-        //   2. emv.expiry — the backend normalises 5F24 *or* Track 2 (57) to YYMM.
-        //   3. Track 2 Equivalent Data (57) itself, expiry sits after the "D".
-        // Without these fallbacks a contactless card that carries only Track 2
-        // left the field blank and failed the MM/YY check.
-        const track2Raw = String(emv['57'] || emv.track2 || '');
-        const track2Expiry = track2Raw.includes('D')
-          ? (track2Raw.split('D')[1] || '').replace(/[^0-9]/g, '').slice(0, 4)
-          : '';
-        const expiryDigits = String(emv['5F24'] || '').replace(/[^0-9]/g, '')
-          || String(emv.expiry || '').replace(/[^0-9]/g, '')
-          || track2Expiry;
-        // 5F24 is YYMMDD and emv.expiry is YYMM; the first 4 digits are YYMM either way.
-        const expiryYymm = expiryDigits.slice(0, 4);
-        const expiry = expiryYymm.length === 4
-          ? `${expiryYymm.substring(2, 4)}/${expiryYymm.substring(0, 2)}`
-          : '';
-
-        // Set the expiry the chip actually supplied — never keep a stale value
-        // typed for a previous card.
-        setCardData(prev => ({ ...prev, pan, expiry }));
-        setNfcEmvData({ emv, tlvRaw: result.tlvRaw || null });
+      if (result?.card?.uid && result?.card?.emvReady) {
+        showToast('Contactless EMV payment card detected. Enter any required card details and continue.', 'success');
         setCardEntryMode('NFC');
-        // A tap that produced no cryptogram cannot be authorized by any issuer,
-        // so say so rather than letting the operator believe the card was
-        // captured and the money is coming.
-        if (result.card?.cryptogramError) {
-          showToast(
-            `Card read, but GENERATE AC returned no cryptogram (${result.card.cryptogramError}). No issuer can authorize this tap.`,
-            'warning'
-          );
-        }
-        // A tap is expected to deduct: for the default protocol the sale is
-        // completed automatically; protocols that require the customer-provided
-        // authorization code open the card form so the operator can enter it.
-        if (posProtocol === 'NORMAL') {
-          showToast(`Contactless card captured ****${pan.slice(-4)} — completing payment…`, 'success');
-          setAutoChargeAfterTap(true);
-        } else {
-          showToast(`Contactless card captured ****${pan.slice(-4)} — enter the authorization code.`, 'success');
-          setShowCardForm(true);
-        }
       } else if (result?.nfcDetected) {
         showToast(result.error || 'NFC device detected, but it is not readable as an EMV payment card.', 'warning');
       } else {
-        showToast(result?.error || 'No card detected by ACR122U reader', 'info');
-        void fetchNfcStatus();
+        showToast('No card detected by ACR122U reader', 'info');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showToast(message || 'Reader unavailable', 'warning');
-      void fetchNfcStatus();
+      setCardEntryMode('MANUAL');
     } finally {
       setLoading(false);
     }
@@ -594,11 +451,6 @@ export const POSPageSecure = () => {
       return;
     }
 
-    if (!selectedCustomerId) {
-      showToast('Select the customer wallet to receive captured funds', 'error');
-      return;
-    }
-
     setLoading(true);
     setShowCardForm(false);
 
@@ -610,7 +462,7 @@ export const POSPageSecure = () => {
         cleanPan,
         cleanPan.length > 0 ? '*'.repeat(Math.max(0, cleanPan.length - 4)) + cleanPan.slice(-4) : undefined,
         cardData.expiry,
-        cardEntryMode === 'NFC' && !cardData.cvv ? undefined : cardData.cvv,
+        cardData.cvv,
         undefined,
         posProtocol,
         posProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined
@@ -624,8 +476,6 @@ export const POSPageSecure = () => {
       setLoading(false);
       setAmount('0');
       setCardData({ pan: '', expiry: '', cvv: '' });
-      setNfcEmvData(null);
-      setCardEntryMode('MANUAL');
       setVoiceAuth(false);
       setVoiceAuthCode("");
     }
@@ -642,16 +492,8 @@ export const POSPageSecure = () => {
       return;
     }
 
-    if ((!isOnline || forceOffline) && !terminalSettings.offlineMode) {
-      showToast('Offline processing is disabled in Terminal Settings', 'error');
-      return;
-    }
-
     setLoading(true);
     setShowCardForm(false);
-
-    const selectedProtocol = posProtocol;
-    const transactionChannel = isOnline && !forceOffline ? 'ONLINE' : 'OFFLINE';
 
     try {
       // Generate required IDs
@@ -667,13 +509,11 @@ export const POSPageSecure = () => {
         cardLast4: cardData.pan.slice(-4),
         entryMode: cardEntryMode,
         status: 'PENDING',
-        protocolVersion: selectedProtocol,
-        channel: transactionChannel,
         timestamp: Date.now()
       };
 
       // Decide whether to process online or offline
-      if (transactionChannel === 'ONLINE') {
+      if (isOnline && !forceOffline) {
         // Online card payments must go through the configured processor. The
         // backend credits the internal vault only after processor approval.
         const result = await chargePayment(
@@ -683,53 +523,29 @@ export const POSPageSecure = () => {
           {
             pan: cardData.pan.replace(/\s/g, ''),
             expiry: cardData.expiry,
-            // Contactless taps carry no CVV — send undefined rather than an empty string.
-            cvv: selectedProtocol === '101.1' || (cardEntryMode === 'NFC' && !cardData.cvv) ? undefined : cardData.cvv,
+            cvv: posProtocol === '101.1' ? undefined : cardData.cvv,
             customerId: selectedCustomerId || undefined,
             terminalId: merchantConfig.terminalId,
             stan,
-            entryMode: selectedProtocol === '201.3' ? 'OFFLINE_201_3' : selectedProtocol === '101.1' ? 'VOICE_AUTH' : selectedProtocol === '101.6' ? '101.6' : cardEntryMode,
-            authCode: selectedProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined,
-            protocolVersion: selectedProtocol,
-            // NFC taps carry the card's EMV data (incl. the ARQC) so the
-            // processor can authorize a real contactless transaction.
-            ...(cardEntryMode === 'NFC' && nfcEmvData
-              ? { emv: nfcEmvData.emv, tlvRaw: nfcEmvData.tlvRaw }
-              : {}),
+            entryMode: posProtocol === '201.3' ? 'OFFLINE_201_3' : posProtocol === '101.1' ? 'VOICE_AUTH' : posProtocol === '101.6' ? '101.6' : cardEntryMode,
+            authCode: posProtocol !== 'NORMAL' ? voiceAuthCode.trim() : undefined,
+            protocolVersion: posProtocol,
           }
         );
 
-        const processorStatus = String(result.status || '').toUpperCase();
-        const actualChannel = result.channel === 'ONLINE' || result.channel === 'OFFLINE'
-          ? result.channel
-          : null;
-        transaction.channel = actualChannel || transactionChannel;
-        transaction.settlementCode = result.settlementId || result.paymentIntentId || result.authCode;
-
-        if (processorStatus === 'APPROVED' && result.success === true && actualChannel === 'ONLINE') {
+        if (result.status === 'APPROVED' || result.success === true) {
+          transaction.channel = 'ONLINE';
           transaction.status = 'SYNCED';
+          transaction.settlementCode = result.settlementId || result.paymentIntentId || result.authCode;
           showToast(
             `Payment Approved! ${transaction.settlementCode || 'Processor confirmed'}`,
             'success'
           );
           setLastTransaction(transaction);
           setShowReceipt(true);
-        } else if (
-          processorStatus === 'PENDING' ||
-          (processorStatus === 'APPROVED' && actualChannel !== 'ONLINE') ||
-          (!processorStatus && result.success === true)
-        ) {
-          transaction.status = 'PENDING';
-          showToast(
-            actualChannel === 'OFFLINE' && processorStatus === 'APPROVED'
-              ? 'Offline authorization recorded; pending settlement. This is not provider approval.'
-              : result.reason || result.error || 'Payment is pending provider confirmation.',
-            'warning'
-          );
-          setLastTransaction(transaction);
-          setShowReceipt(true);
         } else {
           transaction.status = 'FAILED';
+          transaction.channel = 'ONLINE';
           transaction.error = result.error || result.reason || 'Payment failed';
           showToast(transaction.error || 'Payment failed', 'error');
         }
@@ -739,20 +555,16 @@ export const POSPageSecure = () => {
           { pan: cardData.pan.replace(/\s/g, ''), expiry: cardData.expiry, cvv: voiceAuth ? '' : cardData.cvv },
           amountVal,
           currency,
-          merchantConfig.terminalId,
-          undefined,
-          undefined,
-          selectedCustomerId
+          merchantConfig.terminalId
         );
 
         if (emvResult.approved) {
           transaction.channel = 'OFFLINE';
           transaction.status = 'PENDING';
           transaction.settlementCode = voiceAuthCode.trim();
-          showToast(`Offline transaction queued — pending provider capture (STAN: ${emvResult.stan}).`, 'warning');
+          showToast(`Offline Approved — STAN: ${emvResult.stan}`, 'success');
           saveOfflinePinSale({
             merchantId: merchantConfig.merchantId,
-            customerId: selectedCustomerId,
             terminalId: merchantConfig.terminalId,
             amountMinor,
             currency,
@@ -783,7 +595,6 @@ export const POSPageSecure = () => {
           showToast('Queued for online auth', 'warning');
           saveOfflinePinSale({
             merchantId: merchantConfig.merchantId,
-            customerId: selectedCustomerId,
             terminalId: merchantConfig.terminalId,
             amountMinor,
             currency,
@@ -826,8 +637,6 @@ export const POSPageSecure = () => {
         cardLast4: cardData.pan.slice(-4),
         entryMode: cardEntryMode,
         status: 'FAILED',
-        protocolVersion: selectedProtocol,
-        channel: transactionChannel,
         timestamp: Date.now(),
         error: error instanceof Error ? error.message : String(error)
       };
@@ -841,23 +650,10 @@ export const POSPageSecure = () => {
       setLoading(false);
       setAmount("0");
       setCardData({ pan: "", expiry: "", cvv: "" });
-      setNfcEmvData(null);
-      setCardEntryMode('MANUAL');
       setVoiceAuth(false);
       setVoiceAuthCode("");
     }
   };
-
-  // A successful contactless tap completes the sale: once the captured card state
-  // has landed, charge it immediately instead of waiting for a separate Charge →
-  // Pay press — matching real POS behaviour where tapping the card deducts.
-  useEffect(() => {
-    if (!autoChargeAfterTap) return;
-    if (cardEntryMode !== 'NFC' || !nfcEmvData || !cardData.pan) return;
-    setAutoChargeAfterTap(false);
-    void handleCharge();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoChargeAfterTap, cardEntryMode, nfcEmvData, cardData.pan]);
 
   const formatCardDisplay = (value: string) => {
     const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
@@ -885,9 +681,9 @@ export const POSPageSecure = () => {
         <div className="flex items-center gap-4">
           {/* Status and Toggle */}
           <div 
-            onClick={() => terminalSettings.offlineMode && setForceOffline(!forceOffline)}
-            title={!terminalSettings.offlineMode ? "Offline processing is disabled in Terminal Settings" : forceOffline ? "Click to resume automatic status" : "Click to force offline mode"}
-            className={`flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-full transition-colors ${terminalSettings.offlineMode ? 'cursor-pointer hover:bg-white/20' : 'cursor-not-allowed opacity-60'}`}
+            className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-full cursor-pointer hover:bg-white/20 transition-colors"
+            onClick={() => setForceOffline(!forceOffline)}
+            title={forceOffline ? "Click to resume automatic status" : "Click to force offline mode"}
           >
             <div className="relative">
               <span className={`block w-3 h-3 rounded-full ${isOnline && !forceOffline ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]' : 'bg-red-400'}`}></span>
@@ -899,28 +695,15 @@ export const POSPageSecure = () => {
               )}
             </div>
             <span className={`text-xs font-bold tracking-wider ${forceOffline ? 'animate-pulse-red' : ''}`}>
-              {!terminalSettings.offlineMode ? 'OFFLINE DISABLED' : forceOffline ? 'FORCED OFFLINE' : (isOnline ? 'ONLINE' : 'OFFLINE')}
+              {forceOffline ? 'FORCED OFFLINE' : (isOnline ? 'ONLINE' : 'OFFLINE')}
             </span>
             <div className={`w-8 h-4 rounded-full relative transition-colors ${forceOffline ? 'bg-red-500' : 'bg-green-500'}`}>
               <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${forceOffline ? 'left-4.5' : 'left-0.5'}`}></div>
             </div>
           </div>
-          <div
-            className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold"
-            title={nfcStatus.connected ? `Reader: ${nfcStatus.readerName || 'ACR122U'}` : (nfcStatus.error || 'Plug the ACR122U reader in — it is detected automatically')}
-          >
-            <span className={`inline-flex h-2.5 w-2.5 rounded-full ${
-              nfcStatus.loading ? 'bg-gray-300'
-                : nfcStatus.connected ? 'bg-green-400 animate-pulse'
-                : nfcStatus.enabled ? 'bg-amber-400'
-                : 'bg-red-400'
-            }`}></span>
-            <span>
-              {nfcStatus.loading ? 'Checking NFC...'
-                : nfcStatus.connected ? 'NFC Ready'
-                : nfcStatus.enabled ? 'NFC — plug in reader'
-                : 'NFC Unavailable'}
-            </span>
+          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold">
+            <span className={`inline-flex h-2.5 w-2.5 rounded-full ${nfcStatus.enabled ? 'bg-green-400' : 'bg-red-400'}`}></span>
+            <span>{nfcStatus.loading ? 'Checking NFC...' : nfcStatus.enabled ? (nfcStatus.connected ? 'NFC Ready' : 'NFC Available') : 'NFC Disabled'}</span>
           </div>
         </div>
       </div>
@@ -976,12 +759,12 @@ export const POSPageSecure = () => {
             disabled={loading || parseFloat(amount) === 0}
             className={`
               w-full py-4 rounded-xl text-lg font-bold text-white shadow-lg transition-all
-              ${loading || parseFloat(amount) === 0 || !terminalSettings.manualEntry
+              ${loading || parseFloat(amount) === 0 
                 ? 'bg-gray-300 cursor-not-allowed' 
                 : 'bg-blue-600 hover:bg-blue-700 active:scale-[0.98]'}
             `}
           >
-            {loading ? 'Processing...' : terminalSettings.manualEntry ? `Charge ${getCurrency(currency).symbol}${amount}` : 'Manual Entry Disabled'}
+            {loading ? 'Processing...' : `Charge ${getCurrency(currency).symbol}${amount}`}
           </button>
         </div>
 
@@ -1134,7 +917,7 @@ export const POSPageSecure = () => {
               <div>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Auth Protocol</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {([['NORMAL','💳','Normal'],['101.1','📞','Voice Auth'],['101.6','💳','EMV Chip'],['201.3','🔒','Offline Batch']] as const).map(([proto, icon, label]) => (
+                  {([['NORMAL','💳','Normal card'],['101.1','📞','Voice Auth'],['101.6','💳','EMV Chip'],['201.3','🔒','Offline Batch']] as const).map(([proto, icon, label]) => (
                     <button
                       key={proto}
                       type="button"
@@ -1195,9 +978,8 @@ export const POSPageSecure = () => {
                     placeholder="MM/YY"
                   />
                 </div>
-                {/* CVV is required for normal, 101.6, and 201.3 transactions — but
-                    never for a contactless tap (the reader supplies the ARQC). */}
-                {posProtocol !== '101.1' && cardEntryMode !== 'NFC' && (
+                {/* CVV is required for normal, 101.6, and 201.3 transactions. */}
+                {posProtocol !== '101.1' && (
                   <div>
                     <label className={`block text-xs font-semibold uppercase mb-1 ${posProtocol === '201.3' ? 'text-purple-600' : 'text-gray-500'}`}>CVV</label>
                     <input
@@ -1211,11 +993,6 @@ export const POSPageSecure = () => {
                     />
                   </div>
                 )}
-                {cardEntryMode === 'NFC' && (
-                  <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800 flex items-center">
-                    📡 Contactless tap — card data captured from the reader. CVV is not required.
-                  </div>
-                )}
                 {/* Auth Code — customer-provided for every explicit protocol */}
                 {posProtocol !== 'NORMAL' && (
                   <div>
@@ -1225,7 +1002,7 @@ export const POSPageSecure = () => {
                     <input
                       type="text"
                       value={voiceAuthCode}
-                      onChange={(e) => setVoiceAuthCode(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').substring(0, 32))}
+                      onChange={(e) => setVoiceAuthCode(e.target.value.replace(/[^a-zA-Z0-9\-]/g, '').substring(0, 32))}
                       className={`w-full px-4 py-2 border-2 rounded-lg outline-none text-center font-mono tracking-widest font-bold
                         ${posProtocol === '201.3'
                           ? 'border-purple-300 focus:border-purple-500 bg-purple-50 text-purple-900'
@@ -1272,18 +1049,16 @@ export const POSPageSecure = () => {
                   </div>
                   <div className="text-[11px] text-white/70 mt-1">Merchant ID: {merchantConfig.merchantId}</div>
                   <div className="text-[11px] text-white/70">Terminal ID: {merchantConfig.terminalId}</div>
-                  <div className="text-[11px] text-white/70">Channel: {lastTransaction.channel || "Unknown"}</div>
+                  <div className="text-[11px] text-white/70">Channel: {lastTransaction.channel || (lastTransaction.status === "SYNCED" ? "ONLINE" : "OFFLINE")}</div>
                 </div>
-                <div className={`max-w-[150px] px-2.5 py-1 rounded-full text-[11px] font-bold text-center ${
-                  lastTransaction.status === "FAILED"
-                    ? "bg-red-500/20 text-red-200 ring-1 ring-red-400/30"
-                    : lastTransaction.status === "PENDING"
-                      ? "bg-amber-500/20 text-amber-200 ring-1 ring-amber-400/30"
-                      : lastTransaction.status === "SYNCED" && lastTransaction.channel === "ONLINE"
-                        ? "bg-green-500/20 text-green-200 ring-1 ring-green-400/30"
-                        : "bg-white/15 text-white ring-1 ring-white/30"
+                <div className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                  lastTransaction.status === "SYNCED"
+                    ? "bg-green-500/20 text-green-200 ring-1 ring-green-400/30"
+                    : lastTransaction.status === "FAILED"
+                      ? "bg-red-500/20 text-red-200 ring-1 ring-red-400/30"
+                      : "bg-amber-500/20 text-amber-200 ring-1 ring-amber-400/30"
                 }`}>
-                  {getReceiptOutcome(lastTransaction)}
+                  {lastTransaction.status === "SYNCED" ? "APPROVED" : lastTransaction.status === "FAILED" ? "FAILED" : "PENDING"}
                 </div>
               </div>
             </div>
@@ -1343,10 +1118,6 @@ export const POSPageSecure = () => {
                     <span className="font-mono font-bold text-gray-900">{lastTransaction.stan}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-gray-500">Protocol</span>
-                    <span className="font-medium text-gray-900">{lastTransaction.protocolVersion || 'Not recorded'}</span>
-                  </div>
-                  <div className="flex justify-between gap-3">
                     <span className="text-gray-500">Card</span>
                     <span className="font-mono text-gray-900">**** **** **** {lastTransaction.cardLast4}</span>
                   </div>
@@ -1355,27 +1126,29 @@ export const POSPageSecure = () => {
                     <span className="font-medium text-gray-900">{lastTransaction.entryMode || 'MANUAL'}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-gray-500">Outcome</span>
-                    <span className="font-semibold text-gray-900 text-right">{getReceiptOutcome(lastTransaction)}</span>
+                    <span className="text-gray-500">Auth Mode</span>
+                    <span className="font-medium text-gray-900">
+                      {lastTransaction.channel === "OFFLINE"
+                        ? "OFFLINE_PENDING"
+                        : lastTransaction.status === "SYNCED"
+                          ? "ONLINE_APPROVED"
+                          : "DECLINED"}
+                    </span>
                   </div>
                 </div>
 
                 {lastTransaction.settlementCode && (
                   <div className="p-4 border-t border-gray-100 bg-amber-50">
                     <div className="text-[11px] text-amber-800 font-semibold uppercase tracking-widest">
-                      {lastTransaction.status === "SYNCED" && lastTransaction.channel === "ONLINE" ? "Settlement Code" : "Transaction Reference"}
+                      {lastTransaction.status === "SYNCED" ? "Settlement Code" : "Offline Reference"}
                     </div>
                     <div className="mt-1 text-2xl font-mono font-extrabold tracking-wider text-amber-900 break-all">
                       {lastTransaction.settlementCode}
                     </div>
                     <div className="text-[11px] text-amber-800 mt-1">
-                      {lastTransaction.status === "SYNCED" && lastTransaction.channel === "ONLINE"
+                      {lastTransaction.status === "SYNCED"
                         ? "Save this code for reconciliation."
-                        : lastTransaction.status === "PENDING" && lastTransaction.channel === "OFFLINE"
-                          ? "Offline transaction is pending sync or settlement; it has not been provider-approved."
-                          : lastTransaction.status === "PENDING"
-                            ? "Submitted online and awaiting provider confirmation; it is not approved yet."
-                            : "Keep this reference for reconciliation."}
+                        : "Pending settlement. Sync when internet returns."}
                     </div>
                   </div>
                 )}

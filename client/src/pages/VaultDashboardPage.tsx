@@ -169,25 +169,6 @@ function isValidLuhn(value: string) {
   return sum % 10 === 0;
 }
 
-function makeDemoCard(currency: string) {
-  const isEuro = currency === "EUR";
-  const pan = isEuro ? "4556731234567891" : "4111111111111111";
-  const expiry = "12/30";
-  const cvv = isEuro ? "321" : "123";
-  return {
-    scheme: "VISA",
-    card_number: pan,
-    card_number_formatted: pan.replace(/(\d{4})(?=\d)/g, "$1 "),
-    bin: pan.slice(0, 6),
-    last4: pan.slice(-4),
-    expiry_month: "12",
-    expiry_year: "30",
-    expiry,
-    cvv,
-    luhn_valid: isValidLuhn(pan),
-  };
-}
-
 function StatusBadge({ value }: { value: string }) {
   const s = String(value || "UNKNOWN").toUpperCase();
   const tone = s.includes("FAIL") || s.includes("ERROR") || s.includes("MISMATCH")
@@ -526,7 +507,10 @@ export function VaultDashboardPage() {
   const [transferAmount, setTransferAmount] = useState("");
   const [transferReference, setTransferReference] = useState("");
   const [transferBusy, setTransferBusy] = useState(false);
+<<<<<<< Updated upstream
 
+=======
+>>>>>>> Stashed changes
   const [showProviderModal, setShowProviderModal] = useState(false);
   const [providerEndpoint, setProviderEndpoint] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
@@ -899,10 +883,8 @@ export function VaultDashboardPage() {
       setGeneratedCards(prev => ({ ...prev, [currency]: card }));
       setMessage(`✅ ${currency} card generated — Luhn valid`);
     } catch (e) {
-      const fallback = makeDemoCard(currency);
-      setGeneratedCards(prev => ({ ...prev, [currency]: fallback }));
-      setMessage(`⚠️ ${currency} card fallback loaded — Luhn valid test card (Visa) is active.`);
-      setError("");
+      setError(`❌ ${currency} card generation FAILED — no demo/mock fallback permitted. Error: ${e instanceof Error ? e.message : String(e)}`);
+      setMessage("");
     } finally {
       setGenBusy(prev => ({ ...prev, [currency]: false }));
     }
@@ -1837,6 +1819,9 @@ export function VaultDashboardPage() {
             expiry: String(vaultCardDetails.usd.expiry || ""),
             cvv: String(vaultCardDetails.usd.cvv || ""),
             cardholderName: String(vaultCardDetails.usd.cardholderName || ""),
+            card_type: String(vaultCardDetails.usd.card_type || "credit"),
+            credit_limit: Number(vaultCardDetails.usd.credit_limit || 5000000),
+            status: String(vaultCardDetails.usd.status || "ACTIVE"),
           } : null}
           detailsBusy={vaultCardDetailsBusy}
           detailsError={vaultCardDetailsError}
@@ -1855,6 +1840,9 @@ export function VaultDashboardPage() {
             expiry: String(vaultCardDetails.eur.expiry || ""),
             cvv: String(vaultCardDetails.eur.cvv || ""),
             cardholderName: String(vaultCardDetails.eur.cardholderName || ""),
+            card_type: String(vaultCardDetails.eur.card_type || "credit"),
+            credit_limit: Number(vaultCardDetails.eur.credit_limit || 5000000),
+            status: String(vaultCardDetails.eur.status || "ACTIVE"),
           } : null}
           detailsBusy={vaultCardDetailsBusy}
           detailsError={vaultCardDetailsError}
@@ -1908,8 +1896,6 @@ export function VaultDashboardPage() {
               {(() => {
                 const usd = getVaultAccountMeta("USD");
                 const eur = getVaultAccountMeta("EUR");
-                const usdCard = generatedCards.USD;
-                const eurCard = generatedCards.EUR;
                 return (
                   <div className="grid gap-6 md:grid-cols-2">
                     {/* USD Card */}
@@ -1918,12 +1904,12 @@ export function VaultDashboardPage() {
                         currency="USD"
                         loaded={cardLoads.USD}
                         card={{
-                          number: usdCard?.card_number_formatted || usdCard?.card_number || "•••• •••• •••• ••••",
-                          cvv:    usdCard?.cvv || "•••",
-                          expiry: usdCard ? `${usdCard?.expiry_month}/${usdCard?.expiry_year}` : "••/••",
+                          number: generatedCards.USD?.card_number_formatted || generatedCards.USD?.card_number || "•••• •••• •••• ••••",
+                          cvv:    generatedCards.USD?.cvv || "•••",
+                          expiry: generatedCards.USD ? `${generatedCards.USD.expiry_month}/${generatedCards.USD.expiry_year}` : "••/••",
                         }}
                         bankName={usd.bankName}
-                        lastFour={usdCard?.card_number?.slice(-4) || usd.lastFour}
+                        lastFour={generatedCards.USD?.card_number?.slice(-4) || usd.lastFour}
                         simpleLayout
                       />
                       <button
@@ -1932,15 +1918,15 @@ export function VaultDashboardPage() {
                         disabled={genBusy.USD}
                         className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest transition"
                       >
-                        {genBusy.USD ? "⏳ Generating..." : usdCard ? "🔄 Regenerate USD Card" : "✨ Generate USD Card"}
+                        {genBusy.USD ? "⏳ Generating..." : generatedCards.USD ? "🔄 Regenerate USD Card" : "✨ Generate USD Card"}
                       </button>
-                      {usdCard && (
+                      {generatedCards.USD && (
                         <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs font-mono space-y-1">
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{usdCard?.card_number_formatted || usdCard?.card_number}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{usdCard?.expiry_month}/{usdCard?.expiry_year}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{usdCard?.cvv}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{usdCard?.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{usdCard?.scheme || "VISA"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{generatedCards.USD.card_number_formatted || generatedCards.USD.card_number}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{generatedCards.USD.expiry_month}/{generatedCards.USD.expiry_year}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{generatedCards.USD.cvv}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{generatedCards.USD.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{generatedCards.USD.scheme || "VISA"}</span></div>
                         </div>
                       )}
                     </div>
@@ -1950,12 +1936,12 @@ export function VaultDashboardPage() {
                         currency="EUR"
                         loaded={cardLoads.EUR}
                         card={{
-                          number: eurCard?.card_number_formatted || eurCard?.card_number || "•••• •••• •••• ••••",
-                          cvv:    eurCard?.cvv || "•••",
-                          expiry: eurCard ? `${eurCard?.expiry_month}/${eurCard?.expiry_year}` : "••/••",
+                          number: generatedCards.EUR?.card_number_formatted || generatedCards.EUR?.card_number || "•••• •••• •••• ••••",
+                          cvv:    generatedCards.EUR?.cvv || "•••",
+                          expiry: generatedCards.EUR ? `${generatedCards.EUR.expiry_month}/${generatedCards.EUR.expiry_year}` : "••/••",
                         }}
                         bankName={eur.bankName}
-                        lastFour={eurCard?.card_number?.slice(-4) || eur.lastFour}
+                        lastFour={generatedCards.EUR?.card_number?.slice(-4) || eur.lastFour}
                         simpleLayout
                       />
                       <button
@@ -1964,15 +1950,15 @@ export function VaultDashboardPage() {
                         disabled={genBusy.EUR}
                         className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest transition"
                       >
-                        {genBusy.EUR ? "⏳ Generating..." : eurCard ? "🔄 Regenerate EUR Card" : "✨ Generate EUR Card"}
+                        {genBusy.EUR ? "⏳ Generating..." : generatedCards.EUR ? "🔄 Regenerate EUR Card" : "✨ Generate EUR Card"}
                       </button>
-                      {eurCard && (
+                      {generatedCards.EUR && (
                         <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs font-mono space-y-1">
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{eurCard?.card_number_formatted || eurCard?.card_number}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{eurCard?.expiry_month}/{eurCard?.expiry_year}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{eurCard?.cvv}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{eurCard?.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{eurCard?.scheme || "VISA"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{generatedCards.EUR.card_number_formatted || generatedCards.EUR.card_number}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{generatedCards.EUR.expiry_month}/{generatedCards.EUR.expiry_year}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{generatedCards.EUR.cvv}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{generatedCards.EUR.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{generatedCards.EUR.scheme || "VISA"}</span></div>
                         </div>
                       )}
                     </div>
@@ -2271,6 +2257,9 @@ export function VaultDashboardPage() {
                     expiry: String(selectedCard.details.expiry || ""),
                     cvv: String(selectedCard.details.cvv || ""),
                     cardholderName: String(selectedCard.details.cardholderName || ""),
+                    card_type: String(selectedCard.details.card_type || "credit"),
+                    credit_limit: Number(selectedCard.details.credit_limit || 5000000),
+                    status: String(selectedCard.details.status || "ACTIVE"),
                   } : null}
                   detailsBusy={vaultCardDetailsBusy}
                   detailsError={vaultCardDetailsError}
@@ -2533,7 +2522,39 @@ export function VaultDashboardPage() {
                     >
                       <FileText size={14} /> Sending &amp; receiving details
                     </button>
+<<<<<<< Updated upstream
                   </div>
+=======
+                  ))}
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <label className="text-xs font-bold text-indigo-900">Provider name<input value={externalProviderName} onChange={e => setExternalProviderName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Licensed bank, processor, or wallet provider" /></label>
+                  <label className="text-xs font-bold text-indigo-900">Provider account / merchant ID<input value={externalProviderAccount} onChange={e => setExternalProviderAccount(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Account or merchant reference supplied by provider" /></label>
+                  <label className="text-xs font-bold text-indigo-900">Provider HTTPS endpoint<input value={externalEndpoint} onChange={e => setExternalEndpoint(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="https://provider.example/load" /></label>
+                  <label className="text-xs font-bold text-indigo-900">Provider API key<input value={externalApiKey} onChange={e => setExternalApiKey(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Public provider API key" type="password" /></label>
+                  <label className="text-xs font-bold text-indigo-900">Provider environment<select value={externalEnvironment} onChange={e => setExternalEnvironment(e.target.value as "sandbox" | "production")} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"><option value="production">Production / real funds</option></select></label>
+                  <label className="text-xs font-bold text-indigo-900">Source transfer / transaction reference<input value={externalSourceReference} onChange={e => setExternalSourceReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider transfer ID or settlement reference" /></label>
+                  <label className="text-xs font-bold text-indigo-900">Target card<select value={externalCardId} onChange={e => { const id = e.target.value as "usd" | "eur"; setExternalCardId(id); setLoadCurrency(id === "usd" ? "USD" : "EUR"); }} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm">
+                    <option value="usd">USD · AJI ALOSIOUS</option>
+                    <option value="eur">EUR · DANIA ALOSIOUS</option>
+                  </select></label>
+                  {fundingMethod === "card-to-card" && <><label className="text-xs font-bold text-indigo-900">Source card token / reference<input value={sourceCardReference} onChange={e => setSourceCardReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider-issued token; never enter PAN or CVV" /></label><label className="text-xs font-bold text-indigo-900">Source card issuer (optional)<input value={sourceCardIssuer} onChange={e => setSourceCardIssuer(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Issuing bank or processor" /></label><label className="text-xs font-bold text-indigo-900">Source card last four (optional)<input value={sourceCardLast4} onChange={e => setSourceCardLast4(e.target.value.replace(/\D/g, "").slice(-4))} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Last 4 digits only" maxLength={4} /></label></>}
+                  {fundingMethod === "server-to-card" && <><label className="text-xs font-bold text-indigo-900">Source server name<input value={sourceServerName} onChange={e => setSourceServerName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Sending server or treasury system" /></label><label className="text-xs font-bold text-indigo-900">Source server / account reference<input value={sourceServerReference} onChange={e => setSourceServerReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider account reference" /></label><label className="text-xs font-bold text-indigo-900">Source account identifier<input value={sourceServerAccount} onChange={e => setSourceServerAccount(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Non-secret account or ledger identifier" /></label></>}
+                  {fundingMethod === "bank-to-card" && <><label className="text-xs font-bold text-indigo-900">Transfer type<select value={sourceTransferType} onChange={e => setSourceTransferType(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm"><option>SWIFT</option><option>SEPA</option><option>DOMESTIC</option><option>ACH</option><option>RTGS</option><option>IMPS</option><option>PIX</option><option>FASTER_PAYMENTS</option><option>FEDWIRE</option></select></label><label className="text-xs font-bold text-indigo-900">Transfer network code (optional)<input value={sourceTransferNetworkCode} onChange={e => setSourceTransferNetworkCode(e.target.value.toUpperCase().replace(/[^A-Z0-9 _-]/g, ""))} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="SEPA SCT, SWIFT MT103, ACH PPD" /></label><label className="text-xs font-bold text-indigo-900">Sending bank name<input value={sourceBankName} onChange={e => setSourceBankName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Sending bank or payment institution" /></label><label className="text-xs font-bold text-indigo-900">Bank transfer reference / UETR<input value={sourceBankReference} onChange={e => setSourceBankReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="UETR, end-to-end ID, ACH trace, or rail reference" /></label><label className="text-xs font-bold text-indigo-900">Sender name<input value={sourceBankSenderName} onChange={e => setSourceBankSenderName(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Name on the sending transfer" /></label><label className="text-xs font-bold text-indigo-900">Sender account reference (optional)<input value={sourceBankAccountReference} onChange={e => setSourceBankAccountReference(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="IBAN/account reference or last 4 only" /></label></>}
+                  {fundingMethod === "wallet-to-card" && <><label className="text-xs font-bold text-indigo-900">Source wallet ID / provider token<input value={sourceWalletId} onChange={e => setSourceWalletId(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider wallet identifier" /></label><label className="text-xs font-bold text-indigo-900">Wallet network<input value={sourceWalletNetwork} onChange={e => setSourceWalletNetwork(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Provider network or rail" /></label><label className="text-xs font-bold text-indigo-900">Wallet transaction ID / hash<input value={sourceWalletTransactionId} onChange={e => setSourceWalletTransactionId(e.target.value)} className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" placeholder="Confirmed provider transaction ID" /></label></>}
+                </div>
+                <div className="mt-3 rounded-lg border border-indigo-200 bg-white/70 p-3 text-xs text-indigo-900">
+                  <strong>{fundingMethod === "card-to-card" ? "Card to card" : fundingMethod === "server-to-card" ? "Server to card" : fundingMethod === "bank-to-card" ? "Bank to card" : "Wallet to card"} instructions:</strong>{" "}
+                  {fundingMethod === "card-to-card" ? "Provide a provider-issued source card token and transfer reference. Never provide the source PAN, CVV, or PIN."
+                    : fundingMethod === "server-to-card" ? "Provide the sending server or treasury account reference and provider transfer reference. The provider must confirm settlement."
+                    : fundingMethod === "bank-to-card" ? "Select the rail used by the sender, add its real network code when applicable, and enter the bank-generated UETR, end-to-end ID, ACH trace, or equivalent reference. A typed reference alone never credits funds."
+                    : "Provide the source wallet ID or provider token and transfer reference. The provider must confirm available real funds before loading the card."}
+                </div>
+                <button type="button" onClick={() => void handleExternalCardLoad()} disabled={loadBusy} className="mt-3 inline-flex items-center gap-2 rounded-lg bg-indigo-700 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                  <Send size={15} /> {loadBusy ? "Calling provider…" : "Load confirmed funds"}
+                </button>
+              </div>
+>>>>>>> Stashed changes
 
                   {extLoadError && (
                     <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{extLoadError}</p>
@@ -3433,6 +3454,7 @@ export function VaultDashboardPage() {
     </Card>
   );
 
+<<<<<<< Updated upstream
   const renderPayouts = () => {
     return (
       <div className="space-y-6">
@@ -3463,9 +3485,28 @@ export function VaultDashboardPage() {
           />
         </Card>
 
+=======
+  const renderPayouts = () => (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => void runAction(() => api("/api/vault/payout/sepa/batch"), "SEPA batch generated")}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700">
+          <FileText size={14} className="mr-1 inline" /> Generate SEPA batch
+        </button>
+        <button onClick={() => void runAction(() => api("/api/vault/payout/swift/batch"), "SWIFT batch generated")}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700">
+          <FileText size={14} className="mr-1 inline" /> Generate SWIFT batch
+        </button>
+>>>>>>> Stashed changes
       </div>
-    );
-  };
+      <Card title="Vault payouts">
+        <DataTable
+          columns={["id","beneficiary_name","amount","fee","currency","type","status"]}
+          rows={payouts.map((row: AnyRecord) => ({ ...row, status: <StatusBadge value={row.status} /> }))}
+        />
+      </Card>
+    </div>
+  );
 
   const renderBeneficiaries = () => {
     const field = (name: string, label: string, type: "input" | "textarea" = "input", placeholder = "") => (

@@ -76,14 +76,7 @@ router.get('/wallet/customer/:customerId/balances', async (req, res) => {
   try {
     const { customerId } = req.params;
     const wallets = await walletsService.listCustomerWallets(customerId);
-    res.json({
-      wallets: wallets.map((w: any) => ({
-        balance: Number(w.balance),
-        currency: w.currency,
-        wallet_code: w.wallet_code,
-        id: w.id,
-      })),
-    });
+    res.json({ wallets: wallets.map((w: any) => ({ balance: Number(w.balance), currency: w.currency, wallet_code: w.wallet_code, id: w.id })) });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -102,7 +95,11 @@ router.get('/wallet/customer/:customerId/balances', async (req, res) => {
 // synced payload first. If ANY decline condition is met the tx is NOT credited.
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/pos/offline-sale', async (req, res) => {
-  // Re-enabled: credits merchant wallet for offline batch transactions
+  return res.status(501).json({
+    ok: false,
+    error: 'LIVE_PROCESSOR_REQUIRED: direct offline-sale accounting is disabled. Submit a signed Protocol 201.3 batch for processor verification.'
+  });
+  // Disabled legacy implementation retained below for reference; unreachable.
   try {
     const body = req.body;
     const merchantId = body.merchant_id || body.merchantId;

@@ -1,10 +1,10 @@
-/**
+﻿/**
  * Protocol Matching Engine
  * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * Given a transaction + codes, decides whether it correctly matches one of:
  *   101.1 â€“ Voice Auth / approval code (online, no CVV)
  *   101.6 â€“ EMV Chip / online token (online, CVV optional)
- *   201.3 â€“ Offline Batch auth + CVV (offline, CVV required)
+ *   201.3 - Offline Batch auth (offline, NO CVV required - EMV chip TC authenticates)
  *
  * Flow:
  *   1. Load protocol_rules â†’ check online/offline + amount constraints
@@ -25,7 +25,7 @@ export interface ProtocolInput {
   cardNumber: string;   // full PAN or last-4
   amount:     number;   // decimal e.g. 500.00
   code:       string;   // approval code / auth code / token
-  cvv?:       string;   // required for 201.3
+  cvv?:       string;   // optional - NOT required for 201.3 (EMV chip authenticates)
   online:     boolean;  // true = online EMV/host call, false = offline
   currency?:  string;
   merchantId?: string;
@@ -105,8 +105,8 @@ export async function matchProtocol(input: ProtocolInput): Promise<MatchResult> 
     return { success: false, protocol: cleanProto, authId: null, reason: `Protocol ${cleanProto} requires CVV` };
   }
 
-  // â”€â”€ Step 5: Match stored authorization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  let authRows = (await db.query(
+  // â”€â”€ Step 5: Match stored authorization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const authRows = (await db.query(
     `SELECT * FROM card_authorizations
      WHERE UPPER(code) = ?
        AND protocol = ?
@@ -116,122 +116,6 @@ export async function matchProtocol(input: ProtocolInput): Promise<MatchResult> 
      LIMIT 1`,
     [cleanCode, cleanProto, cleanPan, `%${panLast4}`, `%${panLast4}`]
   )).rows;
-
-  // For protocol 101.1 (Voice Auth): if no specific code found, auto-accept any
-  // 4-6 digit code. Voice auth works by calling the bank who verbally approves
-  // any code — we cannot pre-seed every possible code. Auto-create the auth row.
-  if (!authRows.length && cleanProto === '101.1') {
-    const now = new Date().toISOString();
-    const newId = uuidv4();
-    await db.query(
-      `INSERT OR IGNORE INTO card_authorizations (id, card_number, pan_masked, protocol, code, cvv, amount, currency, status, created_at, updated_at)
-       VALUES (?, ?, ?, '101.1', ?, NULL, 0, 'USD', 'ACTIVE', ?, ?)`,
-      [newId, cleanPan, `****${panLast4}`, cleanCode, now, now]
-    ).catch(() => {});
-    const newRow = (await db.query(
-      `SELECT * FROM card_authorizations WHERE UPPER(code) = ? AND protocol = '101.1' AND (card_number = ? OR card_number LIKE ?) AND status = 'ACTIVE' LIMIT 1`,
-      [cleanCode, cleanPan, `%${panLast4}`]
-    ).catch(() => ({ rows: [] }))).rows;
-    if (newRow.length) authRows = newRow;
-    console.log(`[101.1] Voice auth: auto-accepted code ${cleanCode} for card ****${panLast4}`);
-  }
-
-  // Fallback: If no card_authorizations match, check inbound_transaction_registrations
-  // This covers pre-registered 101.1 transactions (e.g. Auth Code 0707) where the
-  // customer provides card details at capture time, not at registration time.
-  if (!authRows.length) {
-    const inboundRows = (await db.query(
-      `SELECT * FROM inbound_transaction_registrations
-       WHERE UPPER(authorization_code) = ?
-         AND protocol = ?
-         AND settlement_status IN ('PENDING_VERIFICATION', 'VERIFIED_READY_FOR_CAPTURE', 'VERIFICATION_FAILED', 'PENDING_EXTERNAL')
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [cleanCode, cleanProto]
-    )).rows;
-
-    if (inboundRows.length) {
-      const inbound = inboundRows[0] as any;
-      const inboundAmount = Number(inbound.amount);
-      const panMaskFromInbound = inbound.pan_masked;
-
-      // If inbound registration already has linked card/pan, enforce match
-      if (panMaskFromInbound) {
-        const last4FromMask = String(panMaskFromInbound).slice(-4);
-        if (last4FromMask.length === 4 && last4FromMask !== panLast4) {
-          return {
-            success: false,
-            protocol: cleanProto,
-            authId: String(inbound.id),
-            reason: `Pre-registered authorization ${cleanCode} is linked to a different card (last4 mismatch).`,
-          };
-        }
-      }
-
-      // Create a matching card_authorizations ACTIVE row so downstream flow (capture, status)
-      // can use the existing pipeline without schema changes.
-      try {
-        const cardAuthId = uuidv4();
-        const now = new Date().toISOString();
-        const authRef = `AUTH-${cardAuthId.slice(0, 8).toUpperCase()}`;
-        await db.query(
-          `INSERT OR IGNORE INTO card_authorizations
-            (id, card_number, pan_masked, protocol, code, cvv, amount, currency,
-             merchant_id, terminal_id, customer_id, approval_code, auth_ref, expiry,
-             status, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE', ?, ?)`,
-          [
-            cardAuthId,
-            cleanPan,
-            `****${panLast4}`,
-            cleanProto,
-            cleanCode,
-            null,
-            inboundAmount,
-            inbound.currency || 'USD',
-            inbound.merchant_id || null,
-            null,
-            inbound.customer_id || null,
-            cleanCode,
-            authRef,
-            null,
-            now,
-            now,
-          ]
-        );
-        // Also update inbound registration to reflect card linkage
-        await db.query(
-          `UPDATE inbound_transaction_registrations
-             SET pan_masked = COALESCE(?, pan_masked),
-                 card_registered = 1,
-                 updated_at = ?
-           WHERE id = ?`,
-          [`****${panLast4}`, now, String(inbound.id)]
-        );
-        // Re-query to get the freshly-inserted card authorization
-        authRows = (await db.query(
-          `SELECT * FROM card_authorizations WHERE id = ? LIMIT 1`,
-          [cardAuthId]
-        )).rows;
-      } catch (fallbackErr: any) {
-        return {
-          success: false,
-          protocol: cleanProto,
-          authId: String(inbound.id),
-          reason: `Pre-registered code ${cleanCode} matched but card linkage failed: ${fallbackErr.message}`,
-        };
-      }
-
-      if (!authRows.length) {
-        return {
-          success: false,
-          protocol: cleanProto,
-          authId: String(inbound.id),
-          reason: `Pre-registered inbound ${cleanProto} code ${cleanCode} pending card linkage; retry after createCardAuth.`,
-        };
-      }
-    }
-  }
 
   if (!authRows.length) {
     return {
@@ -282,8 +166,12 @@ export async function matchProtocol(input: ProtocolInput): Promise<MatchResult> 
     };
   }
   if (auth.merchant_id && input.merchantId && String(auth.merchant_id) !== String(input.merchantId)) {
-    // Log mismatch but do not hard-block — operator owns all merchant IDs in this system
-    console.warn(`[CardAuth] merchant mismatch: auth.merchant_id=${auth.merchant_id} input.merchantId=${input.merchantId} — allowing`);
+    return {
+      success: false,
+      protocol: cleanProto,
+      authId: auth.id,
+      reason: 'Authorization belongs to a different merchant.',
+    };
   }
 
   return { success: true, protocol: cleanProto, authId: auth.id };

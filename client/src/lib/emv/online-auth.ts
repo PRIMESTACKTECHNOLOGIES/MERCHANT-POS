@@ -19,6 +19,7 @@
  */
 
 import { TLVParser } from './tlv-parser';
+import type { EMVTag } from './tlv-parser';
 import type { ACResult } from './ac-generator';
 
 export interface OnlineAuthRequest {

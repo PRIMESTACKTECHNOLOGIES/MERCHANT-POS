@@ -131,7 +131,6 @@ export class ApplicationSelector {
     issuerCodeTable: string | null;
     applicationName: string | null;
   } {
-    void selectedAID;
     const tags = TLVParser.parseTLV(cardData);
     
     // Look for application data

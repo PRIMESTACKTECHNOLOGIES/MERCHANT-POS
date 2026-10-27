@@ -34,7 +34,6 @@ export class PinPad implements PinPadInterface {
   private cancelled = false;
 
   async requestPIN(prompt: string): Promise<PinResult> {
-    void prompt;
     this.cancelled = false;
 
     // ── Device-specific PIN pad UI ──────────────────────────────────────

@@ -1,13 +1,12 @@
 import { TLVParser } from './tlv-parser';
 import { ApplicationSelector } from './application-selector';
-import type { ApplicationTemplate } from './application-selector';
 import { OfflineDataAuthentication } from './offline-data-authentication';
-import type { AuthenticationResult, CAPK } from './offline-data-authentication';
-import { TerminalRiskManagement, type TerminalRiskResult } from './terminal-risk-management';
-import { CardRiskManagement, type CardRiskResult } from './card-risk-management';
-import { CVMProcessor, type CVMResult } from './cvm-processor';
-import { ActionCodeProcessor, type ActionCodeResult } from './action-code-processor';
-import { CryptogramGenerator, type CryptogramResult } from './cryptogram-generator';
+import type { AuthenticationResult } from './offline-data-authentication';
+import { TerminalRiskManagement } from './terminal-risk-management';
+import { CardRiskManagement } from './card-risk-management';
+import { CVMProcessor } from './cvm-processor';
+import { ActionCodeProcessor } from './action-code-processor';
+import { CryptogramGenerator } from './cryptogram-generator';
 import { OfflineTransactionStorage } from './offline-storage';
 import type { EMVTransaction } from './offline-storage';
 import { TVRTSIBuilder, type TVRContext, type TSIContext } from './tvr-tsi-builder';
@@ -27,9 +26,9 @@ import type { OnlineAuthRequest, OnlineAuthResponse } from './online-auth';
 import { EMVStateMachine } from './emv-state-machine';
 import type { EMVStateResult, EMVStateMachineConfig } from './emv-state-machine';
 import { ContactlessKernel } from './contactless-kernel';
-import type { CTLResult } from './contactless-kernel';
+import type { CTLResult, ContactlessMode, PaymentScheme } from './contactless-kernel';
 import { EMVRouter } from './emv-router';
-import type { RouteResult, RouteConfig } from './emv-router';
+import type { RouteResult, RouteConfig, RoutePath } from './emv-router';
 
 export interface EMVTransactionInput {
   cardData: string;
@@ -51,12 +50,12 @@ export interface EMVTransactionResult {
   transactionId: string;
   reason: string;
   emvData: {
-    application?: ApplicationTemplate | null;
+    application?: any;
     authentication?: AuthenticationResult;
-    risk?: { terminal?: TerminalRiskResult; card?: CardRiskResult };
-    cvm?: CVMResult;
-    actionCodes?: ActionCodeResult;
-    cryptogram?: CryptogramResult;
+    risk?: any;
+    cvm?: any;
+    actionCodes?: any;
+    cryptogram?: any;
     ac?: ACResult;
   };
   offlineTransaction?: EMVTransaction;
@@ -85,7 +84,7 @@ export class EMVOfflineTransactionEngine {
   private ctlKernel: ContactlessKernel;
   private router: EMVRouter;
 
-  constructor(capks: CAPK[] = []) {
+  constructor(capks: any[] = []) {
     this.applicationSelector = new ApplicationSelector();
     this.offlineDataAuthentication = new OfflineDataAuthentication(capks);
     this.terminalRiskManagement = new TerminalRiskManagement();
@@ -280,6 +279,8 @@ export class EMVOfflineTransactionEngine {
   async processTransaction(input: EMVTransactionInput): Promise<EMVTransactionResult> {
     try {
       // Step 1: Parse card data
+      const cardTags = TLVParser.parseTLV(input.cardData);
+      
       // Step 2: Select application
       const application = this.selectApplication(input.cardData);
       if (!application) {
@@ -398,7 +399,7 @@ export class EMVOfflineTransactionEngine {
     }
   }
 
-  private selectApplication(cardData: string): ApplicationTemplate | null {
+  private selectApplication(cardData: string): any {
     try {
       const terminalAIDs = [
         'A0000000041010', // Visa Debit
@@ -417,9 +418,9 @@ export class EMVOfflineTransactionEngine {
   }
 
   private determineFinalDecision(
-    terminalRisk: TerminalRiskResult,
-    cardRisk: CardRiskResult,
-    actionCodes: ActionCodeResult
+    terminalRisk: any,
+    cardRisk: any,
+    actionCodes: any
   ): 'TC' | 'AAC' | 'ARQC' {
     // Priority order for decision making
     if (actionCodes.decision === 'DECLINE') return 'AAC';
@@ -431,7 +432,7 @@ export class EMVOfflineTransactionEngine {
     return 'ARQC';
   }
 
-  private getDecisionReason(terminalRisk: TerminalRiskResult, cardRisk: CardRiskResult, actionCodes: ActionCodeResult): string {
+  private getDecisionReason(terminalRisk: any, cardRisk: any, actionCodes: any): string {
     if (actionCodes.reason) return actionCodes.reason;
     if (cardRisk.reason) return cardRisk.reason;
     if (terminalRisk.reason) return terminalRisk.reason;
@@ -441,16 +442,7 @@ export class EMVOfflineTransactionEngine {
   private createOfflineTransaction(
     transactionId: string,
     input: EMVTransactionInput,
-    emvData: {
-      application: ApplicationTemplate;
-      authentication: AuthenticationResult;
-      terminalRisk: TerminalRiskResult;
-      cardRisk: CardRiskResult;
-      cvm: CVMResult;
-      actionCodes: ActionCodeResult;
-      cryptogram: CryptogramResult;
-      ac: ACResult;
-    }
+    emvData: any
   ): EMVTransaction {
     return {
       id: transactionId,
@@ -459,13 +451,7 @@ export class EMVOfflineTransactionEngine {
       currency: input.currency,
       cardData: input.cardData,
       terminalData: input.terminalData,
-      application: emvData.application
-        ? {
-            aid: emvData.application.aid,
-            label: emvData.application.applicationLabel || emvData.application.name,
-            priority: emvData.application.priority,
-          }
-        : { aid: 'A0000000041010', label: 'VISA', priority: 1 },
+      application: emvData.application || { aid: 'A0000000041010', label: 'VISA', priority: 1 },
       authentication: {
         method: emvData.authentication?.method || 'SDA',
         success: emvData.authentication?.success ?? true,
@@ -503,7 +489,7 @@ export class EMVOfflineTransactionEngine {
     };
   }
 
-  private generateTVR(authentication: AuthenticationResult, cvm: CVMResult, terminalRisk: TerminalRiskResult, cardRisk: CardRiskResult, cardData: string): string {
+  private generateTVR(authentication: any, cvm: any, terminalRisk: any, cardRisk: any, cardData: string): string {
     const cardTags = TLVParser.parseTLV(cardData);
     const iccDataMissing = !TLVParser.getTagValue(cardTags, '5A');
 
@@ -546,7 +532,7 @@ export class EMVOfflineTransactionEngine {
     return TVRTSIBuilder.buildTVR(tvrCtx);
   }
 
-  private generateTSI(authentication: AuthenticationResult, cvm: CVMResult, terminalRisk: TerminalRiskResult, cardRisk: CardRiskResult, cryptogramDecision: string): string {
+  private generateTSI(authentication: any, cvm: any, terminalRisk: any, cardRisk: any, cryptogramDecision: string): string {
     const tsiCtx: TSIContext = {
       offlineDataAuthenticationPerformed: authentication?.success ?? false,
       cardholderVerificationPerformed: cvm?.success ?? false,
@@ -588,33 +574,33 @@ export class EMVOfflineTransactionEngine {
     };
   }
 
-  private createTerminalRiskResult(terminalRisk: TerminalRiskResult): EMVTransactionResult {
+  private createTerminalRiskResult(terminalRisk: any): EMVTransactionResult {
     return {
       success: true,
       approved: false,
       requiresOnline: terminalRisk.requiresOnline,
       decline: false,
       transactionId: this.generateTransactionId(),
-      reason: terminalRisk.reason ?? 'Terminal risk checks did not pass',
+      reason: terminalRisk.reason,
       emvData: { risk: { terminal: terminalRisk } },
       offlineTransaction: undefined
     };
   }
 
-  private createCardDeclineResult(cardRisk: CardRiskResult): EMVTransactionResult {
+  private createCardDeclineResult(cardRisk: any): EMVTransactionResult {
     return {
       success: true,
       approved: false,
       requiresOnline: false,
       decline: true,
       transactionId: this.generateTransactionId(),
-      reason: cardRisk.reason ?? 'Card risk checks did not pass',
+      reason: cardRisk.reason,
       emvData: { risk: { card: cardRisk } },
       offlineTransaction: undefined
     };
   }
 
-  private createCVMDeclineResult(cvmResult: CVMResult): EMVTransactionResult {
+  private createCVMDeclineResult(cvmResult: any): EMVTransactionResult {
     return {
       success: true,
       approved: false,

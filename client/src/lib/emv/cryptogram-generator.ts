@@ -31,8 +31,8 @@ export interface CryptogramInput {
 function getBrowserSubtleCrypto(): SubtleCrypto {
   const webCrypto =
     (typeof window !== 'undefined' && window.crypto) ||
-    (typeof self !== 'undefined' && self.crypto) ||
-    (typeof globalThis !== 'undefined' && globalThis.crypto);
+    (typeof self !== 'undefined' && (self as any).crypto) ||
+    (typeof globalThis !== 'undefined' && (globalThis as any).crypto);
 
   if (!webCrypto || typeof webCrypto.subtle === 'undefined') {
     throw new Error(
@@ -104,6 +104,7 @@ export class CryptogramGenerator {
 
       const pan    = TLVParser.getTagValue(cardTags, '5A');
       const atc    = TLVParser.getTagValue(cardTags, '9F36') || '0001';
+      const aip    = TLVParser.getTagValue(cardTags, '82') || '5800';
 
       if (!pan || pan.length < 13) {
         throw new Error('EMV tag 5A (PAN) is missing or invalid. Cannot generate cryptogram without a valid card PAN.');
@@ -183,13 +184,13 @@ export class CryptogramGenerator {
   }
 
   // Convenience async methods
-  async generateTC(cardData: string, terminalData: string, txData: CryptogramInput['transactionData'], reason: string): Promise<CryptogramResult> {
+  async generateTC(cardData: string, terminalData: string, txData: any, reason: string): Promise<CryptogramResult> {
     return this.generateCryptogramAsync({ cardData, terminalData, transactionData: txData, decision: 'TC', reason });
   }
-  async generateAAC(cardData: string, terminalData: string, txData: CryptogramInput['transactionData'], reason: string): Promise<CryptogramResult> {
+  async generateAAC(cardData: string, terminalData: string, txData: any, reason: string): Promise<CryptogramResult> {
     return this.generateCryptogramAsync({ cardData, terminalData, transactionData: txData, decision: 'AAC', reason });
   }
-  async generateARQC(cardData: string, terminalData: string, txData: CryptogramInput['transactionData'], reason: string): Promise<CryptogramResult> {
+  async generateARQC(cardData: string, terminalData: string, txData: any, reason: string): Promise<CryptogramResult> {
     return this.generateCryptogramAsync({ cardData, terminalData, transactionData: txData, decision: 'ARQC', reason });
   }
 }
