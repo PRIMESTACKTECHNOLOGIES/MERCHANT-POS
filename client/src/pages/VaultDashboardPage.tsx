@@ -1825,14 +1825,16 @@ export function VaultDashboardPage() {
           onLoadDetails={() => void loadVaultCardDetails()}
           currency="USD"
           metal="silver"
+          bankStyle="vault"
           compact
         />
         <VaultBankCard
-          holderName="DANIA ALOSIOUS"
+          holderName="SAJIN CHANDRAN"
           maskedPan="4532 01•• •••• 1068"
           expiry="06/29"
           currency="EUR"
           metal="gold"
+          bankStyle="commercial"
           revealedDetails={vaultCardDetails.eur ? {
             cardNumber: String(vaultCardDetails.eur.cardNumber || ""),
             expiry: String(vaultCardDetails.eur.expiry || ""),
@@ -1848,11 +1850,12 @@ export function VaultDashboardPage() {
           compact
         />
         <VaultBankCard
-          holderName="AJI ALOSIOUS"
+          holderName="SAJIN CHANDRAN"
           maskedPan="4137 45•• •••• 1082"
           expiry="12/29"
           currency="AED"
           metal="silver"
+          bankStyle="bisb"
           revealedDetails={vaultCardDetails.aed1 ? {
             cardNumber: String(vaultCardDetails.aed1.cardNumber || ""),
             expiry: String(vaultCardDetails.aed1.expiry || ""),
@@ -1868,11 +1871,12 @@ export function VaultDashboardPage() {
           compact
         />
         <VaultBankCard
-          holderName="AJI ALOSIOUS"
+          holderName="SAJIN CHANDRAN"
           maskedPan="5416 84•• •••• 8832"
           expiry="03/27"
           currency="AED"
           metal="gold"
+          bankStyle="commercial"
           revealedDetails={vaultCardDetails.aed2 ? {
             cardNumber: String(vaultCardDetails.aed2.cardNumber || ""),
             expiry: String(vaultCardDetails.aed2.expiry || ""),
@@ -2035,20 +2039,22 @@ export function VaultDashboardPage() {
 
     const selectedCard = selectedLoadingCard === "usd"
       ? {
-          holderName: "AJI ALOSIOUS",
+          holderName: "SAJIN CHANDRAN",
           maskedPan: "4165 98•• •••• 9610",
           expiry: "05/30",
           currency: "USD" as const,
           metal: "silver" as const,
+          bankStyle: "vault" as const,
           details: vaultCardDetails.usd,
         }
       : selectedLoadingCard === "eur"
         ? {
-            holderName: "DANIA ALOSIOUS",
+            holderName: "SAJIN CHANDRAN",
             maskedPan: "4532 01•• •••• 1068",
             expiry: "06/29",
             currency: "EUR" as const,
             metal: "gold" as const,
+            bankStyle: "commercial" as const,
             details: vaultCardDetails.eur,
           }
         : null;
@@ -2085,8 +2091,8 @@ export function VaultDashboardPage() {
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {([
-                  ["usd", "AJI ALOSIOUS", "USD", "4165 98•• •••• 9610", "bg-slate-100"],
-                  ["eur", "DANIA ALOSIOUS", "EUR", "4532 01•• •••• 1068", "bg-amber-50"],
+                  ["usd", "SAJIN CHANDRAN", "USD", "4165 98•• •••• 9610", "bg-slate-100"],
+                  ["eur", "SAJIN CHANDRAN", "EUR", "4532 01•• •••• 1068", "bg-amber-50"],
                 ] as const).map(([id, name, currency, pan, tone]) => (
                   <button
                     key={id}
@@ -2291,6 +2297,7 @@ export function VaultDashboardPage() {
                   expiry={selectedCard.expiry}
                   currency={selectedCard.currency}
                   metal={selectedCard.metal}
+                  bankStyle={selectedCard.bankStyle}
                   revealedDetails={selectedCard.details ? {
                     cardNumber: String(selectedCard.details.cardNumber || ""),
                     expiry: String(selectedCard.details.expiry || ""),

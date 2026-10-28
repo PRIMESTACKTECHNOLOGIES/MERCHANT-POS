@@ -20,13 +20,15 @@ type VaultBankCardProps = {
   onLoadDetails?: () => void;
   currency?: "USD" | "EUR" | "AED";
   metal?: "silver" | "gold";
+  bankStyle?: "vault" | "commercial" | "bisb";
   compact?: boolean;
 };
 
 const VISA_LOGO = "/visa-logo.png";
+const MC_LOGO = "/mastercard-logo.png";
 
 export default function VaultBankCard({
-  holderName = "AJI ALOSIOUS",
+  holderName = "SAJIN CHANDRAN",
   maskedPan = "4165 98•• •••• 9610",
   expiry = "05/30",
   cvv = "•••",
@@ -36,6 +38,7 @@ export default function VaultBankCard({
   onLoadDetails,
   currency = "USD",
   metal = "silver",
+  bankStyle = "vault",
   compact = false,
 }: VaultBankCardProps) {
   const [showBack, setShowBack] = useState(false);
@@ -47,10 +50,10 @@ export default function VaultBankCard({
   const isMastercard = panDigits.startsWith("5");
 
   return (
-    <section className={`vault-bank-card-panel vault-bank-card-panel-${metal}${compact ? " vault-bank-card-panel-compact" : ""}`} aria-label={`${currency} Vault Bank card`}>
+    <section className={`vault-bank-card-panel vault-bank-card-panel-${metal} vault-bank-card-style-${bankStyle}${compact ? " vault-bank-card-panel-compact" : ""}`} aria-label={`${currency} ${bankStyle} card`}>
       <div className="vault-bank-card-heading">
         <div>
-          <p className="vault-bank-card-kicker">Vault Bank</p>
+          <p className="vault-bank-card-kicker">{bankStyle === 'vault' ? 'Vault Bank' : bankStyle === 'commercial' ? 'Commercial Bank' : 'BisB'}</p>
           <h2>Corporate card · {currency}</h2>
         </div>
         <div className="vault-bank-card-controls">
@@ -82,32 +85,71 @@ export default function VaultBankCard({
       <div className={`vault-bank-card-stage${showBack ? " is-back" : ""}`}>
         <div className="vault-bank-card-face vault-bank-card-front">
           <div className="vault-bank-card-sheen" />
+          
+          {bankStyle === 'commercial' && (
+            <>
+              <div className="commercial-bank-logo">
+                <div className="cb-logo-arabic">البنك التجاري</div>
+                <div className="cb-logo-english">COMMERCIAL BANK</div>
+              </div>
+              <div className="commercial-bank-calligraphy" />
+              <div className="commercial-bank-contactless">
+                <i /><i /><i />
+              </div>
+            </>
+          )}
+
+          {bankStyle === 'bisb' && (
+            <>
+              <div className="bisb-logo">BisB</div>
+              <div className="bisb-curves" />
+              <div className="bisb-contactless">
+                <i /><i /><i />
+              </div>
+            </>
+          )}
+
           <div className="vault-bank-card-top">
-            <span className="vault-bank-card-brand">VAULT BANK</span>
-            <span className="vault-bank-card-contactless" aria-label="Contactless">
-              <i /><i /><i />
-            </span>
+            {bankStyle === 'vault' && <span className="vault-bank-card-brand">VAULT BANK</span>}
+            {bankStyle === 'vault' && (
+              <span className="vault-bank-card-contactless" aria-label="Contactless">
+                <i /><i /><i />
+              </span>
+            )}
           </div>
+          
           <div className="vault-bank-card-chip" aria-label="EMV chip">
             <span /><span /><span /><span /><span />
           </div>
+          
           <div className="vault-bank-card-pan">{maskedPan}</div>
+          
           <div className="vault-bank-card-bottom">
             <div>
               <span className="vault-bank-card-label">CARDHOLDER</span>
               <strong>{holderName}</strong>
             </div>
-            <div>
-              <span className="vault-bank-card-label">VALID THRU</span>
-              <strong>{expiry}</strong>
-            </div>
-            <div>
-              <span className="vault-bank-card-label">TYPE</span>
-              <strong style={{ color: '#ffd700', letterSpacing: '0.05em' }}>CREDIT</strong>
-            </div>
+            {bankStyle === 'vault' && (
+              <>
+                <div>
+                  <span className="vault-bank-card-label">VALID THRU</span>
+                  <strong>{expiry}</strong>
+                </div>
+                <div>
+                  <span className="vault-bank-card-label">TYPE</span>
+                  <strong style={{ color: '#ffd700', letterSpacing: '0.05em' }}>CREDIT</strong>
+                </div>
+              </>
+            )}
           </div>
-          {isMastercard ? (
-            <span className="vault-bank-card-mc" aria-label="Mastercard">MC</span>
+
+          {bankStyle === 'bisb' ? (
+            <img className="vault-bank-card-visa" src={VISA_LOGO} alt="Visa" />
+          ) : isMastercard || bankStyle === 'commercial' ? (
+            <div className="vault-bank-card-mc-logo" aria-label="Mastercard">
+              <span className="mc-circle mc-red" />
+              <span className="mc-circle mc-orange" />
+            </div>
           ) : (
             <img className="vault-bank-card-visa" src={VISA_LOGO} alt="Visa" />
           )}
@@ -116,15 +158,40 @@ export default function VaultBankCard({
         <div className="vault-bank-card-face vault-bank-card-back">
           <div className="vault-bank-card-sheen" />
           <div className="vault-bank-card-magstripe" />
-          <div className="vault-bank-card-signature-row">
-            <div className="vault-bank-card-signature"><span>{holderName}</span></div>
-            <button type="button" className="vault-bank-card-cvv" onClick={() => setShowCvv((value) => !value)}>
-              <span>CVV</span>
-              <strong>{showCvv ? cvv : "•••"}</strong>
-            </button>
+          
+          <div className="vault-bank-card-back-content">
+            {bankStyle === 'commercial' && (
+              <div className="commercial-bank-back-logo">COMMERCIAL BANK</div>
+            )}
+            
+            <div className="vault-bank-card-signature-row">
+              <div className="vault-bank-card-signature"><span>{holderName}</span></div>
+              <button type="button" className="vault-bank-card-cvv" onClick={() => setShowCvv((value) => !value)}>
+                <span>CVV</span>
+                <strong>{showCvv ? cvv : "•••"}</strong>
+              </button>
+            </div>
+            
+            <div className="vault-bank-card-back-details">
+              <div className="card-number-back">{revealedDetails?.cardNumber || maskedPan}</div>
+              <div className="expiry-back">VALID THRU {revealedDetails?.expiry || expiry}</div>
+            </div>
+
+            {bankStyle === 'bisb' && (
+              <div className="bisb-back-logos">
+                <span className="logo-gccnet">GCCNET</span>
+                <span className="logo-benefit">benefit</span>
+              </div>
+            )}
           </div>
-          {isMastercard ? (
-            <span className="vault-bank-card-mc vault-bank-card-mc-back" aria-label="Mastercard">MC</span>
+
+          {bankStyle === 'bisb' ? (
+            <img className="vault-bank-card-visa vault-bank-card-visa-back" src={VISA_LOGO} alt="Visa" />
+          ) : isMastercard || bankStyle === 'commercial' ? (
+            <div className="vault-bank-card-mc-logo vault-bank-card-mc-back">
+              <span className="mc-circle mc-red" />
+              <span className="mc-circle mc-orange" />
+            </div>
           ) : (
             <img className="vault-bank-card-visa vault-bank-card-visa-back" src={VISA_LOGO} alt="Visa" />
           )}

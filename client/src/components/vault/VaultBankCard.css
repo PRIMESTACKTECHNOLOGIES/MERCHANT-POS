@@ -398,25 +398,209 @@
 }
 
 /* ── Mastercard text logo ──────────────────────────────────────────────── */
-.vault-bank-card-mc {
+.vault-bank-card-mc-logo {
   position: absolute;
   bottom: 18px;
   right: 16px;
-  font-family: 'Arial Black', 'Helvetica Neue', sans-serif;
-  font-size: 14px;
-  font-weight: 900;
-  font-style: italic;
-  letter-spacing: -0.5px;
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(0,0,0,.3);
+  display: flex;
+  gap: -8px;
   z-index: 3;
 }
+.mc-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  opacity: 0.9;
+}
+.mc-red { background: #eb001b; margin-right: -12px; }
+.mc-orange { background: #ff5f00; }
+
 .vault-bank-card-mc-back {
   bottom: 14px;
   right: 14px;
 }
-.vault-bank-card-panel-compact .vault-bank-card-mc {
-  font-size: 11px;
-  bottom: 14px;
-  right: 12px;
+.vault-bank-card-panel-compact .mc-circle {
+  width: 22px;
+  height: 22px;
+}
+.vault-bank-card-panel-compact .mc-red { margin-right: -8px; }
+
+/* ── Commercial Bank Style ────────────────────────────────────────────── */
+.vault-bank-card-style-commercial .vault-bank-card-front {
+  background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+  color: #ffffff;
+}
+.vault-bank-card-style-commercial .vault-bank-card-back {
+  background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+  color: #ffffff;
+}
+.vault-bank-card-style-commercial .vault-bank-card-pan,
+.vault-bank-card-style-commercial .vault-bank-card-bottom strong {
+  color: #ffffff;
+}
+
+.commercial-bank-logo {
+  position: absolute;
+  top: 6.5%;
+  left: 7%;
+  display: flex;
+  flex-direction: column;
+}
+.cb-logo-arabic { font-size: 14px; font-weight: bold; }
+.cb-logo-english { font-size: 10px; font-weight: bold; letter-spacing: 0.05em; }
+
+.commercial-bank-calligraphy {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60%;
+  height: 60%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 20c-15 0-25 10-25 25s10 25 25 25 25-10 25-25-10-25-25-25zm0 40c-8 0-15-7-15-15s7-15 15-15 15 7 15 15-7 15-15 15z' fill='white' opacity='0.15'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.4;
+}
+
+.commercial-bank-contactless {
+  position: absolute;
+  top: 6.5%;
+  left: 50%;
+  transform: translateX(-50%) rotate(90deg);
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+}
+.commercial-bank-contactless i {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid transparent;
+  border-top-color: rgba(255, 255, 255, 0.8);
+  border-right-color: rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+}
+.commercial-bank-contactless i:nth-child(2) { width: 12px; height: 12px; }
+.commercial-bank-contactless i:nth-child(3) { width: 18px; height: 18px; }
+
+/* ── BisB Style ───────────────────────────────────────────────────────── */
+.vault-bank-card-style-bisb .vault-bank-card-front {
+  background: linear-gradient(135deg, #581c87 0%, #7e22ce 100%);
+  color: #ffffff;
+}
+.vault-bank-card-style-bisb .vault-bank-card-back {
+  background: linear-gradient(135deg, #581c87 0%, #7e22ce 100%);
+  color: #ffffff;
+}
+.vault-bank-card-style-bisb .vault-bank-card-pan,
+.vault-bank-card-style-bisb .vault-bank-card-bottom strong {
+  color: #ffffff;
+}
+
+.bisb-logo {
+  position: absolute;
+  bottom: 8%;
+  left: 7%;
+  font-size: 22px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: -1px;
+}
+
+.vault-bank-card-style-bisb .vault-bank-card-chip {
+  margin-top: 0;
+  position: absolute;
+  bottom: 22%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.bisb-contactless {
+  position: absolute;
+  bottom: 45%;
+  left: 50%;
+  transform: translateX(-50%) rotate(90deg);
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+}
+
+.vault-bank-card-style-bisb .vault-bank-card-pan {
+  display: none; /* In vertical cards like this, PAN is often on back */
+}
+
+.bisb-curves {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  height: 100%;
+  background-image: radial-gradient(circle at 120% -20%, transparent 60%, rgba(255,255,255,0.1) 60.5%, rgba(255,255,255,0.1) 61%, transparent 61.5%, transparent 63%, rgba(255,255,255,0.1) 63.5%, rgba(255,255,255,0.1) 64%, transparent 64.5%);
+  pointer-events: none;
+}
+
+.vault-bank-card-style-commercial .vault-bank-card-bottom {
+  right: 4%;
+  bottom: 25%;
+  left: auto;
+  transform: rotate(-90deg);
+  transform-origin: bottom right;
+}
+.vault-bank-card-style-commercial .vault-bank-card-bottom strong {
+  font-size: 16px;
+  font-weight: 900;
+}
+.vault-bank-card-style-commercial .vault-bank-card-label {
+  display: none;
+}
+.bisb-contactless i {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid transparent;
+  border-top-color: rgba(255, 255, 255, 0.8);
+  border-right-color: rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+}
+.bisb-contactless i:nth-child(2) { width: 12px; height: 12px; }
+.bisb-contactless i:nth-child(3) { width: 18px; height: 18px; }
+
+/* ── Back details layout ─────────────────────────────────────────────── */
+.vault-bank-card-back-content {
+  position: absolute;
+  top: 35%;
+  left: 7%;
+  right: 7%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.commercial-bank-back-logo {
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  opacity: 0.8;
+}
+.vault-bank-card-back-details {
+  display: flex;
+  justify-content: space-between;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: bold;
+}
+.bisb-back-logos {
+  display: flex;
+  gap: 15px;
+  margin-top: 5px;
+  opacity: 0.8;
+}
+.logo-gccnet, .logo-benefit {
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
