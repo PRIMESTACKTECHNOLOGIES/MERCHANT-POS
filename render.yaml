@@ -282,11 +282,11 @@ services:
       - key: OPERATOR_CARD_USD_HOLDER
         value: AJI ALOSIOUS
       - key: OPERATOR_CARD_USD_NUMBER
-        sync: false
+        value: "4165989902669610"
       - key: OPERATOR_CARD_USD_EXPIRY
         value: 05/30
       - key: OPERATOR_CARD_USD_CVV
-        sync: false
+        value: "203"
       - key: OPERATOR_CARD_USD_SCHEME
         value: VISA
       - key: OPERATOR_CARD_USD_CURRENCY
@@ -294,11 +294,11 @@ services:
       - key: OPERATOR_CARD_EUR_HOLDER
         value: DANIA ALOSIOUS
       - key: OPERATOR_CARD_EUR_NUMBER
-        sync: false
+        value: "4532017123851068"
       - key: OPERATOR_CARD_EUR_EXPIRY
         value: 06/29
       - key: OPERATOR_CARD_EUR_CVV
-        sync: false
+        value: "460"
       - key: OPERATOR_CARD_EUR_SCHEME
         value: VISA
       - key: OPERATOR_CARD_EUR_CURRENCY
@@ -312,7 +312,7 @@ services:
       - key: VAULT_CARD_EXPIRY
         value: 05/30
       - key: VAULT_CARD_CVV
-        sync: false
+        value: "203"
       - key: VAULT_CARD_TYPE
         value: credit
       - key: VAULT_CARD_CREDIT_LIMIT
@@ -324,7 +324,7 @@ services:
       - key: VAULT_EUR_CARD_EXPIRY
         value: 06/29
       - key: VAULT_EUR_CARD_CVV
-        sync: false
+        value: "460"
       - key: VAULT_EUR_CARD_TYPE
         value: credit
       - key: VAULT_EUR_CARD_CREDIT_LIMIT
@@ -398,11 +398,11 @@ services:
       - key: OPERATOR_CARD_USD_HOLDER
         value: AJI ALOSIOUS
       - key: OPERATOR_CARD_USD_NUMBER
-        sync: false
+        value: "4165989902669610"
       - key: OPERATOR_CARD_USD_EXPIRY
         value: 05/30
       - key: OPERATOR_CARD_USD_CVV
-        sync: false
+        value: "203"
       - key: OPERATOR_CARD_USD_SCHEME
         value: VISA
       - key: OPERATOR_CARD_USD_CURRENCY
@@ -410,11 +410,11 @@ services:
       - key: OPERATOR_CARD_EUR_HOLDER
         value: DANIA ALOSIOUS
       - key: OPERATOR_CARD_EUR_NUMBER
-        sync: false
+        value: "4532017123851068"
       - key: OPERATOR_CARD_EUR_EXPIRY
         value: 06/29
       - key: OPERATOR_CARD_EUR_CVV
-        sync: false
+        value: "460"
       - key: OPERATOR_CARD_EUR_SCHEME
         value: VISA
       - key: OPERATOR_CARD_EUR_CURRENCY
