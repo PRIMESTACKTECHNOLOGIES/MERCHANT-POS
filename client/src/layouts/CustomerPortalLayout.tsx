@@ -12,9 +12,9 @@ const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll", "mousem
 /** `label` is a key inside the `portal` namespace of the locale files. */
 const NAV = [
   { to: "/portal/overview", label: "overview", icon: "M3 12l9-9 9 9M5 10v10h14V10" },
-  { to: "/portal/send", label: "send", icon: "M12 19V5M5 12l7-7 7 7" },
-  { to: "/portal/receive", label: "receive", icon: "M12 5v14M5 12l7 7 7-7" },
-  { to: "/portal/pay", label: "pay", icon: "M3 10h18M7 15h4M3 6h18v12H3z" },
+  { to: "/portal/send", label: "send", icon: "M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" },
+  { to: "/portal/receive", label: "receive", icon: "M12 3v13m0 0l-4-4m4 4l4-4M4 21h16" },
+  { to: "/portal/processor", label: "processor", icon: "M4 4h16v6H4zM4 14h16v6H4zM7 7h4M7 17h4" },
   { to: "/portal/c2m", label: "c2m", icon: "M3 21V7l6 4 6-4v10l6-4v8z" },
   { to: "/portal/profile", label: "profile", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM4 21a8 8 0 0116 0" },
 ];
@@ -132,13 +132,14 @@ export function CustomerPortalLayout() {
             key={item.to}
             to={item.to}
             className={({ isActive }) =>
-              `flex-1 flex flex-col items-center justify-center gap-1 py-2 text-[10px] font-medium transition ${
+              `flex-1 min-w-0 px-1 flex flex-col items-center justify-center gap-1 py-2 text-[10px] font-medium transition ${
                 isActive ? "text-blue-700" : "text-slate-500"
               }`
             }
           >
             <NavIcon path={item.icon} />
-            <span className="leading-none">{t(`portal.${item.label}`)}</span>
+            {/* Six tabs on a phone: truncate instead of overflowing the bar. */}
+            <span className="leading-none w-full text-center truncate">{t(`portal.${item.label}`)}</span>
           </NavLink>
         ))}
       </nav>

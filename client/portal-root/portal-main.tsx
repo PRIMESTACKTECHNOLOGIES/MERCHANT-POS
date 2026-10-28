@@ -15,7 +15,7 @@ import { CustomerLoginPage } from "../src/pages/customer-portal/CustomerLoginPag
 import { CustomerOverviewPage } from "../src/pages/customer-portal/CustomerOverviewPage";
 import { CustomerSendPage } from "../src/pages/customer-portal/CustomerSendPage";
 import { CustomerReceivePage } from "../src/pages/customer-portal/CustomerReceivePage";
-import { CustomerPayPage } from "../src/pages/customer-portal/CustomerPayPage";
+import { POSPageSecure } from "../src/pages/POSPageSecure";
 import { CustomerC2MPage } from "../src/pages/customer-portal/CustomerC2MPage";
 import { CustomerProfilePage } from "../src/pages/customer-portal/CustomerProfilePage";
 import { isCustomerLoggedIn } from "../src/lib/customerApi";
@@ -69,7 +69,11 @@ function PortalApp() {
         <Route path="overview" element={<CustomerOverviewPage />} />
         <Route path="send" element={<CustomerSendPage />} />
         <Route path="receive" element={<CustomerReceivePage />} />
-        <Route path="pay" element={<CustomerPayPage />} />
+        <Route path="processor" element={<POSPageSecure />} />
+        {/* The card processor page was removed — the POS processor already
+            supports every protocol. Keep the old path working for printed
+            receipts and QR codes that still point at it. */}
+        <Route path="pay" element={<Navigate to="/portal/processor" replace />} />
         <Route path="c2m" element={<CustomerC2MPage />} />
         <Route path="profile" element={<CustomerProfilePage />} />
       </Route>

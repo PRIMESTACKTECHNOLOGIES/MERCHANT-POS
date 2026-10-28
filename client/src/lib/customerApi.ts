@@ -273,37 +273,3 @@ export async function portalCallProvider(payload: {
     body: JSON.stringify(payload),
   });
 }
-
-export interface PortalCardChargeResult {
-  success: boolean;
-  status: 'APPROVED' | 'DECLINED' | 'PENDING' | string;
-  channel?: string;
-  paymentIntentId?: string;
-  authCode?: string;
-  amountMinor?: number;
-  currency?: string;
-  reason?: string;
-  error?: string;
-}
-
-/**
- * Pay a merchant by card. Runs the POS charge on the backend so the EMV value is
- * actually collected instead of only being queued in the browser.
- */
-export async function portalPayWithCard(payload: {
-  merchantId: string;
-  amountMinor: number;
-  currency: string;
-  pan: string;
-  expiry: string;
-  cvv: string;
-  emv?: Record<string, unknown>;
-  stan?: string;
-  terminalId?: string;
-  entryMode?: string;
-}): Promise<PortalCardChargeResult> {
-  return cReq<PortalCardChargeResult>('/api/customer-portal/pay/card', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
