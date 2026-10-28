@@ -81,6 +81,10 @@ async function ensureTable() {
   `).catch(() => {});
 }
 
+export async function ensureVoiceAuth101Schema() {
+  await ensureTable();
+}
+
 // ── Verification configuration ───────────────────────────────────────────────
 // Read per call so an operator can change them without a rebuild.
 function envInt(key: string, fallback: number): number {
