@@ -14,6 +14,14 @@ import { luhnValidate } from './luhn';
 import { verifyVaultApiKey } from './gateway/middleware/verifyApiKey';
 import { verifyVaultHmac } from './gateway/middleware/verifySignature';
 import { vaultRateLimiter } from './gateway/middleware/rateLimiter';
+import {
+  sendToAbsa,
+  getAbsaBalance,
+  getAbsaTransferStatus,
+  getAbsaTransactions,
+  verifyAbsaWebhook,
+  handleAbsaIncomingCredit,
+} from './absaBank.service';
 
 const router = Router();
 
@@ -1130,7 +1138,9 @@ router.post('/send-to-absa', authenticateToken, async (req, res) => {
       note:               note ? String(note) : undefined,
     });
 
-    return res.json({ ok: true, ...result });
+    // `AbsaTransferResult` already carries `ok`, so spread it directly — an explicit
+    // `ok: true` here would be silently overwritten by the spread.
+    return res.json(result);
 
   } catch (error: any) {
     return res.status(500).json({ ok: false, error: (error as any)?.message || 'ABSA transfer failed' });

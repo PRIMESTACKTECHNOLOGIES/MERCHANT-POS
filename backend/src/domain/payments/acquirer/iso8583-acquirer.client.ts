@@ -10,6 +10,13 @@ import {
 } from './acquirer.types';
 import { createIso8583MacEngine } from './iso8583.security';
 
+/** Endpoint overrides for a dedicated scheme route. Falls back to ACQUIRER_*. */
+export interface Iso8583AcquirerClientOptions {
+  host?: string;
+  port?: number;
+  timeoutMs?: number;
+}
+
 export class Iso8583AcquirerClient {
   private readonly tcp: IsoTcpClient;
   private readonly macEngine = createIso8583MacEngine({
@@ -32,11 +39,14 @@ export class Iso8583AcquirerClient {
     keyProvider: this.macEngine.getKeyProvider(),
   });
 
-  constructor() {
-    if (!acquirerConfig.host || !acquirerConfig.port) {
+  constructor(options: Iso8583AcquirerClientOptions = {}) {
+    const host = options.host || acquirerConfig.host;
+    const port = options.port || acquirerConfig.port;
+    const timeoutMs = options.timeoutMs || acquirerConfig.timeoutMs;
+    if (!host || !port) {
       throw new Error('ACQUIRER_HOST and ACQUIRER_PORT are required for ISO8583');
     }
-    this.tcp = new IsoTcpClient(acquirerConfig.host, acquirerConfig.port, acquirerConfig.timeoutMs);
+    this.tcp = new IsoTcpClient(host, port, timeoutMs);
   }
 
   async authorize(req: AcquirerAuthRequest): Promise<AcquirerAuthResponse> {

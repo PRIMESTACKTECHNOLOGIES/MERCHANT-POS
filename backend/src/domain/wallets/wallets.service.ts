@@ -1,4 +1,5 @@
 import axios, { AxiosError } from "axios";
+import crypto from "crypto";
 import { db } from "../../config/db";
 import { v4 as uuidv4 } from 'uuid';
 import { validateTransition, createLedgerEntry, persistLedgerEntry, type TransactionState } from '../ledger/ledger.service';
@@ -17,6 +18,7 @@ import {
   insertFundProviderCall,
   markFundProviderProviderResult,
   markFundProviderLedgerResult,
+  validateEndpointProtocol,
 } from '../../services/fundProviderAudit.service';
 
 export class WalletsService {
@@ -1765,6 +1767,254 @@ Generated: ${now}
       providerResponseCode,
       fundProviderCredsSource: creds.source,
       fundProviderApiKeyMasked: apiKeyMasked,
+    };
+  }
+
+  /**
+   * The C2M pull endpoint must be server-configured config, never caller-supplied.
+   * Anything off the allowlist is rejected so a caller cannot point the pull at a
+   * host they control and have the merchant wallet credited on a forged "SUCCESS".
+   */
+  private assertProviderEndpointAllowed(rawEndpoint?: string | null): string {
+    const endpoint = String(rawEndpoint || '').trim();
+    if (!endpoint) throw new Error('Provider endpoint is not configured on the server');
+    validateEndpointProtocol(endpoint);
+
+    const allowlist = [
+      process.env.CUSTOMER_WALLET_PROVIDER_URL,
+      ...String(process.env.CUSTOMER_WALLET_PROVIDER_ALLOWLIST || '').split(','),
+    ]
+      .map((v) => String(v || '').trim().replace(/\/+$/, '').toLowerCase())
+      .filter(Boolean);
+
+    if (allowlist.length === 0) {
+      throw new Error('No customer wallet provider endpoint is allowlisted on the server (set CUSTOMER_WALLET_PROVIDER_URL)');
+    }
+    if (!allowlist.includes(endpoint.replace(/\/+$/, '').toLowerCase())) {
+      throw new Error(`Provider endpoint ${endpoint} is not allowlisted`);
+    }
+    return endpoint;
+  }
+
+  /**
+   * C2M — pull REAL funds from the customer's external wallet provider and credit
+   * the merchant wallet.
+   *
+   * The provider endpoint comes from the SERVER config, never from the request, and
+   * the pull is HMAC-SHA512 signed (X-Timestamp / X-Nonce / X-Signature) with the
+   * customer's provider secret. The merchant wallet is credited only when the
+   * provider answers 2xx with its OWN transaction id, a matching amount and
+   * currency, and no mock/test markers; every attempt is written to
+   * fund_provider_calls for audit.
+   */
+  async pullProviderFundsToMerchant(input: {
+    customerId:     string;
+    merchantId:     string;
+    amountMinor:    number;
+    currency?:      string;
+    endpointUrl?:   string;
+    apiKey?:        string;
+    secretKey?:     string;
+    requestReference?: string;
+    reason?:        string;
+  }) {
+    const customerId = String(input.customerId || '').trim();
+    const merchantId = String(input.merchantId || '').trim();
+    const ccy = this.normalizeCurrency(input.currency);
+    const amountMinor = Math.round(Number(input.amountMinor));
+    const amount = amountMinor / 100;
+
+    if (!customerId) throw new Error('customerId required');
+    if (!merchantId) throw new Error('merchantId required');
+    if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+      throw new Error('amountMinor must be a positive integer');
+    }
+    assertAmountWithinTestCapOrThrow(amount, ccy);
+
+    const endpointUrl = this.assertProviderEndpointAllowed(input.endpointUrl);
+    const apiKey = String(input.apiKey || '').trim();
+    const secretKey = String(input.secretKey || '').trim();
+    if (!apiKey) throw new Error('Provider API key is required');
+    if (!secretKey) throw new Error('Provider secret key is required');
+
+    const requestReference =
+      String(input.requestReference || '').trim() || `C2M-${uuidv4().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+
+    const auditId = await insertFundProviderCall({
+      flowType: 'customer_to_merchant_provider_pull',
+      providerName: 'customer_wallet_provider',
+      endpointUrl,
+      httpMethod: 'POST',
+      rawApiKey: apiKey,
+      idempotencyKey: requestReference,
+      requestPayload: {
+        amountMinor,
+        currency: ccy,
+        customerId,
+        merchantId,
+        reference: requestReference,
+        reason: input.reason || null,
+      },
+      amountMinor,
+      currency: ccy,
+      walletOwnerType: 'merchant',
+      walletOwnerId: merchantId,
+    });
+
+    // ── Signed pull ─────────────────────────────────────────────────────────
+    const timestamp = String(Date.now());
+    const nonce = uuidv4();
+    const body = JSON.stringify({
+      amount_minor: amountMinor,
+      currency: ccy,
+      customer_id: customerId,
+      merchant_id: merchantId,
+      reference: requestReference,
+      reason: input.reason ? String(input.reason) : undefined,
+    });
+    const signature = crypto
+      .createHmac('sha512', secretKey)
+      .update(`${timestamp}.${nonce}.${body}`)
+      .digest('hex');
+
+    let httpStatus: number | null = null;
+    let providerRaw: any = null;
+    try {
+      const response = await axios.post(endpointUrl, body, {
+        timeout: 15_000,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-API-Key': apiKey,
+          'X-Timestamp': timestamp,
+          'X-Nonce': nonce,
+          'X-Signature': signature,
+        },
+        validateStatus: () => true,
+      });
+      httpStatus = response.status;
+      providerRaw = response.data || {};
+    } catch (err: any) {
+      const msg = String(err?.message || 'Provider unreachable').slice(0, 300);
+      await markFundProviderProviderResult({
+        id: auditId,
+        httpStatus: null,
+        responseCodeProvider: null,
+        responseReference: null,
+        responsePayload: null,
+        errorMessage: msg,
+        success: false,
+      }).catch(() => {});
+      throw new Error(`Provider unreachable — ${msg}`);
+    }
+
+    const providerRef = String(
+      providerRaw?.transaction_id
+        ?? providerRaw?.transactionId
+        ?? providerRaw?.transfer_id
+        ?? providerRaw?.transferId
+        ?? providerRaw?.id
+        ?? '',
+    ).trim();
+    const providerOk =
+      httpStatus !== null && httpStatus >= 200 && httpStatus < 300 &&
+      (providerRaw?.success === true
+        || providerRaw?.ok === true
+        || /^(SUCCESS|SUCCEEDED|COMPLETED|SETTLED|CREDITED|POSTED|APPROVED)$/i.test(String(providerRaw?.status || '')));
+
+    await markFundProviderProviderResult({
+      id: auditId,
+      httpStatus,
+      responseCodeProvider: providerRaw?.response_code ?? providerRaw?.responseCode ?? providerRaw?.code ?? null,
+      responseReference: providerRef || null,
+      responsePayload: providerRaw,
+      errorMessage: providerOk ? null : String(providerRaw?.message || `Provider declined the pull (HTTP ${httpStatus})`),
+      success: providerOk,
+    }).catch(() => {});
+
+    if (!providerOk) {
+      throw new Error(String(providerRaw?.message || `Provider declined the pull (HTTP ${httpStatus})`));
+    }
+
+    // ── Confirmation checks — no credit on a forged or echoed response ──────
+    if (!providerRef) {
+      throw new Error('Provider did not return its own transaction ID — refusing to credit. Do not retry; reconcile with the provider first.');
+    }
+    if (/mock|test|sandbox|demo|fake|echo|sample/i.test(providerRef)) {
+      throw new Error(`Provider returned a non-production reference "${providerRef}" — refusing to credit the merchant wallet.`);
+    }
+    const echoedAmountMinor = providerRaw?.amount_minor ?? providerRaw?.amountMinor
+      ?? (providerRaw?.amount != null ? Math.round(Number(providerRaw.amount) * 100) : null);
+    if (echoedAmountMinor != null && Number(echoedAmountMinor) !== amountMinor) {
+      throw new Error(`Provider amount mismatch: expected ${amountMinor} minor units, got ${echoedAmountMinor}. Do not retry; reconcile with the provider first.`);
+    }
+    const echoedCurrency = providerRaw?.currency ? String(providerRaw.currency).toUpperCase() : null;
+    if (echoedCurrency && echoedCurrency !== ccy) {
+      throw new Error(`Provider currency mismatch: expected ${ccy}, got ${echoedCurrency}. Do not retry; reconcile with the provider first.`);
+    }
+
+    // ── Credit the merchant wallet ──────────────────────────────────────────
+    const merchantWallet = await this.getOrCreateMerchantWallet(merchantId, ccy);
+    const description = input.reason
+      ? `${input.reason} (provider pull from customer ${customerId})`
+      : `Provider pull from customer ${customerId}`;
+
+    await db.query('BEGIN IMMEDIATE');
+    try {
+      await db.query(
+        'UPDATE merchant_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?',
+        [amount, now, merchantWallet.id],
+      );
+      await db.query(
+        `INSERT INTO merchant_wallet_transactions
+           (id, wallet_id, type, amount, currency, source, reference, description, created_at, fund_provider_audit_id, provider_reference)
+         VALUES (?, ?, 'credit', ?, ?, 'provider_pull_c2m', ?, ?, ?, ?, ?)`,
+        [uuidv4(), merchantWallet.id, amount, ccy, requestReference, description, now, auditId, providerRef],
+      );
+      await db.query('COMMIT');
+    } catch (dbErr: any) {
+      try { await db.query('ROLLBACK'); } catch { /* preserve original error */ }
+      const reconcileWarning = `EXTERNAL OK + DB FAIL: ${String(dbErr?.message || dbErr)}`;
+      await markFundProviderLedgerResult({
+        id: auditId,
+        walletId: merchantWallet.id,
+        ledgerSuccess: false,
+        reconcileWarning,
+        errorMessage: reconcileWarning,
+      }).catch(() => {});
+      throw new Error(`CRITICAL RECONCILE: ${reconcileWarning}`);
+    }
+
+    await markFundProviderLedgerResult({
+      id: auditId,
+      walletId: merchantWallet.id,
+      ledgerSuccess: true,
+      reconcileWarning: null,
+      errorMessage: null,
+    }).catch(() => {});
+
+    const merchantAfter = Number(
+      (await db.query('SELECT balance FROM merchant_wallets WHERE id = ?', [merchantWallet.id])).rows[0]?.balance ?? 0,
+    );
+
+    return {
+      success: true,
+      reference: requestReference,
+      providerReference: providerRef,
+      amount,
+      amountMinor,
+      currency: ccy,
+      customerId,
+      merchantId,
+      merchantWalletId: merchantWallet.id,
+      merchantBalanceAfter: merchantAfter,
+      status: 'COMPLETED',
+      reason: input.reason || null,
+      fundProviderAuditId: auditId,
+      providerHttpStatus: httpStatus,
+      fundProviderApiKeyMasked: maskApiKey(apiKey),
+      timestamp: now,
     };
   }
 }

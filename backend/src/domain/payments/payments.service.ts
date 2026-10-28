@@ -16,6 +16,7 @@ interface PosTransactionPayload extends PreflightPayload {
   cardholder_name?: string;
   cardHolder?:      string;   // alias used in some callers
   last4?:           string;   // optional: card last-4 (fallback if no pan)
+  protocol?:        string;   // transaction protocol (101.1 voice, 101.6 EMV, 201.3 capture)
   runtimeFundProviderCreds?: {  // interactive popup: runtime creds (NOT persisted)
     endpointUrl?: string | null | undefined;
     apiKey?:      string | null | undefined;

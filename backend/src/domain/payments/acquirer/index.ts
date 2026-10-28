@@ -12,6 +12,11 @@ export interface AcquirerClient {
   capture(request: AcquirerCaptureRequest): Promise<AcquirerCaptureResponse>;
 }
 
+// Network identity is part of this module's public surface: callers that route
+// by card scheme import both the classifier and the network type from here.
+export type { CardNetwork } from './schemeNetwork';
+export { detectNetworkFromPan } from './schemeNetwork';
+
 function isTcpHost(host: string): boolean {
   // bare IP or hostname with no http/https prefix = TCP socket
   // empty host also routes to vault bank (127.0.0.1:9000 default)
@@ -72,8 +77,5 @@ export function createAcquirerClient(network?: CardNetwork): AcquirerClient {
     host: route.host,
     port: route.port,
     timeoutMs: route.timeoutMs,
-    header: route.header,
-    key: route.network,
-    macField: route.macField,
   });
 }

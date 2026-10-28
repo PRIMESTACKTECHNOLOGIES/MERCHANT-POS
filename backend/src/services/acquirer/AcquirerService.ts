@@ -40,6 +40,10 @@ export interface AcquirerAuthResponse {
   raw?:          any;             // full acquirer response for audit
   mti?:          string;          // echoed MTI from response (0110/0210)
   rrn?:          string;          // DE37 retrieval reference number
+  // Where the value actually landed. `external` means a real acquirer/PSP moved
+  // the funds; `internal` means it stayed on the internal ledger as a receivable.
+  fundsType?:    'external' | 'internal';
+  cardType?:     'external' | 'internal';
 }
 
 // ── Capture (201.3) ──────────────────────────────────────────────────────────

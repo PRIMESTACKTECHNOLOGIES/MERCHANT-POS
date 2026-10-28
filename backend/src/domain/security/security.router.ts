@@ -2,6 +2,12 @@ import express, { Request, Response } from 'express';
 import { securityService } from './security.service';
 import { authenticateToken } from '../../middleware/auth.middleware';
 import { db } from '../../config/db';
+import {
+  getClientIp,
+  recordStrike,
+  listActiveBans,
+  unbanIp,
+} from '../../middleware/security-shield.middleware';
 
 /**
  * CLIENT INTRUSION REPORTING
@@ -49,12 +55,20 @@ function clip(v: unknown, max: number): string | null {
   return s.length > max ? s.slice(0, max) : s;
 }
 
+/**
+ * Which client signals also earn a strike towards an automatic IP ban.
+ * Deliberately NOT CLIENT_DEVTOOLS_OPEN: a merchant poking at their own console
+ * must not lock the store out. Explicit "give me the source / save the page"
+ * attempts do earn a strike, with a cooldown so a held key combo counts once.
+ */
+const STRIKED_EVENTS = new Set([
+  'CLIENT_SOURCE_VIEW_ATTEMPT',
+  'CLIENT_SAVE_PAGE_ATTEMPT',
+]);
+
 securityEventRouter.post('/client-event', async (req: Request, res: Response) => {
   try {
-    const ip =
-      (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ||
-      req.ip ||
-      'unknown';
+    const ip = getClientIp(req);
 
     if (!allow(ip)) {
       return res.status(429).json({ ok: false, error: 'rate_limited' });
@@ -64,6 +78,10 @@ securityEventRouter.post('/client-event', async (req: Request, res: Response) =>
     const event = String(body.event ?? '').toUpperCase();
     if (!ALLOWED_EVENTS.has(event)) {
       return res.status(400).json({ ok: false, error: 'unknown_event' });
+    }
+
+    if (STRIKED_EVENTS.has(event)) {
+      recordStrike(ip, event, { cooldownMs: 2 * 60 * 1000 });
     }
 
     await securityService.logSecurityEvent({
@@ -110,4 +128,27 @@ securityEventRouter.get('/client-events', authenticateToken, async (req: Request
     console.error('[ClientSecurity] failed to read events:', err?.message);
     return res.status(500).json({ ok: false, error: 'query_failed' });
   }
+});
+
+/**
+ * GET /api/security/banned-ips
+ * Every IP the shield is currently blocking, with remaining time. JWT-protected.
+ */
+securityEventRouter.get('/banned-ips', authenticateToken, (_req: Request, res: Response) => {
+  const bans = listActiveBans();
+  return res.json({ ok: true, count: bans.length, bans });
+});
+
+/**
+ * DELETE /api/security/banned-ips/:ip
+ * Lift a ban — needed when a shared/NAT'd store IP trips a rule by mistake.
+ */
+securityEventRouter.delete('/banned-ips/:ip', authenticateToken, (req: Request, res: Response) => {
+  const ip = String(req.params.ip || '').trim();
+  if (!ip) return res.status(400).json({ ok: false, error: 'ip_required' });
+
+  const lifted = unbanIp(ip, 'admin');
+  if (!lifted) return res.status(404).json({ ok: false, error: 'not_banned' });
+  console.warn(`[ClientSecurity] IP ban lifted for ${ip}`);
+  return res.json({ ok: true, ip, unbanned: true });
 });

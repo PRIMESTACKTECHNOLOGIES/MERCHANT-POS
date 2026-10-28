@@ -1,11 +1,10 @@
 /**
- * Acquirer shim — re-exports HttpAcquirerClient as createAcquirerClient()
- * so the existing payments.service.ts import works without modification.
+ * Acquirer shim — delegates to the scheme-routing acquirer module.
+ *
+ * This file shares its name with the `acquirer/` directory, so TypeScript
+ * resolves `./acquirer` to this file rather than `acquirer/index.ts`. It must
+ * therefore re-export the real factory, otherwise callers that need scheme
+ * routing (realSettlement.service.ts, vaultCardNetwork.ts) would silently get
+ * a client factory that ignores the card network.
  */
-import { HttpAcquirerClient } from '../../services/acquirer/HttpAcquirerClient';
-
-export { HttpAcquirerClient };
-
-export function createAcquirerClient(): HttpAcquirerClient {
-  return new HttpAcquirerClient();
-}
+export * from './acquirer/index';

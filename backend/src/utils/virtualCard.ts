@@ -474,3 +474,15 @@ export function detectSchemeFromPan(pan: string): CardScheme | null {
   if (/^(5[1-5]|2[2-7])/.test(clean)) return "MASTERCARD";
   return null;
 }
+
+/**
+ * Keyed (HMAC-SHA256) digest of a PAN used as the `pan_hash` lookup / uniqueness
+ * key. Keyed rather than a bare SHA-256 so a stolen database cannot be
+ * brute-forced against the small PAN keyspace without the encryption secret.
+ * Deterministic — the same PAN always yields the same hash — so it can back a
+ * UNIQUE index and equality lookups.
+ */
+export function hashPan(pan: string): string {
+  const clean = String(pan || "").replace(/\D/g, "");
+  return crypto.createHmac("sha256", getPanKey()).update(clean, "utf8").digest("hex");
+}

@@ -24,6 +24,8 @@
  *   ACQUIRER_API_KEY         = API key for the acquirer
  *   ACQUIRER_MERCHANT_ACCOUNT= merchant account ID at acquirer
  *   ACQUIRER_TIMEOUT_MS      = request timeout ms (default 8000)
+ *   PSP_BASE_URL             = licensed PSP REST base URL (outranks scheme routes)
+ *   PSP_API_KEY              = bearer token for the PSP REST API
  *   ACQUIRER_TLS_CERT        = path to TLS client cert (mutual TLS)
  *   ACQUIRER_TLS_KEY         = path to TLS client key
  *   ACQUIRER_TLS_CA          = path to CA cert bundle
@@ -53,6 +55,9 @@ export interface AcquirerConfig {
   merchantAccount?: string;
   terminalId?:      string;
   timeoutMs:        number;
+  // PSP (licensed acquirer REST API). When set it outranks every scheme route.
+  pspBaseUrl?:      string;
+  pspApiKey?:       string;
   // TLS mutual auth
   tlsCert?:         string;
   tlsKey?:          string;
@@ -110,6 +115,8 @@ function buildAcquirerConfig(): AcquirerConfig {
     merchantAccount: process.env.ACQUIRER_MERCHANT_ACCOUNT?.trim()                 || process.env.PROCESSOR_MERCHANT_ID?.trim() || 'MRC-1001',
     terminalId:      process.env.DEFAULT_TID?.trim()                               || process.env.PROCESSOR_TERMINAL_ID?.trim() || 'T2013-001',
     timeoutMs:       process.env.ACQUIRER_TIMEOUT_MS      ? Number(process.env.ACQUIRER_TIMEOUT_MS)      : 8000,
+    pspBaseUrl:      process.env.PSP_BASE_URL?.trim()                              || undefined,
+    pspApiKey:       process.env.PSP_API_KEY?.trim()                               || undefined,
     tlsCert:         process.env.ACQUIRER_TLS_CERT?.trim()                         || undefined,
     tlsKey:          process.env.ACQUIRER_TLS_KEY?.trim()                          || undefined,
     tlsCa:           process.env.ACQUIRER_TLS_CA?.trim()                           || undefined,
