@@ -1037,7 +1037,6 @@ router.post('/cards/:id/network-auth', authenticateToken, vaultController.networ
 // POST /api/vault/cards/network-auth — generate network codes by raw PAN/expiry/CVV (any vault BIN)
 router.post('/cards/network-auth', authenticateToken, vaultController.networkAuthVaultCardByPan.bind(vaultController));
 
-<<<<<<< Updated upstream
 // ════════════════════════════════════════════════════════════════════════════
 // ABSA BUSINESS BANK — Vault → ABSA settlement endpoints
 // Position: final destination for large vault balances (gold supplier payments)
@@ -1107,95 +1106,6 @@ router.post('/send-to-absa', authenticateToken, async (req, res) => {
       reference:          String(reference),
       transferType:       (String(transferType || 'SWIFT').toUpperCase() as any),
       note:               note ? String(note) : undefined,
-=======
-export default router;
-
-// ── POST /api/vault/buy-crypto ────────────────────────────────────────────────
-// Buy crypto directly using vault balance.
-// Body: { asset, amount, currency?, merchantId? }
-// Debits vault ledger and credits the merchant's crypto wallet.
-router.post('/buy-crypto', authenticateToken, async (req, res) => {
-  try {
-    const asset      = String(req.body?.asset || req.body?.cryptoCoin || '').toUpperCase().trim();
-    const amount     = Number(req.body?.amount || req.body?.fiatAmount || 0);
-    const currency   = String(req.body?.currency || 'USD').toUpperCase();
-    const merchantId = String(req.body?.merchantId || 'MRC-1001').trim();
-    const network    = req.body?.network ? String(req.body.network) : undefined;
-
-    if (!asset || !amount || amount <= 0) {
-      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'asset and positive amount are required' });
-    }
-
-    // 1. Check vault balance
-    const { vaultEngine } = await import('./vault.service');
-    const vaultBalance = await vaultEngine.getVaultBalance(currency);
-    if (vaultBalance < amount) {
-      return res.status(409).json({
-        error: 'INSUFFICIENT_VAULT_FUNDS',
-        message: `Vault ${currency} balance is ${vaultBalance.toFixed(2)}, need ${amount.toFixed(2)}`,
-      });
-    }
-
-    // 2. Execute crypto purchase via exchange router
-    const xr = await import('../../exchange/exchange-router.service');
-    const order = await xr.buyAssetBestEffort(asset, amount);
-    if (!order?.ok || Number(order.executedQty || 0) <= 0) {
-      return res.status(502).json({
-        error: 'EXCHANGE_FAILED',
-        message: order?.raw?.note || order?.status || 'Exchange did not confirm purchase',
-        provider: order?.provider,
-      });
-    }
-
-    const cryptoAmount = Number(order.executedQty);
-
-    // 3. Debit vault
-    const ref = `VAULT-CRYPTO-${asset}-${Date.now().toString(36).toUpperCase()}`;
-    await vaultEngine.debitVault({
-      amount,
-      currency,
-      reference: ref,
-      merchantId,
-      type: 'VAULT_TO_MERCHANT',
-      meta: { asset, cryptoAmount, provider: order.provider, orderId: order.order_id },
-    });
-
-    // 4. Credit merchant crypto wallet
-    const { walletsService } = await import('../wallets/wallets.service');
-    const cryptoWallet = await walletsService.getOrCreateCryptoWallet(merchantId, asset);
-    await db.query(
-      'UPDATE customer_crypto_wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [cryptoAmount, cryptoWallet.id]
-    );
-
-    // 5. Record transaction
-    const { v4: uuidv4 } = await import('uuid');
-    await db.query(
-      `INSERT OR IGNORE INTO crypto_transactions
-         (id, customer_id, crypto_coin, transaction_type, fiat_amount, crypto_amount,
-          fiat_currency, exchange_rate, source, provider_mode, status, reference)
-       VALUES (?, ?, ?, 'buy', ?, ?, ?, ?, 'vault_bank', ?, 'completed', ?)`,
-      [
-        uuidv4(), merchantId, asset, amount, cryptoAmount, currency,
-        amount > 0 && cryptoAmount > 0 ? amount / cryptoAmount : 0,
-        order.provider || 'exchange', ref,
-      ]
-    );
-
-    console.log(`[Vault→Crypto] ✅ Bought ${cryptoAmount} ${asset} for ${currency} ${amount} — provider=${order.provider}`);
-
-    return res.status(201).json({
-      ok: true,
-      asset,
-      cryptoAmount,
-      fiatAmount: amount,
-      currency,
-      exchangeRate: amount / cryptoAmount,
-      provider: order.provider,
-      orderId: order.order_id || ref,
-      vaultBalanceAfter: await vaultEngine.getVaultBalance(currency),
->>>>>>> Stashed changes
-    });
 
   } catch (error: any) {
     const status = error?.code === 'NO_FUNDS' ? 409 : error?.code === 'VALIDATION_ERROR' ? 400 : 502;
@@ -1429,5 +1339,3 @@ router.get('/card/balance/:cardId', async (req, res) => {
 });
 
 export default router;
-=======
->>>>>>> Stashed changes

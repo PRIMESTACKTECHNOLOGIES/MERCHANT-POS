@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { OverviewPage } from "./pages/OverviewPage";
-import { NotificationProvider } from "./contexts/NotificationContext";
+import { NotificationProvider } from "./contexts/NotificationProvider";
 import { TerminalsPage } from "./pages/TerminalsPage";
 import { MerchantProfilesPage } from "./pages/MerchantProfilesPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
