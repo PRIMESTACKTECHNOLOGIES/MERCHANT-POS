@@ -33,7 +33,6 @@ import { CustomerLoginPage } from "./pages/customer-portal/CustomerLoginPage";
 import { CustomerOverviewPage } from "./pages/customer-portal/CustomerOverviewPage";
 import { CustomerSendPage } from "./pages/customer-portal/CustomerSendPage";
 import { CustomerReceivePage } from "./pages/customer-portal/CustomerReceivePage";
-import { CustomerPayPage } from "./pages/customer-portal/CustomerPayPage";
 import { CustomerC2MPage } from "./pages/customer-portal/CustomerC2MPage";
 import { CustomerProfilePage } from "./pages/customer-portal/CustomerProfilePage";
 import { isCustomerLoggedIn } from "./lib/customerApi";
@@ -146,7 +145,7 @@ function App() {
           <Route path="overview" element={<CustomerOverviewPage />} />
           <Route path="send" element={<CustomerSendPage />} />
           <Route path="receive" element={<CustomerReceivePage />} />
-          <Route path="pay" element={<CustomerPayPage />} />
+          <Route path="pay" element={<Navigate to="/portal/processor" replace />} />
           <Route path="c2m" element={<CustomerC2MPage />} />
           <Route path="profile" element={<CustomerProfilePage />} />
         </Route>
