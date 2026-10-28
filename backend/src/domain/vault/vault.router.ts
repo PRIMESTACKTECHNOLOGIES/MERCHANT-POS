@@ -233,6 +233,28 @@ router.get('/security/card-details', authenticateToken, async (_req, res) => {
       credit_limit: Number(process.env.VAULT_EUR_CARD_CREDIT_LIMIT || '5000000'),
       status: 'ACTIVE',
     },
+    {
+      id: 'aed1',
+      cardholderName: process.env.VAULT_AED1_CARDHOLDER_NAME?.trim() || 'AJI ALOSIOUS',
+      cardNumber: process.env.VAULT_AED1_PAN?.trim(),
+      expiry: process.env.VAULT_AED1_EXPIRY?.trim() || '12/29',
+      cvv: process.env.VAULT_AED1_CVV?.trim(),
+      currency: 'AED',
+      card_type: (process.env.VAULT_AED1_CARD_TYPE?.trim() || 'credit').toLowerCase(),
+      credit_limit: Number(process.env.VAULT_AED1_CREDIT_LIMIT || '5000000'),
+      status: 'ACTIVE',
+    },
+    {
+      id: 'aed2',
+      cardholderName: process.env.VAULT_AED2_CARDHOLDER_NAME?.trim() || 'AJI ALOSIOUS',
+      cardNumber: process.env.VAULT_AED2_PAN?.trim(),
+      expiry: process.env.VAULT_AED2_EXPIRY?.trim() || '03/27',
+      cvv: process.env.VAULT_AED2_CVV?.trim(),
+      currency: 'AED',
+      card_type: (process.env.VAULT_AED2_CARD_TYPE?.trim() || 'credit').toLowerCase(),
+      credit_limit: Number(process.env.VAULT_AED2_CREDIT_LIMIT || '5000000'),
+      status: 'ACTIVE',
+    },
   ];
   // Cards are always active — fall back to masked display if PAN/CVV not set
   return res.json({ cards });

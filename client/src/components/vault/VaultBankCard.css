@@ -340,3 +340,84 @@
   .vault-bank-card-pan { letter-spacing: .07em; }
   .vault-bank-card-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ── Compact mode (4-card grid) ─────────────────────────────────────────── */
+.vault-bank-card-panel-compact {
+  max-width: 100%;
+  padding: 12px;
+  border-radius: 16px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-heading {
+  margin-bottom: 10px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-heading h2 {
+  font-size: 13px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-kicker {
+  font-size: 9px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-switch {
+  font-size: 9px;
+  padding: 2px 8px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-stage {
+  max-width: 260px;
+  max-height: 164px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-pan {
+  font-size: 14px;
+  letter-spacing: 1.5px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-label {
+  font-size: 7px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-bottom strong {
+  font-size: 11px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-chip span {
+  width: 16px;
+  height: 12px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-visa {
+  width: 32px;
+  height: 11px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-details {
+  font-size: 10px;
+  padding: 8px;
+  gap: 4px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-details span {
+  font-size: 8px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-details strong {
+  font-size: 10px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-hint {
+  font-size: 8px;
+  margin-top: 6px;
+}
+
+/* ── Mastercard text logo ──────────────────────────────────────────────── */
+.vault-bank-card-mc {
+  position: absolute;
+  bottom: 18px;
+  right: 16px;
+  font-family: 'Arial Black', 'Helvetica Neue', sans-serif;
+  font-size: 14px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: -0.5px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,.3);
+  z-index: 3;
+}
+.vault-bank-card-mc-back {
+  bottom: 14px;
+  right: 14px;
+}
+.vault-bank-card-panel-compact .vault-bank-card-mc {
+  font-size: 11px;
+  bottom: 14px;
+  right: 12px;
+}

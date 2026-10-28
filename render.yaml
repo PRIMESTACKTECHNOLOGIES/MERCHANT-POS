@@ -330,6 +330,34 @@ services:
       - key: VAULT_EUR_CARD_CREDIT_LIMIT
         value: "5000000"
 
+      # ── AED Vault Card 1 (Visa) ───────────────────────────────────────────
+      - key: VAULT_AED1_CARDHOLDER_NAME
+        value: AJI ALOSIOUS
+      - key: VAULT_AED1_PAN
+        value: "4137450007561082"
+      - key: VAULT_AED1_EXPIRY
+        value: "12/29"
+      - key: VAULT_AED1_CVV
+        value: "335"
+      - key: VAULT_AED1_CARD_TYPE
+        value: credit
+      - key: VAULT_AED1_CREDIT_LIMIT
+        value: "5000000"
+
+      # ── AED Vault Card 2 (Mastercard) ────────────────────────────────────
+      - key: VAULT_AED2_CARDHOLDER_NAME
+        value: AJI ALOSIOUS
+      - key: VAULT_AED2_PAN
+        value: "5416842000418832"
+      - key: VAULT_AED2_EXPIRY
+        value: "03/27"
+      - key: VAULT_AED2_CVV
+        value: "156"
+      - key: VAULT_AED2_CARD_TYPE
+        value: credit
+      - key: VAULT_AED2_CREDIT_LIMIT
+        value: "5000000"
+
       # ── Payout Provider ────────────────────────────────────────────────────
       - key: BANK_PAYOUT_PROVIDER
         value: internal

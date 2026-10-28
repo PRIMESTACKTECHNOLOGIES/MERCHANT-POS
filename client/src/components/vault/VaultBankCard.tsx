@@ -18,8 +18,9 @@ type VaultBankCardProps = {
   detailsBusy?: boolean;
   detailsError?: string;
   onLoadDetails?: () => void;
-  currency?: "USD" | "EUR";
+  currency?: "USD" | "EUR" | "AED";
   metal?: "silver" | "gold";
+  compact?: boolean;
 };
 
 const VISA_LOGO = "/visa-logo.png";
@@ -35,13 +36,19 @@ export default function VaultBankCard({
   onLoadDetails,
   currency = "USD",
   metal = "silver",
+  compact = false,
 }: VaultBankCardProps) {
   const [showBack, setShowBack] = useState(false);
   const [showCvv, setShowCvv] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
+  // Detect card scheme from first digit of PAN (4 = Visa, 5 = Mastercard)
+  const panDigits = String(revealedDetails?.cardNumber || maskedPan || "").replace(/\D/g, "");
+  const isMastercard = panDigits.startsWith("5");
+  const schemeLabel = isMastercard ? "Mastercard" : "Visa";
+
   return (
-    <section className={`vault-bank-card-panel vault-bank-card-panel-${metal}`} aria-label={`${currency} Vault Bank card`}>
+    <section className={`vault-bank-card-panel vault-bank-card-panel-${metal}${compact ? " vault-bank-card-panel-compact" : ""}`} aria-label={`${currency} Vault Bank card`}>
       <div className="vault-bank-card-heading">
         <div>
           <p className="vault-bank-card-kicker">Vault Bank</p>
@@ -100,7 +107,11 @@ export default function VaultBankCard({
               <strong style={{ color: '#ffd700', letterSpacing: '0.05em' }}>CREDIT</strong>
             </div>
           </div>
-          <img className="vault-bank-card-visa" src={VISA_LOGO} alt="Visa" />
+          {isMastercard ? (
+            <span className="vault-bank-card-mc" aria-label="Mastercard">MC</span>
+          ) : (
+            <img className="vault-bank-card-visa" src={VISA_LOGO} alt="Visa" />
+          )}
         </div>
 
         <div className="vault-bank-card-face vault-bank-card-back">
@@ -113,7 +124,11 @@ export default function VaultBankCard({
               <strong>{showCvv ? cvv : "•••"}</strong>
             </button>
           </div>
-          <img className="vault-bank-card-visa vault-bank-card-visa-back" src={VISA_LOGO} alt="Visa" />
+          {isMastercard ? (
+            <span className="vault-bank-card-mc vault-bank-card-mc-back" aria-label="Mastercard">MC</span>
+          ) : (
+            <img className="vault-bank-card-visa vault-bank-card-visa-back" src={VISA_LOGO} alt="Visa" />
+          )}
         </div>
       </div>
       {showDetails && (
