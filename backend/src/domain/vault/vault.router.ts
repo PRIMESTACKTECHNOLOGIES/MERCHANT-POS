@@ -1106,10 +1106,12 @@ router.post('/send-to-absa', authenticateToken, async (req, res) => {
       reference:          String(reference),
       transferType:       (String(transferType || 'SWIFT').toUpperCase() as any),
       note:               note ? String(note) : undefined,
+    });
+
+    return res.json({ ok: true, ...result });
 
   } catch (error: any) {
-    const status = error?.code === 'NO_FUNDS' ? 409 : error?.code === 'VALIDATION_ERROR' ? 400 : 502;
-    return res.status(status).json({ error: error?.code || 'VAULT_CRYPTO_BUY_FAILED', message: error?.message || 'Vault crypto buy failed' });
+    return res.status(500).json({ ok: false, error: (error as any)?.message || 'ABSA transfer failed' });
   }
 });
 

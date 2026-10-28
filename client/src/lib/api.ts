@@ -2300,3 +2300,45 @@ function normalizeIssuedCard(raw: any): IssuedVirtualCard {
     activatedAt: raw?.activatedAt ?? raw?.activated_at ?? null,
   };
 }
+
+// ── Merchant Profiles ────────────────────────────────────────────────────────
+export interface MerchantProfile {
+  merchantId: string;
+  merchantName: string;
+  displayName?: string;
+  wallets: { balance: number; currency: string }[];
+  createdAt?: string;
+}
+
+export async function fetchMerchantProfiles(): Promise<MerchantProfile[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/merchants`);
+  const data = await res.json().catch(() => ({ merchants: [] }));
+  if (!res.ok) throw new Error(data.error || data.message || "Failed to load merchant profiles");
+  const merchants = Array.isArray(data) ? data : (data.merchants || data.profiles || []);
+  return merchants.map((m: any): MerchantProfile => ({
+    merchantId: String(m.merchantId || m.merchant_id || m.id || ""),
+    merchantName: String(m.merchantName || m.merchant_name || m.name || m.displayName || ""),
+    displayName: m.displayName || m.display_name || undefined,
+    wallets: Array.isArray(m.wallets)
+      ? m.wallets.map((w: any) => ({ balance: Number(w.balance || 0), currency: String(w.currency || "USD") }))
+      : [{ balance: Number(m.balance || 0), currency: String(m.currency || "USD") }],
+    createdAt: m.createdAt || m.created_at,
+  }));
+}
+
+export async function deleteMerchantProfile(
+  merchantId: string,
+  confirmName: string
+): Promise<{ removedTerminals: unknown[]; removedWalletCount: number }> {
+  const res = await fetchWithAuth(`${BASE_URL}/api/merchants/${encodeURIComponent(merchantId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmName }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || "Failed to delete merchant profile");
+  return {
+    removedTerminals: Array.isArray(data.removedTerminals) ? data.removedTerminals : [],
+    removedWalletCount: Number(data.removedWalletCount ?? 0),
+  };
+}
