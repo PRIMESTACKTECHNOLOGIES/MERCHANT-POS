@@ -45,7 +45,6 @@ export default function VaultBankCard({
   // Detect card scheme from first digit of PAN (4 = Visa, 5 = Mastercard)
   const panDigits = String(revealedDetails?.cardNumber || maskedPan || "").replace(/\D/g, "");
   const isMastercard = panDigits.startsWith("5");
-  const schemeLabel = isMastercard ? "Mastercard" : "Visa";
 
   return (
     <section className={`vault-bank-card-panel vault-bank-card-panel-${metal}${compact ? " vault-bank-card-panel-compact" : ""}`} aria-label={`${currency} Vault Bank card`}>
