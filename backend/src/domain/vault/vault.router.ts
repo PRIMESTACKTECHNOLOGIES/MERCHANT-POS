@@ -1112,7 +1112,6 @@ router.post('/send-to-absa', authenticateToken, async (req, res) => {
     return res.status(status).json({ error: error?.code || 'VAULT_CRYPTO_BUY_FAILED', message: error?.message || 'Vault crypto buy failed' });
   }
 });
-<<<<<<< Updated upstream
 
 /**
  * GET /api/vault/absa/balance?currency=USD
