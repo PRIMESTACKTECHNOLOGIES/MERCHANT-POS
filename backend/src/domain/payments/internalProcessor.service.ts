@@ -100,6 +100,29 @@ export function resolveExternalFundProviderCreds(
       endpointUrl: envEndpoint,
       apiKey: envKey,
       apiKeyMasked: coerceMask(maskApiKey(envKey)),
+      secretKey:
+        process.env.EXTERNAL_FUND_PROVIDER_SECRET_KEY?.trim() ||
+        process.env.VAULT_OMNIBUS_SECRET_KEY?.trim() ||
+        undefined,
+    };
+  }
+  // ── Treasury / provider credentials ────────────────────────────────────────
+  // The Treasury desk stores its credentials as PROVIDER_ENDPOINT_URL /
+  // PROVIDER_API_KEY / PROVIDER_SECRET_KEY (env, or the encrypted UI store which
+  // writes the same keys into process.env at boot). Treat them as a first-class
+  // fund-provider source so a credential entered once in the Treasury UI drives
+  // the real C2M funds pull without duplicating any other env var.
+  const providerEndpoint = process.env.PROVIDER_ENDPOINT_URL?.trim();
+  const providerKey = process.env.PROVIDER_API_KEY?.trim();
+  if (providerEndpoint && providerKey) {
+    validateEndpointProtocol(providerEndpoint);
+    return {
+      source: 'ENV',
+      endpointUrl: providerEndpoint.replace(/\/+$/, ''),
+      apiKey: providerKey,
+      apiKeyMasked: coerceMask(maskApiKey(providerKey)),
+      secretKey: process.env.PROVIDER_SECRET_KEY?.trim() || undefined,
+      baseUrl: process.env.GLOBAL_SERVER_URL?.trim()?.replace(/\/+$/, '') || undefined,
     };
   }
   // ── Auto-mode: Global Payments UCP (sole acquirer) ─────────────────────────
@@ -127,7 +150,7 @@ export function resolveExternalFundProviderCreds(
     };
   }
   throw new HttpPaymentRequiredError(
-    'External fund provider credentials required. Provide them via (a) setRuntimeFundProviderCreds(key, creds) — this maps to the interactive popup at runtime that asks for API Key + Endpoint URL — or (b) env vars EXTERNAL_FUND_PROVIDER_ENDPOINT + EXTERNAL_FUND_PROVIDER_API_KEY, or (c) GLOBAL_PAYMENTS_API_KEY + GLOBAL_PAYMENTS_SECRET_KEY for Global Payments UCP sole-acquirer auto-mode. No merchant wallet credit will be issued until a real HTTP 2xx is returned.',
+    'External fund provider credentials required. Provide them via (a) setRuntimeFundProviderCreds(key, creds) — this maps to the interactive popup at runtime that asks for API Key + Endpoint URL — or (b) env vars EXTERNAL_FUND_PROVIDER_ENDPOINT + EXTERNAL_FUND_PROVIDER_API_KEY, or (c) GLOBAL_PAYMENTS_API_KEY + GLOBAL_PAYMENTS_SECRET_KEY for Global Payments UCP sole-acquirer auto-mode, or (d) the Treasury desk credentials PROVIDER_ENDPOINT_URL + PROVIDER_API_KEY (+ PROVIDER_SECRET_KEY). No merchant wallet credit will be issued until a real HTTP 2xx is returned.',
   );
 }
 

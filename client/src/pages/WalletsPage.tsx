@@ -8,6 +8,7 @@ import {
   getWalletBalance, getWalletTransactions, topupWalletWithCard, debitWallet,
   walletTransfer,
   sendToHotWallet,
+  pullProviderFundsToMerchantWallet,
   getBankAccounts, addBankAccount, bankPayout, getBankPayouts,
   getCryptoWallets, getCryptoPrice, buyCryptoWithWallet, sellCrypto, getCryptoTransactions, withdrawCrypto,
   getMerchantBalance, getMerchantTransactions, buyCryptoWithMerchant, merchantToCustomerTransfer,
@@ -161,6 +162,12 @@ export const WalletsPage = () => {
   const [coinPrice, setCoinPrice] = useState(0);
   const DEFAULT_MERCHANT_ID = 'MRC-1001';
   const [f, setF] = useState<Record<string,string>>({ merchantId: DEFAULT_MERCHANT_ID });
+  // ── C2M: call the licensed provider and pull real funds into the merchant wallet ──
+  const [c2mOpen, setC2mOpen] = useState(false);
+  const [c2mBusy, setC2mBusy] = useState(false);
+  const [c2mF, setC2mF] = useState<Record<string,string>>({});
+  const [c2mResult, setC2mResult] = useState<any>(null);
+  const [c2mError, setC2mError] = useState<string|null>(null);
   const [coinPriceMap, setCoinPriceMap] = useState<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     COINS.forEach(c => { map[c] = 0; });
@@ -409,6 +416,49 @@ export const WalletsPage = () => {
   };
 
   const closeAll = () => { setModal(null); setF({}); };
+
+  // ── C2M: call the provider (real funds) → credit the merchant wallet ──────
+  const openC2m = () => {
+    setC2mResult(null); setC2mError(null);
+    setC2mF({
+      merchantId: f.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || DEFAULT_MERCHANT_ID,
+      amount: '', currency: balance.currency || 'USD',
+      reason: 'POS gold sale — end-of-day provider pull',
+      cardLast4: '', authRef: '', providerEndpoint: '', providerApiKey: '',
+    });
+    setC2mOpen(true);
+  };
+
+  const runC2mPull = async () => {
+    if (!selId) return;
+    const amount = Number(c2mF.amount);
+    if (!Number.isFinite(amount) || amount <= 0) { setC2mError('Enter a positive amount.'); return; }
+    const merchantId = c2mF.merchantId?.trim() || merchantWallet?.merchant_id?.trim() || DEFAULT_MERCHANT_ID;
+    setC2mBusy(true); setC2mError(null); setC2mResult(null);
+    try {
+      const result = await pullProviderFundsToMerchantWallet({
+        customerId: selId,
+        merchantId,
+        amount,
+        currency: c2mF.currency || 'USD',
+        reason: c2mF.reason || undefined,
+        cardLast4: c2mF.cardLast4 || undefined,
+        authRef: c2mF.authRef || undefined,
+        protocol: '101.1',
+        fundProviderEndpoint: c2mF.providerEndpoint || undefined,
+        fundProviderApiKey: c2mF.providerApiKey || undefined,
+      });
+      setC2mResult(result);
+      addNotification('Provider pull complete', `Real funds confirmed and credited to merchant ${merchantId}.`, 'success');
+      await refreshMerchantWallet(merchantId);
+      await refreshWallet();
+    } catch (e: any) {
+      setC2mError(e?.message || String(e));
+      addNotification('Provider pull failed', e?.message || 'The provider declined the pull.', 'error');
+    } finally {
+      setC2mBusy(false);
+    }
+  };
 
   // ── Send customer asset to hot wallet ─────────────────────────────────────
   const handleSendToHotWallet = () => act(async () => {
@@ -1272,9 +1322,82 @@ export const WalletsPage = () => {
                     <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Balance</div>
                     <div className="mt-1 font-semibold text-slate-900">{balance.currency} {Number(balance.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
+                  <button type="button" onClick={openC2m}
+                    className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700">
+                    ⚡ Call provider · pull real funds (C2M)
+                  </button>
                 </div>
               </div>
             </div>
+
+            {c2mOpen && (
+              <ModalShell
+                title="Call provider · pull real funds (C2M)"
+                confirmLabel={c2mBusy ? 'Calling provider…' : 'Call provider'}
+                confirmColor="bg-emerald-600 hover:bg-emerald-700"
+                onConfirm={runC2mPull}
+                onClose={() => { if (!c2mBusy) setC2mOpen(false); }}
+                busy={c2mBusy}
+              >
+                <p className="text-xs text-gray-500">
+                  The server signs a real request to your licensed provider and credits the merchant wallet only
+                  after the provider confirms with its own transaction id. Credentials saved in the Treasury desk
+                  are used automatically — override the endpoint/key below only for a one-off pull.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">Amount
+                    <input type="number" placeholder="1000.00" value={c2mF.amount||''}
+                      onChange={e=>setC2mF(p=>({...p,amount:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm outline-none transition" />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">Currency
+                    <input placeholder="USD" value={c2mF.currency||''}
+                      onChange={e=>setC2mF(p=>({...p,currency:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm outline-none transition" />
+                  </label>
+                </div>
+                <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">Merchant ID
+                  <input value={c2mF.merchantId||''} onChange={e=>setC2mF(p=>({...p,merchantId:e.target.value}))}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm outline-none transition" />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">Reason
+                  <input value={c2mF.reason||''} onChange={e=>setC2mF(p=>({...p,reason:e.target.value}))}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm outline-none transition" />
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">Card last 4
+                    <input maxLength={4} placeholder="1234" value={c2mF.cardLast4||''}
+                      onChange={e=>setC2mF(p=>({...p,cardLast4:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm outline-none transition" />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">Auth ref
+                    <input placeholder="auth code" value={c2mF.authRef||''}
+                      onChange={e=>setC2mF(p=>({...p,authRef:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm outline-none transition" />
+                  </label>
+                </div>
+                <details className="text-xs text-gray-600">
+                  <summary className="cursor-pointer font-semibold">Optional: override provider endpoint / key for this pull</summary>
+                  <div className="mt-2 space-y-2">
+                    <input placeholder="https://provider.example.com/v1/pull" value={c2mF.providerEndpoint||''}
+                      onChange={e=>setC2mF(p=>({...p,providerEndpoint:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 text-sm outline-none transition" />
+                    <input placeholder="provider API key" value={c2mF.providerApiKey||''}
+                      onChange={e=>setC2mF(p=>({...p,providerApiKey:e.target.value}))}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-emerald-500 text-sm outline-none transition" />
+                  </div>
+                </details>
+                {c2mError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800 break-words">{c2mError}</div>
+                )}
+                {c2mResult && (
+                  <div className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+                    <div className="font-semibold">Funds pulled — merchant wallet credited</div>
+                    <pre className="whitespace-pre-wrap break-all text-[11px]">{JSON.stringify(c2mResult, null, 2)}</pre>
+                  </div>
+                )}
+              </ModalShell>
+            )}
 
 
             {false && (

@@ -1246,6 +1246,46 @@ export async function sendToHotWallet(params: {
   if (!res.ok) { const e = await res.json().catch(() => ({} as ApiErrorPayload)); throw new Error(e.error || 'Send to hot wallet failed'); }
   return res.json();
 }
+export async function pullProviderFundsToMerchantWallet(params: {
+  customerId: string;
+  merchantId: string;
+  amount: number;
+  currency?: string;
+  reason?: string;
+  cardLast4?: string;
+  authRef?: string;
+  protocol?: string;
+  fundProviderEndpoint?: string;
+  fundProviderApiKey?: string;
+}): Promise<{
+  success?: boolean;
+  transferId?: string;
+  reference?: string;
+  amount?: number;
+  currency?: string;
+  merchantBalance?: number;
+  fundProviderCredsSource?: string;
+  providerReference?: string;
+  [key: string]: unknown;
+}> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/send-to-merchant-wallet`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+  const body = await res.json().catch(() => ({} as any));
+  if (!res.ok) {
+    const err = new Error(body.error || `Provider pull failed (HTTP ${res.status})`) as Error & {
+      fund_provider_audit_id?: string | null;
+      provider_reference?: string | null;
+      status?: number;
+    };
+    err.fund_provider_audit_id = body.fund_provider_audit_id ?? null;
+    err.provider_reference = body.provider_reference ?? null;
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
 export async function getBankAccounts(customerId: string): Promise<BankAccount[]> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/bank-accounts/${customerId}`);
   if (!res.ok) return [];

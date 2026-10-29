@@ -1780,17 +1780,34 @@ Generated: ${now}
     if (!endpoint) throw new Error('Provider endpoint is not configured on the server');
     validateEndpointProtocol(endpoint);
 
+    const normalize = (v: unknown) => String(v || '').trim().replace(/\/+$/, '').toLowerCase();
+    const allowUrl = (v: unknown) => {
+      const n = normalize(v);
+      return /^https?:\/\//.test(n) ? n : '';
+    };
+    const allowHost = (v: unknown) => {
+      const n = normalize(v);
+      if (!n) return '';
+      if (/^https?:\/\//.test(n)) { try { return new URL(n).hostname; } catch { return ''; } }
+      return n.split('/')[0].split(':')[0];
+    };
+
     const allowlist = [
       process.env.CUSTOMER_WALLET_PROVIDER_URL,
+      process.env.PROVIDER_ENDPOINT_URL,
       ...String(process.env.CUSTOMER_WALLET_PROVIDER_ALLOWLIST || '').split(','),
-    ]
-      .map((v) => String(v || '').trim().replace(/\/+$/, '').toLowerCase())
-      .filter(Boolean);
+    ].map(allowUrl).filter(Boolean);
+    const hostAllowlist = [
+      ...String(process.env.CUSTOMER_WALLET_PROVIDER_ALLOWLIST || '').split(','),
+      ...String(process.env.CUSTOMER_WALLET_PROVIDER_ALLOWED_HOSTS || '').split(','),
+    ].map(allowHost).filter(Boolean);
 
-    if (allowlist.length === 0) {
-      throw new Error('No customer wallet provider endpoint is allowlisted on the server (set CUSTOMER_WALLET_PROVIDER_URL)');
+    if (allowlist.length === 0 && hostAllowlist.length === 0) {
+      throw new Error('No customer wallet provider endpoint is allowlisted on the server (set CUSTOMER_WALLET_PROVIDER_URL or PROVIDER_ENDPOINT_URL)');
     }
-    if (!allowlist.includes(endpoint.replace(/\/+$/, '').toLowerCase())) {
+    const endpointNormalized = normalize(endpoint);
+    const endpointHost = allowHost(endpoint);
+    if (!allowlist.includes(endpointNormalized) && !hostAllowlist.includes(endpointHost)) {
       throw new Error(`Provider endpoint ${endpoint} is not allowlisted`);
     }
     return endpoint;
