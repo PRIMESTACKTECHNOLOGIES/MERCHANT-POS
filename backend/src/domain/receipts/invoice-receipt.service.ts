@@ -1,7 +1,7 @@
 import { db } from '../../config/db';
 import { v4 as uuidv4 } from 'uuid';
 
-export type FinancialDocumentType = 'POS_INVOICE' | 'WALLET_TRANSFER_RECEIPT' | 'CRYPTO_PURCHASE_RECEIPT' | 'BANK_PAYOUT_RECEIPT';
+export type FinancialDocumentType = 'POS_INVOICE' | 'WALLET_TRANSFER_RECEIPT' | 'WALLET_LEDGER_RECEIPT' | 'CRYPTO_PURCHASE_RECEIPT' | 'BANK_PAYOUT_RECEIPT';
 
 export interface CreateFinancialDocumentInput {
   type: FinancialDocumentType;
@@ -101,9 +101,14 @@ export class InvoiceReceiptService {
       const result = await this.create(input);
       result.created ? created++ : existing++;
     };
+    // Optional source tables may not exist in every deployment — skip those
+    // instead of failing the whole reconciliation.
+    const safeQuery = async (sql: string): Promise<any[]> => {
+      try { return (await db.query(sql)).rows; } catch { return []; }
+    };
 
-    const pos = await db.query(`SELECT * FROM pos2013_transactions`);
-    for (const row of pos.rows) {
+    const pos = await safeQuery(`SELECT * FROM pos2013_transactions`);
+    for (const row of pos) {
       await create({
         type: 'POS_INVOICE', sourceTable: 'pos2013_transactions', sourceId: String(row.id),
         merchantId: row.merchant_id, amount: Number(row.amount_minor || 0) / 100,
@@ -112,8 +117,8 @@ export class InvoiceReceiptService {
       });
     }
 
-    const transfers = await db.query(`SELECT * FROM wallet_transfers`);
-    for (const row of transfers.rows) {
+    const transfers = await safeQuery(`SELECT * FROM wallet_transfers`);
+    for (const row of transfers) {
       await create({
         type: 'WALLET_TRANSFER_RECEIPT', sourceTable: 'wallet_transfers', sourceId: String(row.id),
         customerId: row.receiver_customer_id, amount: Number(row.amount || 0), currency: row.currency || 'USD',
@@ -122,8 +127,8 @@ export class InvoiceReceiptService {
       });
     }
 
-    const crypto = await db.query(`SELECT * FROM crypto_transactions_log_v2`);
-    for (const row of crypto.rows) {
+    const crypto = await safeQuery(`SELECT * FROM crypto_transactions_log_v2`);
+    for (const row of crypto) {
       await create({
         type: 'CRYPTO_PURCHASE_RECEIPT', sourceTable: 'crypto_transactions_log_v2', sourceId: String(row.id),
         customerId: row.customer_id, amount: Number(row.from_amount || 0), currency: row.from_currency || 'USD',
@@ -131,8 +136,8 @@ export class InvoiceReceiptService {
       });
     }
 
-    const payouts = await db.query(`SELECT * FROM bank_payouts`);
-    for (const row of payouts.rows) {
+    const payouts = await safeQuery(`SELECT * FROM bank_payouts`);
+    for (const row of payouts) {
       await create({
         type: 'BANK_PAYOUT_RECEIPT', sourceTable: 'bank_payouts', sourceId: String(row.id),
         customerId: row.customer_id, amount: Number(row.amount || 0), currency: row.currency || 'USD',
@@ -140,13 +145,29 @@ export class InvoiceReceiptService {
       });
     }
 
+    // Wallet ledger: card charges, top-ups, C2M provider pulls and every other
+    // customer/market wallet movement gets its own receipt document.
+    const walletLedger = await safeQuery(`
+      SELECT wt.*, cw.customer_id AS ledger_customer_id
+        FROM wallet_transactions wt
+        LEFT JOIN customer_wallets cw ON cw.id = wt.wallet_id`);
+    for (const row of walletLedger) {
+      await create({
+        type: 'WALLET_LEDGER_RECEIPT', sourceTable: 'wallet_transactions', sourceId: String(row.id),
+        merchantId: null, customerId: row.ledger_customer_id ?? null,
+        amount: Number(row.amount || 0), currency: row.currency || 'USD',
+        status: row.status || 'COMPLETED', reference: row.reference,
+        description: row.description || `Wallet ${row.type || 'credit'} — ${row.source || 'wallet'}`, details: row,
+      });
+    }
+
     // Repair the legacy POS receipt index as well. This keeps older receipt
     // screens populated while financial_documents remains the source of truth.
-    const posDocuments = await db.query(`
+    const posDocuments = await safeQuery(`
       SELECT document_number, source_id, merchant_id, document_data, created_at
       FROM financial_documents
       WHERE source_table = 'pos2013_transactions'`);
-    for (const row of posDocuments.rows) {
+    for (const row of posDocuments) {
       await db.query(
         `INSERT OR IGNORE INTO receipts (id, receipt_id, transaction_id, merchant_id, receipt_data, generated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
@@ -158,6 +179,7 @@ export class InvoiceReceiptService {
   }
 
   async list(filters: { merchantId?: string; customerId?: string; type?: string; limit?: number } = {}) {
+    await this.ensureSchema();
     const where: string[] = [];
     const params: any[] = [];
     if (filters.merchantId) { where.push('merchant_id = ?'); params.push(filters.merchantId); }
@@ -169,6 +191,7 @@ export class InvoiceReceiptService {
   }
 
   async get(documentNumber: string) {
+    await this.ensureSchema();
     const result = await db.query('SELECT * FROM financial_documents WHERE document_number = ? LIMIT 1', [documentNumber]);
     if (!result.rows.length) return null;
     return { ...result.rows[0], documentData: JSON.parse(result.rows[0].document_data) };

@@ -51,6 +51,10 @@ export class ReceiptsController {
       const merchantId = (req.headers["x-merchant-id"] as string) || "MRC-1001";
       const limit = parseInt(req.query.limit as string) || 50;
 
+      // Every transaction must have a receipt — issue any that are missing
+      // (e.g. recorded before auto-issue was wired into the payment path).
+      await receiptsService.ensureAllIssued();
+
       const receipts = await receiptsService.getReceipts(merchantId, limit);
       res.json({ success: true, receipts });
     } catch (e: any) {

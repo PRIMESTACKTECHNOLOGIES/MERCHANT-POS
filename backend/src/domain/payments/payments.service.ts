@@ -7,6 +7,7 @@ import { buildEmvChargePayload, parseTlv } from './emv-tlv-parser';
 import { syncOfflinePreflight, type PreflightPayload } from './offline-decline-preflight';
 import type { OnlineAuthorizationResult } from './pos-decision.service';
 import { v4 as uuidv4 } from 'uuid';
+import { receiptsService } from '../receipts/receipts.service';
 
 interface PosTransactionPayload extends PreflightPayload {
   customerId?:      string;
@@ -844,6 +845,11 @@ export class PaymentsService {
               new Date().toISOString(),
             ]
           );
+
+          // ── AUTO-RECEIPT ───────────────────────────────────────────────────
+          // Every approved transaction issues its own 80mm thermal receipt and
+          // immutable financial document. Best-effort: never blocks the payment.
+          await receiptsService.issueForTransaction(paymentIntentId, merchantId);
 
           // ── REAL ACQUIRER CAPTURE (201.3) ──────────────────────────────────
           // If acquirer is configured, call capture now to settle the funds

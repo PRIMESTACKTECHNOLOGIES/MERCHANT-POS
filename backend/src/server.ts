@@ -13,6 +13,7 @@ import { flushDb } from "./config/db";
 import { startVaultReconciliationWorker, stopVaultReconciliationWorker } from "./workers/vaultReconciliation.worker";
 import { startVaultLiquidityWorker, stopVaultLiquidityWorker } from "./workers/vaultLiquidity.worker";
 import { applyProviderConfigToEnv } from "./domain/treasury/providerConfig.store";
+import { invoiceReceiptService } from "./domain/receipts/invoice-receipt.service";
 
 const PORT = parseInt(process.env.PORT || '7000');
 
@@ -32,6 +33,14 @@ const start = async () => {
   await ensureVoiceAuth101Schema();
   // Load any credentials entered in the Treasury UI so they override the env.
   await applyProviderConfigToEnv();
+  // Guarantee every recorded transaction (POS, wallet ledger, transfers, crypto,
+  // payouts) has its own receipt document. Idempotent — safe on every boot.
+  try {
+    const receiptBackfill = await invoiceReceiptService.backfillExisting();
+    console.log(`Receipt ledger reconciled: ${receiptBackfill.created} created, ${receiptBackfill.existing} already present`);
+  } catch (e: any) {
+    console.warn('Receipt ledger reconciliation failed (non-fatal):', e?.message);
+  }
   const server = http.createServer(app);
   initWsServer(server);
   server.listen(PORT, '0.0.0.0', () => {

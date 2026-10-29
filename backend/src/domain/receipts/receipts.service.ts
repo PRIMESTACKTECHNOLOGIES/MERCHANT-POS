@@ -1,7 +1,61 @@
 import { db } from "../../config/db";
 import { thermalReceiptService, ThermalTxnFull } from "./thermalReceipt.service";
+import { invoiceReceiptService } from "./invoice-receipt.service";
 
 export class ReceiptsService {
+  /**
+   * Auto-issue the receipt set for a POS transaction: the 80mm thermal receipt
+   * (receipts table) plus the immutable financial document. Idempotent and
+   * best-effort — a receipt failure must never fail the payment itself.
+   */
+  async issueForTransaction(transactionId: string, merchantId: string): Promise<string | null> {
+    let receiptId: string | null = null;
+    try {
+      const thermal = await thermalReceiptService.generateForTransaction(transactionId, merchantId);
+      if (!thermal) return null;
+      receiptId = thermal.receiptId;
+      const tx: any = (thermal as any).transaction ?? null;
+      await invoiceReceiptService.create({
+        type: 'POS_INVOICE',
+        sourceTable: 'pos2013_transactions',
+        sourceId: transactionId,
+        merchantId,
+        customerId: tx?.customer_id ?? null,
+        amount: Number(tx?.amount_minor ?? 0) / 100,
+        currency: tx?.currency || 'USD',
+        status: tx?.status || 'APPROVED',
+        reference: tx?.rrn || tx?.stan || null,
+        description: 'POS transaction invoice (auto-issued)',
+        details: tx || {},
+      });
+    } catch (e: any) {
+      console.warn('[receipts] auto-issue failed for', transactionId, e?.message);
+    }
+    return receiptId;
+  }
+
+  /**
+   * Guarantee a receipt exists for every recorded transaction. Called when the
+   * Receipts page loads so transactions recorded before auto-issue was wired in
+   * still get their receipt. Safe to call repeatedly (INSERT OR IGNORE).
+   */
+  async ensureAllIssued(): Promise<void> {
+    try {
+      const missing = await db.query(
+        `SELECT t.id, t.merchant_id
+           FROM pos2013_transactions t
+           LEFT JOIN receipts r ON r.transaction_id = t.id
+          WHERE r.receipt_id IS NULL
+          LIMIT 500`
+      );
+      for (const row of missing.rows as any[]) {
+        await this.issueForTransaction(String(row.id), String(row.merchant_id || 'MRC-1001'));
+      }
+    } catch (e: any) {
+      console.warn('[receipts] reconcile failed:', e?.message);
+    }
+  }
+
   /**
    * Generate a thermal receipt with full Protocol 101.1 details for a transaction
    */
@@ -36,7 +90,7 @@ export class ReceiptsService {
           b.batch_id,
           b.status AS batch_status
         FROM receipts r
-        JOIN pos2013_transactions t ON r.transaction_id = t.id
+        LEFT JOIN pos2013_transactions t ON r.transaction_id = t.id
         LEFT JOIN pos2013_batches b ON t.batch_id = b.batch_id
         WHERE r.merchant_id = ?
         ORDER BY r.generated_at DESC
@@ -50,7 +104,7 @@ export class ReceiptsService {
         generatedAt: row.generated_at,
         stan: row.stan,
         authCode: row.auth_code,
-        amount: (row.amount_minor / 100).toFixed(2),
+        amount: (Number(row.amount_minor || 0) / 100).toFixed(2),
         currency: row.currency || "USD",
         cardMasked: row.pan_masked,
         status: row.status,

@@ -683,9 +683,12 @@ app.use("/merchant/v1", terminalsRouter);
 app.use("/merchant/v1", transactionsRouter);
 app.use("/merchant/v1", productsRouter);
 app.use("/merchant/v1", settingsRouter);
-app.use("/merchant/v1", batchesRouter);
+// These must be mounted BEFORE batchesRouter: batchesRouter owns the catch-all
+// "/:batchId" route, which would otherwise swallow /merchant/v1/receipts and
+// /merchant/v1/cashouts (they would 404 as "Batch not found").
 app.use("/merchant/v1/receipts", receiptsRouter);
 app.use("/merchant/v1/cashouts", cashoutsRouter);
+app.use("/merchant/v1", batchesRouter);
 // Internal payment receiver for standalone testing and internal integrations
 app.use("/internal/payment-receiver", paymentReceiverRouter);
 
