@@ -1,6 +1,7 @@
-﻿import express, { Request, Response, NextFunction } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import path from "path";
+import fs from "fs";
 import { db } from "./config/db";
 import { authenticateToken } from "./middleware/auth.middleware";
 import { terminalsRouter } from "./domain/terminals/terminals.router";
@@ -68,6 +69,28 @@ app.use(cors({
 }));
 app.options("*", cors());
 
+// ── Frontend (SPA) build resolution ──────────────────────────────────────────
+// Gated on SERVE_FRONTEND so API-only deployments don't serve a stale client.
+// Candidates cover the Docker image layout (/app/client/dist) as well as the
+// alternative copy location and local builds.
+const serveFrontend = process.env.SERVE_FRONTEND === "true";
+const clientBuildCandidates = [
+  path.join(__dirname, "..", "..", "client", "dist"),      // /app/client/dist (Docker)
+  path.join(__dirname, "..", "..", "client", "dist-portal"),
+  path.join(__dirname, "..", "public"),                    // /app/backend/public
+  path.join(__dirname, "public"),
+];
+const clientBuildPath = clientBuildCandidates.find((p) =>
+  fs.existsSync(path.join(p, "index.html")),
+);
+if (serveFrontend) {
+  console.log(
+    clientBuildPath
+      ? `[frontend] Serving SPA from ${clientBuildPath}`
+      : `[frontend] SERVE_FRONTEND=true but no index.html found in: ${clientBuildCandidates.join(", ")}`,
+  );
+}
+
 // Internal vault-bank gateway: authenticates with its own API key/HMAC contract.
 // Mount before the application JWT middleware below.
 app.use('/api/vault-bank', express.json({ limit: '1mb' }), vaultGatewayRouter);
@@ -105,13 +128,19 @@ app.use("/auth/login", loginRateLimiter);
 app.use("/auth", authRouter);
 
 // â”€â”€ Health checks (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-app.get("/", (_req, res) => res.json({
-  status: "ok",
-  service: "POS 201.3 Backend",
-  timestamp: new Date().toISOString(),
-  health_endpoints: ["GET /health", "GET /api/health"],
-  auth_endpoints:  ["POST /auth/login"],
-}));
+app.get("/", (req, res) => {
+  // Browsers navigating to the root get the SPA; API clients get the health JSON.
+  if (serveFrontend && clientBuildPath && (req.headers.accept || "").includes("text/html")) {
+    return res.sendFile(path.join(clientBuildPath, "index.html"));
+  }
+  res.json({
+    status: "ok",
+    service: "POS 201.3 Backend",
+    timestamp: new Date().toISOString(),
+    health_endpoints: ["GET /health", "GET /api/health"],
+    auth_endpoints:  ["POST /auth/login"],
+  });
+});
 app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 
@@ -478,6 +507,36 @@ app.get('/api/pos201/status', (_req: any, res: any) => {
     notes: ['CVV NOT required','auth code auto-generated','expiry required for MANUAL entry'],
   });
 });
+
+// ── Serve the React SPA (production) ─────────────────────────────────────────
+// Must be registered BEFORE authenticateToken: a browser request for the app
+// shell or a hashed asset carries no JWT and would otherwise be rejected 401.
+if (serveFrontend && clientBuildPath) {
+  // Static assets (hashed JS/CSS/fonts/images) — safe to serve unauthenticated.
+  app.use(express.static(clientBuildPath));
+
+  // Paths owned by the API — never fall through to the SPA shell, so a direct
+  // browser hit still reaches the API (and its auth) instead of the shell.
+  const apiPrefixes = [
+    "/api", "/auth", "/merchant", "/internal", "/coins", "/payouts", "/wallet",
+    "/wallet-cards", "/v2", "/core", "/ledger", "/accounts", "/controlled",
+    "/stats", "/provider-funds", "/transfers", "/batch-settlements", "/entries",
+    "/credit", "/debit", "/merchant-transfer", "/balance", "/reconciliation",
+    "/liquidity", "/real-funds", "/custody-reserve", "/audit", "/security",
+    "/reserve", "/beneficiaries", "/sepa", "/card-load", "/card-loads",
+  ];
+  const isApiPath = (p: string) =>
+    apiPrefixes.some((pre) => p === pre || p.startsWith(pre + "/"));
+
+  // SPA history fallback — only for browser navigations (Accept: text/html).
+  // JSON/XHR requests pass through to the API routers unchanged.
+  app.get("*", (req, res, next) => {
+    if (!(req.headers.accept || "").includes("text/html")) return next();
+    if (isApiPath(req.path) || req.path.startsWith("/vault-bank/")) return next();
+    return res.sendFile(path.join(clientBuildPath, "index.html"));
+  });
+}
+
 app.use(authenticateToken);
 
 // Wallet routes
@@ -626,19 +685,10 @@ app.use("/merchant/v1/cashouts", cashoutsRouter);
 // Internal payment receiver for standalone testing and internal integrations
 app.use("/internal/payment-receiver", paymentReceiverRouter);
 
-
-
-// â”€â”€ Serve React frontend (production) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const clientBuildPath = path.join(__dirname, "public");
-app.use(express.static(clientBuildPath));
-// SPA fallback â€” any route not matched by the API returns index.html
+// ── Unmatched request fallback (non-navigation GETs / API 404s) ──────────────
+// Browser navigations are already handled by the pre-auth SPA fallback above.
 app.get("*", (_req, res) => {
-  const indexPath = path.join(clientBuildPath, "index.html");
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      res.status(200).json({ status: "ok", message: "POS 201.3 API running" });
-    }
-  });
+  res.status(200).json({ status: "ok", message: "POS 201.3 API running" });
 });
 
 // â”€â”€ Global error handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

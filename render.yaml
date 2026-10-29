@@ -368,7 +368,7 @@ services:
 
       # ── CORS ───────────────────────────────────────────────────────────────
       - key: ALLOWED_ORIGINS
-        value: https://merchantpos.netlify.app,https://merchant-pos-0nno.onrender.com,http://localhost:7001,http://127.0.0.1:7001
+        value: https://costomerportal.netlify.app,https://merchantpos.netlify.app,https://merchant-pos-0nno.onrender.com,http://localhost:7001,http://127.0.0.1:7001
 
       # ── Protocol 101.1 Voice Authorization (fail-closed verification) ──────
       # The POS verifies the merchant's phone-auth code against the vault bank.
