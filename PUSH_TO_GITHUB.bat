@@ -54,8 +54,11 @@ if "%BRANCH%"=="" set "BRANCH=main"
 set "REMOTE="
 for /f "delims=" %%r in ('git remote get-url origin') do set "REMOTE=%%r"
 
+REM Strip any user:token@ prefix so credentials are never echoed to screen.
+set "REMOTE_SHOWN=%REMOTE:*@=%"
+
 echo  Branch : %BRANCH%
-echo  Remote : %REMOTE%
+echo  Remote : %REMOTE_SHOWN%
 echo.
 echo  Current git status:
 git status --short
