@@ -1,4 +1,4 @@
-﻿import dotenv from "dotenv";
+import dotenv from "dotenv";
 dotenv.config({ path: require('path').join(__dirname, '..', '.env') });
 
 import fs from "fs";
@@ -15,8 +15,12 @@ import { startVaultLiquidityWorker, stopVaultLiquidityWorker } from "./workers/v
 
 const PORT = parseInt(process.env.PORT || '7000');
 
-// Ensure the SQLite data directory exists (needed when DATABASE_PATH is set)
-const dbPath = path.join(__dirname, '..', 'data', 'database.sqlite');
+// Ensure the SQLite data directory exists (needed when DATABASE_PATH is set,
+// e.g. the Render persistent disk mounted at /app/data).
+const configuredDbPath = process.env.DATABASE_PATH?.trim();
+const dbPath = configuredDbPath
+  ? path.resolve(configuredDbPath)
+  : path.join(__dirname, '..', 'data', 'database.sqlite');
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
