@@ -22,6 +22,10 @@ import { reserveReportService } from './reserveReport.service';
 import { settlementReportService } from './settlementReport.service';
 import { emiAccountStatementService } from './emiAccountStatement.service';
 import { processPos1011RealSettlement } from '../../pos/pos1011RealSettlement';
+import {
+  describeProviderConfig,
+  saveProviderConfig,
+} from './providerConfig.store';
 
 const router = Router();
 router.use(authenticateToken);
@@ -78,6 +82,50 @@ function sendFormatted(res: Response, format: string | undefined, payload: {
 
 router.get('/provider/status', (_req: Request, res: Response) => {
   res.json({ ok: true, data: providerClient.status() });
+});
+
+// Read the credential set currently in effect (UI values win over env vars).
+// Secrets are returned masked; plaintext is never exposed.
+router.get('/provider/config', async (_req: Request, res: Response) => {
+  try {
+    res.json({
+      ok: true,
+      data: {
+        items: await describeProviderConfig(),
+        provider: providerClient.status(),
+        globalServer: globalServerStatus(),
+      },
+    });
+  } catch (error: any) {
+    fail(res, error);
+  }
+});
+
+// Store provider / global-server / C2M credentials typed in the Treasury UI.
+// A non-empty value overrides the environment variable; an empty string clears
+// the stored value and falls back to the environment variable.
+router.put('/provider/config', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body || {}) as { values?: Record<string, unknown> };
+    const values = body.values && typeof body.values === 'object' ? body.values : {};
+    if (!Object.keys(values).length) {
+      res.status(400).json({ ok: false, error: 'VALIDATION_ERROR', message: 'values must contain at least one credential' });
+      return;
+    }
+    const updatedBy = (req as any).user?.username || (req as any).user?.id || 'api';
+    const result = await saveProviderConfig(values, updatedBy);
+    res.json({
+      ok: true,
+      data: {
+        ...result,
+        items: await describeProviderConfig(),
+        provider: providerClient.status(),
+        globalServer: globalServerStatus(),
+      },
+    });
+  } catch (error: any) {
+    fail(res, error);
+  }
 });
 
 // ── Funds auto verifier ──────────────────────────────────────────────────────

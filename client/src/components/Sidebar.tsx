@@ -150,6 +150,10 @@ export const Sidebar = ({ isOpen = false, onClose }: { isOpen?: boolean; onClose
             <Icons.Overview />
             Dashboard
           </NavLink>
+        <NavLink to="/vault-bank" className={linkClass} onClick={() => onClose?.()}>
+          <Icons.Treasury />
+          Vault Bank
+        </NavLink>
         <NavLink to="/terminals" className={linkClass} onClick={() => onClose?.()}>
           <Icons.Terminals />
           Terminals

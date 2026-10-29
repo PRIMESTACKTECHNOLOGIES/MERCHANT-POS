@@ -12,6 +12,7 @@ import { startDeferredBroadcastWorker, stopDeferredBroadcastWorker } from "./wor
 import { flushDb } from "./config/db";
 import { startVaultReconciliationWorker, stopVaultReconciliationWorker } from "./workers/vaultReconciliation.worker";
 import { startVaultLiquidityWorker, stopVaultLiquidityWorker } from "./workers/vaultLiquidity.worker";
+import { applyProviderConfigToEnv } from "./domain/treasury/providerConfig.store";
 
 const PORT = parseInt(process.env.PORT || '7000');
 
@@ -29,6 +30,8 @@ if (!fs.existsSync(dbDir)) {
 const start = async () => {
   await initTables();
   await ensureVoiceAuth101Schema();
+  // Load any credentials entered in the Treasury UI so they override the env.
+  await applyProviderConfigToEnv();
   const server = http.createServer(app);
   initWsServer(server);
   server.listen(PORT, '0.0.0.0', () => {

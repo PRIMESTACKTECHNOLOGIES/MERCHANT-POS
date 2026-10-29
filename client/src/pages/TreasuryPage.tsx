@@ -55,6 +55,29 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
 
 const inputCls = "border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500";
 
+// Credentials the Treasury UI can set at runtime. A saved value overrides the
+// same environment variable; leaving a field blank keeps the env fallback.
+const PROVIDER_CRED_FIELDS: {
+  group: string;
+  key: string;
+  label: string;
+  placeholder?: string;
+  options?: string[];
+}[] = [
+  { group: "Treasury provider", key: "PROVIDER_ENDPOINT_URL", label: "Endpoint URL", placeholder: "https://api.yourprovider.com" },
+  { group: "Treasury provider", key: "PROVIDER_API_KEY", label: "API key", placeholder: "provider api key" },
+  { group: "Treasury provider", key: "PROVIDER_SECRET_KEY", label: "Secret key", placeholder: "provider secret key" },
+  { group: "Treasury provider", key: "PROVIDER_AUTH_SCHEME", label: "Auth scheme", options: ["hmac", "bearer"] },
+  { group: "Treasury provider", key: "PROVIDER_SIGNATURE_ALGORITHM", label: "Signature algorithm", options: ["sha256", "sha512"] },
+  { group: "Treasury provider", key: "PROVIDER_TIMEOUT_MS", label: "Timeout (ms)", placeholder: "20000" },
+  { group: "Global server (real funds)", key: "GLOBAL_SERVER_URL", label: "Base URL", placeholder: "https://global.yourprovider.com" },
+  { group: "Global server (real funds)", key: "GLOBAL_API_KEY", label: "API key", placeholder: "global api key" },
+  { group: "Global server (real funds)", key: "GLOBAL_API_SECRET", label: "API secret", placeholder: "global api secret" },
+  { group: "C2M provider pull", key: "CUSTOMER_WALLET_PROVIDER_URL", label: "Provider pull URL", placeholder: "https://provider.example.com/v1/pull" },
+  { group: "C2M provider pull", key: "CUSTOMER_WALLET_PROVIDER_ALLOWED_HOSTS", label: "Allowed hosts", placeholder: "payments.example.com" },
+];
+
+
 export function TreasuryPage() {
   const { showToast } = useToast();
   const [tab, setTab] = useState<Tab>("provider");
@@ -80,6 +103,50 @@ export function TreasuryPage() {
   }, [apiBase, authHeaders]);
 
   useEffect(() => { loadProvider(); }, [loadProvider]);
+
+  // ── Provider credentials (UI values override the environment) ──────────────
+  const [configItems, setConfigItems] = useState<any[]>([]);
+  const [credForm, setCredForm] = useState<Record<string, string>>({});
+
+  const loadProviderConfig = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/treasury/provider/config`, { headers: authHeaders() });
+      const body = await res.json();
+      setConfigItems(body?.data?.items ?? []);
+    } catch {
+      setConfigItems([]);
+    }
+  }, [apiBase, authHeaders]);
+
+  useEffect(() => { loadProviderConfig(); }, [loadProviderConfig]);
+
+  const sourceOf = (key: string) => configItems.find((i) => i.key === key);
+
+  const saveProviderCredentials = async () => {
+    const values: Record<string, string> = {};
+    Object.entries(credForm).forEach(([k, v]) => {
+      if (String(v).trim()) values[k] = String(v).trim();
+    });
+    if (!Object.keys(values).length) {
+      showToast("Enter at least one credential to save", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const data = await call("/api/treasury/provider/config", {
+        method: "PUT",
+        body: JSON.stringify({ values }),
+      });
+      setConfigItems(data?.items ?? []);
+      setCredForm({});
+      await loadProvider();
+      showToast(`Saved ${data?.saved?.length ?? 0} credential(s) — live now`, "success");
+    } catch (err: any) {
+      showToast(`Save failed: ${err?.message ?? String(err)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const call = useCallback(
     async (path: string, init?: RequestInit) => {
@@ -370,30 +437,93 @@ export function TreasuryPage() {
 
       {/* ── Provider tab ── */}
       {tab === "provider" && (
-        <Panel title="Provider configuration">
-          {!providerStatus ? (
-            <p className="text-sm text-gray-500">Loading…</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Stat label="Configured" value={providerStatus.configured ? "Yes" : "No"} />
-              <Stat label="Endpoint" value={providerStatus.endpointUrl || "—"} />
-              <Stat label="Auth scheme" value={String(providerStatus.authScheme || "—").toUpperCase()} />
-              <Stat label="Signature" value={String(providerStatus.signatureAlgorithm || "—").toUpperCase()} />
-              <Stat label="Timeout" value={`${providerStatus.timeoutMs ?? "—"} ms`} />
-              <Stat label="Key fingerprint" value={providerStatus.keyFingerprint || "—"} />
-              {providerStatus.missing?.length ? (
-                <div className="md:col-span-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                  Missing settings: {providerStatus.missing.join(", ")}
+        <div className="space-y-6">
+          <Panel title="Provider configuration">
+            {!providerStatus ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Stat label="Configured" value={providerStatus.configured ? "Yes" : "No"} />
+                <Stat label="Endpoint" value={providerStatus.endpointUrl || "—"} />
+                <Stat label="Auth scheme" value={String(providerStatus.authScheme || "—").toUpperCase()} />
+                <Stat label="Signature" value={String(providerStatus.signatureAlgorithm || "—").toUpperCase()} />
+                <Stat label="Timeout" value={`${providerStatus.timeoutMs ?? "—"} ms`} />
+                <Stat label="Key fingerprint" value={providerStatus.keyFingerprint || "—"} />
+                {providerStatus.missing?.length ? (
+                  <div className="md:col-span-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                    Missing settings: {providerStatus.missing.join(", ")}
+                  </div>
+                ) : null}
+                {providerStatus.lastError ? (
+                  <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    Last provider error: {providerStatus.lastError}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </Panel>
+
+          <Panel
+            title="Provider & real-fund credentials"
+            actions={
+              <button
+                onClick={saveProviderCredentials}
+                disabled={busy}
+                className="px-4 py-2 text-sm font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {busy ? "Saving…" : "Save credentials"}
+              </button>
+            }
+          >
+            <p className="text-sm text-gray-500 mb-4">
+              Enter the provider credentials here to use them immediately. A value saved here overrides the
+              same environment variable; leave a field blank to keep using the env value. Secrets are stored
+              encrypted and only a masked fingerprint is shown.
+            </p>
+            <div className="space-y-6">
+              {Array.from(new Set(PROVIDER_CRED_FIELDS.map((f) => f.group))).map((group) => (
+                <div key={group} className="space-y-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500">{group}</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {PROVIDER_CRED_FIELDS.filter((f) => f.group === group).map((f) => {
+                      const item = sourceOf(f.key);
+                      const isSecret = f.key.includes("KEY") || f.key.includes("SECRET");
+                      return (
+                        <Field key={f.key} label={f.label}>
+                          {f.options ? (
+                            <select
+                              className={inputCls}
+                              value={credForm[f.key] ?? ""}
+                              onChange={(e) => setCredForm({ ...credForm, [f.key]: e.target.value })}
+                            >
+                              <option value="">
+                                {item?.displayValue ? `keep ${item.source} (${item.displayValue})` : "— not set —"}
+                              </option>
+                              {f.options.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              className={inputCls}
+                              type={isSecret ? "password" : "text"}
+                              value={credForm[f.key] ?? ""}
+                              placeholder={item?.displayValue ? `current: ${item.displayValue} (${item.source})` : (f.placeholder || "")}
+                              onChange={(e) => setCredForm({ ...credForm, [f.key]: e.target.value })}
+                            />
+                          )}
+                          <span className="text-[11px] text-gray-400">
+                            {item?.source === "ui" ? "Set on this page" : item?.source === "env" ? "From environment" : "Not set"}
+                          </span>
+                        </Field>
+                      );
+                    })}
+                  </div>
                 </div>
-              ) : null}
-              {providerStatus.lastError ? (
-                <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  Last provider error: {providerStatus.lastError}
-                </div>
-              ) : null}
+              ))}
             </div>
-          )}
-        </Panel>
+          </Panel>
+        </div>
       )}
 
       {/* ── Funds auto verifier tab ── */}
