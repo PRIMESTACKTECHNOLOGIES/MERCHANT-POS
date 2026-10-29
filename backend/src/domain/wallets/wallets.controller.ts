@@ -8,6 +8,8 @@ import {
   validateEndpointProtocol,
 } from '../payments/internalProcessor.service';
 import { maskApiKey } from '../../services/fundProviderAudit.service';
+import * as bitcoinweb from '../../exchange/bitcoinweb.service';
+import { saveProviderConfig } from '../treasury/providerConfig.store';
 
 export class WalletsController {
 
@@ -1718,6 +1720,7 @@ export class WalletsController {
       const tronAddr = tron.getHotWalletAddress();
       const bscAddr = await bsc.getHotWalletAddress().catch(() => '');
       const polyAddr = await poly.getHotWalletAddress().catch(() => '');
+      const btc = await bitcoinweb.getHotWalletStatus().catch(() => null);
 
       res.json({
         ok: true,
@@ -1736,9 +1739,81 @@ export class WalletsController {
           USDT: Number(polyUSDT),
           MATIC: Number(polyMATIC),
         },
+        btc: {
+          address: btc?.address || '',
+          BTC: Number(btc?.balanceBtc || 0),
+          network: btc?.network || 'testnet',
+          configured: Boolean(btc?.configured),
+          explorerUrl: btc?.explorerUrl || '',
+        },
       });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message || 'Failed to fetch hot wallet balances' });
+    }
+  }
+
+  // ── BTC hot wallet ────────────────────────────────────────────────────
+  async getHotWalletBtc(req: Request, res: Response) {
+    try {
+      const status = await bitcoinweb.getHotWalletStatus();
+      res.json({ ok: true, ...status });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message || 'Failed to fetch BTC hot wallet' });
+    }
+  }
+
+  /**
+   * Create a brand-new BTC hot wallet (BIP-84 native SegWit) and store the
+   * secrets encrypted at rest.
+   *
+   * The recovery phrase and WIF are returned EXACTLY ONCE in this response so
+   * the operator can back them up — they are never returned again, and a
+   * second call is refused unless `rotate` is explicitly set.
+   */
+  async createHotWalletBtc(req: Request, res: Response) {
+    try {
+      const rotate = req.body?.rotate === true;
+      const network = req.body?.network === 'mainnet' ? 'mainnet' : 'testnet';
+      const existing = bitcoinweb.getHotWalletAddress();
+      if (existing && !rotate) {
+        return res.status(409).json({
+          ok: false,
+          error: 'A BTC hot wallet already exists on this server.',
+          address: existing,
+          hint: 'Send { "rotate": true } to replace it. Only do this if the current address holds no funds.',
+        });
+      }
+
+      process.env.BTC_NETWORK = network;
+      const wallet = await bitcoinweb.createHotWallet();
+
+      const updatedBy = (req as any)?.user?.email || (req as any)?.user?.username || 'hot-wallet';
+      await saveProviderConfig(
+        {
+          BTC_WALLET_ADDRESS: wallet.address,
+          BTC_WALLET_WIF: wallet.wif,
+          BTC_WALLET_MNEMONIC: wallet.mnemonic,
+          BTC_NETWORK: wallet.network,
+        },
+        updatedBy,
+      );
+
+      res.json({
+        ok: true,
+        address: wallet.address,
+        network: wallet.network,
+        derivationPath: wallet.derivationPath,
+        explorerUrl: bitcoinweb.explorerAddressUrl(wallet.address),
+        selfCheck: await bitcoinweb.verifyHotWalletBackup(wallet.mnemonic, wallet.wif, wallet.address),
+        // ── SHOWN ONCE — store these offline before leaving this screen ──
+        backup: {
+          mnemonic: wallet.mnemonic,
+          wif: wallet.wif,
+          warning: 'Write these down offline now. They are stored encrypted on the server and will never be displayed again.',
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message || 'Failed to create the BTC hot wallet' });
     }
   }
 

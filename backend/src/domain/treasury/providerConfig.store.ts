@@ -22,6 +22,11 @@ export const PROVIDER_CONFIG_KEYS = [
   'GLOBAL_API_SECRET',
   'CUSTOMER_WALLET_PROVIDER_URL',
   'CUSTOMER_WALLET_PROVIDER_ALLOWED_HOSTS',
+  // BTC hot wallet (receive-and-hold). Created from the Hot Wallet dashboard.
+  'BTC_WALLET_ADDRESS',
+  'BTC_WALLET_WIF',
+  'BTC_WALLET_MNEMONIC',
+  'BTC_NETWORK',
 ] as const;
 
 export type ProviderConfigKey = (typeof PROVIDER_CONFIG_KEYS)[number];
@@ -34,6 +39,8 @@ const SECRET_KEYS = new Set<string>([
   'PROVIDER_SECRET_KEY',
   'GLOBAL_API_KEY',
   'GLOBAL_API_SECRET',
+  'BTC_WALLET_WIF',
+  'BTC_WALLET_MNEMONIC',
 ]);
 
 interface ConfigRow {

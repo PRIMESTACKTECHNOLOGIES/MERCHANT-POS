@@ -546,6 +546,7 @@ export interface HotWalletBalance {
   tron:    { address: string; USDT: number; TRX: number };
   bsc:     { address: string; USDT: number; BNB: number };
   polygon: { address: string; USDT: number; MATIC: number };
+  btc?:    { address: string; BTC: number; network: 'testnet' | 'mainnet'; configured: boolean; explorerUrl: string };
 }
 export async function getHotWalletBalance(): Promise<HotWalletBalance> {
   const res = await fetchWithAuth(`${BASE_URL}/wallet/hot-wallet-balance`);
@@ -554,6 +555,48 @@ export async function getHotWalletBalance(): Promise<HotWalletBalance> {
     return e;
   }
   const data = await res.json();
+  return data;
+}
+
+export interface HotWalletBtcInfo {
+  ok: boolean;
+  address: string;
+  network: 'testnet' | 'mainnet';
+  configured: boolean;
+  esplora: string;
+  explorerUrl: string;
+  balanceBtc: number;
+  derivationPath: string;
+  unavailableReason?: string;
+}
+/** BTC hot wallet status — address, live on-chain balance and explorer link. */
+export async function getHotWalletBtc(): Promise<HotWalletBtcInfo> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/hot-wallet-btc`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Failed to load BTC hot wallet (HTTP ${res.status})`);
+  return data;
+}
+
+export interface HotWalletBtcCreateResult {
+  ok: boolean;
+  address: string;
+  network: 'testnet' | 'mainnet';
+  derivationPath: string;
+  explorerUrl: string;
+  selfCheck: boolean;
+  backup: { mnemonic: string; wif: string; warning: string };
+}
+/**
+ * Create a brand-new BTC hot wallet. The recovery phrase and WIF in
+ * `backup` are returned exactly once — store them offline immediately.
+ */
+export async function createHotWalletBtc(params: { network?: 'testnet' | 'mainnet'; rotate?: boolean } = {}): Promise<HotWalletBtcCreateResult> {
+  const res = await fetchWithAuth(`${BASE_URL}/wallet/hot-wallet-btc/create`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Failed to create BTC hot wallet (HTTP ${res.status})`);
   return data;
 }
 

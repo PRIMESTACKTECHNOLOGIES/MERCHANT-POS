@@ -3,7 +3,9 @@ import { useNotifications } from '../contexts/useNotifications';
 import './HotWalletPage.css';
 import {
   getHotWalletBalance, autobuyTopupHotWalletUsdt,
+  getHotWalletBtc, createHotWalletBtc,
   type HotWalletBalance, type HotWalletAutobuyResult,
+  type HotWalletBtcInfo, type HotWalletBtcCreateResult,
 } from '../lib/api';
 
 type TabId = 'overview' | 'autobuy-usdt' | 'transfer' | 'withdraw' | 'history' | 'settings';
@@ -67,6 +69,11 @@ export const HotWalletPage = () => {
 
   const [hotWalletBalance, setHotWalletBalance] = useState<HotWalletBalance | null>(null);
 
+  // ── BTC hot wallet (receive-and-hold, BIP-84 native SegWit) ───────────────
+  const [btcInfo, setBtcInfo] = useState<HotWalletBtcInfo | null>(null);
+  const [btcBackup, setBtcBackup] = useState<HotWalletBtcCreateResult | null>(null);
+  const [btcBusy, setBtcBusy] = useState(false);
+
   const refreshBalances = async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
@@ -81,7 +88,30 @@ export const HotWalletPage = () => {
     }
   };
 
-  useEffect(() => { void refreshBalances(true); }, []);
+  const refreshBtc = async () => {
+    try {
+      setBtcInfo(await getHotWalletBtc());
+    } catch (e: any) {
+      console.warn('BTC hot wallet unavailable:', e?.message);
+    }
+  };
+
+  const handleCreateBtc = async () => {
+    setBtcBusy(true);
+    try {
+      const result = await createHotWalletBtc({ network: 'mainnet' });
+      setBtcBackup(result);
+      await refreshBtc();
+      addNotification('BTC hot wallet created', `Receive address ${result.address}`, 'success');
+      await refreshBalances(true);
+    } catch (e: any) {
+      addNotification('BTC hot wallet', e?.message || 'Failed to create the BTC hot wallet', 'error');
+    } finally {
+      setBtcBusy(false);
+    }
+  };
+
+  useEffect(() => { void refreshBalances(true); void refreshBtc(); }, []);
 
   const totalUsdt =
     Number(hotWalletBalance?.tron?.USDT || 0) +
@@ -154,7 +184,19 @@ export const HotWalletPage = () => {
 
       {/* ── Tab Content ────────────────────────────────────────────────── */}
       <div className="space-y-6">
-        {activeTab === 'overview'     && <OverviewTab balance={hotWalletBalance} loading={loading} onRefresh={() => refreshBalances()} />}
+        {activeTab === 'overview'     && (
+          <OverviewTab
+            balance={hotWalletBalance}
+            loading={loading}
+            onRefresh={() => { void refreshBalances(); void refreshBtc(); }}
+            btcInfo={btcInfo}
+            btcBackup={btcBackup}
+            btcBusy={btcBusy}
+            onCreateBtc={handleCreateBtc}
+            onDismissBackup={() => setBtcBackup(null)}
+            addNotification={addNotification}
+          />
+        )}
         {activeTab === 'transfer'     && <TransferTab addNotification={addNotification} />}
         {activeTab === 'withdraw'     && <WithdrawTab addNotification={addNotification} />}
         {activeTab === 'history'      && <HistoryTab totalUsdt={totalUsdt} />}
@@ -167,10 +209,16 @@ export const HotWalletPage = () => {
 /* ═══════════════════════════════════════════════════════════════════════════
    OVERVIEW TAB
    ═══════════════════════════════════════════════════════════════════════════ */
-const OverviewTab = ({ balance, loading, onRefresh }: {
+const OverviewTab = ({ balance, loading, onRefresh, btcInfo, btcBackup, btcBusy, onCreateBtc, onDismissBackup, addNotification }: {
   balance: HotWalletBalance | null;
   loading: boolean;
   onRefresh: () => void;
+  btcInfo: HotWalletBtcInfo | null;
+  btcBackup: HotWalletBtcCreateResult | null;
+  btcBusy: boolean;
+  onCreateBtc: () => void;
+  onDismissBackup: () => void;
+  addNotification: ReturnType<typeof useNotifications>['addNotification'];
 }) => {
   const tronUSDT = Number(balance?.tron?.USDT || 0);
   const tronTRX  = Number(balance?.tron?.TRX  || 0);
@@ -204,6 +252,16 @@ const OverviewTab = ({ balance, loading, onRefresh }: {
           <ChainBalanceCard key={c.net.id} net={c.net} usdt={c.usdt} native={c.native} nativeLabel={c.nativeLabel} address={c.address || ''} loading={loading} />
         ))}
       </div>
+
+      {/* ── BTC hot wallet (receive & hold) ──────────────────────────── */}
+      <BtcHotWalletCard
+        info={btcInfo}
+        backup={btcBackup}
+        busy={btcBusy}
+        onCreate={onCreateBtc}
+        onDismissBackup={onDismissBackup}
+        addNotification={addNotification}
+      />
 
       {/* ── Hot Wallet Status & health ───────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -329,6 +387,140 @@ const ChainBalanceCard = ({ net, usdt, native, nativeLabel, address, loading }: 
     ) : null}
   </div>
 );
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BTC HOT WALLET — receive & hold real Bitcoin
+   ═══════════════════════════════════════════════════════════════════════════ */
+const BtcHotWalletCard = ({ info, backup, busy, onCreate, onDismissBackup, addNotification }: {
+  info: HotWalletBtcInfo | null;
+  backup: HotWalletBtcCreateResult | null;
+  busy: boolean;
+  onCreate: () => void;
+  onDismissBackup: () => void;
+  addNotification: ReturnType<typeof useNotifications>['addNotification'];
+}) => {
+  const [copied, setCopied] = React.useState(false);
+  const address = info?.address || '';
+  const configured = Boolean(info?.configured && address);
+  const network = info?.network || 'mainnet';
+
+  const copy = (value: string, what: string) => {
+    if (!value) return;
+    navigator.clipboard?.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+    addNotification('Copied', `${what} copied to clipboard`, 'success');
+  };
+
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50 p-6 shadow-sm">
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-[#f7931a] text-white text-lg font-black shadow-md shadow-orange-500/25">₿</span>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-extrabold text-slate-900">BTC Hot Wallet</h3>
+              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${network === 'mainnet' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                {network}
+              </span>
+            </div>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Receive real Bitcoin from any external wallet into your own hot wallet · BIP-84 native SegWit.
+            </p>
+          </div>
+        </div>
+
+        {!configured && (
+          <button
+            onClick={onCreate}
+            disabled={busy}
+            className="rounded-xl bg-[#f7931a] px-5 py-3 text-sm font-bold text-white shadow-lg shadow-orange-500/25 transition hover:brightness-110 disabled:opacity-60 shrink-0"
+          >
+            {busy ? '⏳ Creating…' : '₿ Create BTC hot wallet'}
+          </button>
+        )}
+      </div>
+
+      {configured ? (
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">Deposit address</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 font-mono text-[13px] text-slate-800 break-all" title={address}>{address}</code>
+              <button
+                onClick={() => copy(address, 'BTC address')}
+                className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                {copied ? '✓ Copied' : '⧉ Copy'}
+              </button>
+            </div>
+            <div className="mt-2 text-[11px] text-slate-500">
+              Send BTC to this address from any exchange or external wallet.{' '}
+              {network === 'testnet' && <strong className="text-amber-700">Testnet — these are test coins, not real BTC.</strong>}
+            </div>
+            {info?.explorerUrl && (
+              <a className="mt-2 inline-block text-[11px] underline text-blue-600 hover:text-blue-700"
+                 href={info.explorerUrl} target="_blank" rel="noreferrer noopener">
+                View on mempool.space ↗
+              </a>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">On-chain balance</div>
+            <div className="text-2xl font-black tabular-nums text-slate-900">
+              {Number(info?.balanceBtc || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })} <span className="text-sm font-bold text-slate-400">BTC</span>
+            </div>
+            <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500">
+              Derivation <code className="font-mono">{info?.derivationPath || "m/84'/0'/0'/0/0"}</code>
+            </div>
+            <div className="mt-1 text-[11px] text-emerald-600 font-semibold inline-flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live from blockchain
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 rounded-xl border border-dashed border-amber-300 bg-white/60 p-4 text-sm text-slate-600">
+          {info?.unavailableReason || 'No BTC hot wallet yet. Click “Create BTC hot wallet” to generate a mainnet/testnet receive address with a recovery phrase you can back up.'}
+        </div>
+      )}
+
+      {/* ── One-time recovery backup ─────────────────────────────────── */}
+      {backup && (
+        <div className="mt-5 rounded-xl border-2 border-red-300 bg-red-50 p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-extrabold text-red-800 uppercase tracking-wide">⚠ Back up now — shown once</h4>
+              <p className="text-xs text-red-700 mt-1">{backup.backup?.warning}</p>
+            </div>
+            <button onClick={onDismissBackup} className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100">
+              I have saved it
+            </button>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-500 mb-1">Recovery phrase (24 words)</div>
+              <div className="rounded-lg bg-white border border-red-200 p-3 font-mono text-[12px] text-slate-800 leading-6 break-words">
+                {backup.backup?.mnemonic}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-500 mb-1">Private key (WIF)</div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded-lg bg-white border border-red-200 p-3 font-mono text-[12px] text-slate-800 break-all">{backup.backup?.wif}</code>
+                <button onClick={() => copy(backup.backup?.wif || '', 'WIF')} className="shrink-0 rounded-lg border border-red-300 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100">⧉ Copy</button>
+              </div>
+            </div>
+            {backup.selfCheck === false && (
+              <div className="text-xs font-semibold text-red-700">⚠ Self-check failed — the derived address does not match the stored key. Do not send funds; re-create the wallet.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const GasGauge = ({ name, balance, min, unit, color }: any) => {
   const pct = Math.min(100, Math.max(0, (balance / (min * 5)) * 100));

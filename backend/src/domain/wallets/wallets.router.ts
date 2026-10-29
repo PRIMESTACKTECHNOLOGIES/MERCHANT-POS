@@ -90,5 +90,7 @@ router.post('/transak/apple-pay/session',              wc.createTransakApplePayS
 
 // ── Hot Wallet management ──────────────────────────────────────────────────
 router.get('/hot-wallet-balance',                       wc.getHotWalletBalance.bind(wc));
+router.get('/hot-wallet-btc',                           wc.getHotWalletBtc.bind(wc));
+router.post('/hot-wallet-btc/create',                   wc.createHotWalletBtc.bind(wc));
 
 export { router as walletsRouter };
