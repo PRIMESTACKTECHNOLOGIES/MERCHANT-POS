@@ -1,122 +1,148 @@
 @echo off
-REM ════════════════════════════════════════════════════════════════════════════
-REM  GITHUB PUSH SCRIPT - Push POS System to GitHub
-REM ════════════════════════════════════════════════════════════════════════════
+setlocal
+REM ============================================================================
+REM  GITHUB PUSH SCRIPT - Push POS System to GitHub (and let Render redeploy)
+REM ============================================================================
 
 cls
 echo.
-echo  ╔════════════════════════════════════════════════════════════╗
-echo  ║     PUSH POS SYSTEM TO GITHUB                             ║
-echo  ║     Secure upload of all source code                      ║
-echo  ╚════════════════════════════════════════════════════════════╝
+echo ============================================================
+echo   PUSH POS SYSTEM TO GITHUB
+echo ============================================================
 echo.
 
 cd /d "%~dp0"
 
-REM Check if git is installed
+REM ---- Git installed? -------------------------------------------------------
 git --version >nul 2>&1
 if errorlevel 1 (
-    echo  ❌ ERROR: Git is not installed
-    echo  Please install Git from: https://git-scm.com/
+    echo  ERROR: Git is not installed.
+    echo  Install it from https://git-scm.com/
     echo.
     pause
     exit /b 1
 )
 
-REM Check if .git folder exists
+REM ---- Repository present? --------------------------------------------------
 if not exist ".git" (
-    echo  ⚠️  First time setup needed...
-    echo.
-    echo  Initializing git repository...
+    echo  No .git folder found - initializing a new repository...
     git init
-    git config user.name "POS Developer"
-    git config user.email "pos.developer@example.com"
+    git branch -M main
     echo.
-    echo  ⚠️  You need to add the remote repository:
-    echo.
-    echo  1. Create repository on GitHub: https://github.com/new
-    echo  2. Copy the repository URL
-    echo  3. Run this command:
-    echo     git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-    echo.
-    echo  4. Then run this script again
+    echo  A remote is required before pushing. Run:
+    echo     git remote add origin https://github.com/USERNAME/REPO.git
+    echo  then run this script again.
     echo.
     pause
     exit /b 1
 )
 
-REM Show current status
-echo  📊 Current Git Status:
-echo.
-git status
-echo.
-
-REM Ask for commit message
-set /p commit_msg="📝 Enter commit message (or press Enter for auto-generated): "
-
-if "%commit_msg%"=="" (
-    for /f "tokens=2-4 delims=/ " %%a in ('date /t') do (set mydate=%%c-%%a-%%b)
-    for /f "tokens=1-2 delims=/:" %%a in ('time /t') do (set mytime=%%a-%%b)
-    set commit_msg=Auto-update: %mydate% %mytime%
+git remote get-url origin >nul 2>&1
+if errorlevel 1 (
+    echo  ERROR: remote 'origin' is not configured. Run:
+    echo     git remote add origin https://github.com/USERNAME/REPO.git
+    echo.
+    pause
+    exit /b 1
 )
 
-REM Stage all changes
+REM ---- Resolve branch + remote ----------------------------------------------
+set "BRANCH="
+for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "BRANCH=%%b"
+if "%BRANCH%"=="" set "BRANCH=main"
+
+set "REMOTE="
+for /f "delims=" %%r in ('git remote get-url origin') do set "REMOTE=%%r"
+
+echo  Branch : %BRANCH%
+echo  Remote : %REMOTE%
 echo.
-echo  ⏳ Staging files...
+echo  Current git status:
+git status --short
+echo.
+
+if not "%REMOTE:github.com=%"=="%REMOTE%" (
+    if not "%REMOTE:@=%"=="%REMOTE%" (
+        echo  SECURITY NOTE: the remote URL has an access token embedded in it and
+        echo  that token sits in .git/config in plain text. Prefer a credential
+        echo  helper - git config --global credential.helper manager - and rotate
+        echo  the token if this file or your screen has ever been shared.
+        echo.
+    )
+)
+
+REM ---- Commit message -------------------------------------------------------
+REM NOTE: %DATE%/%TIME% are read at top level (never inside a parenthesised
+REM block) so the auto-generated message is not empty.
+set "commit_msg="
+set /p commit_msg="Enter commit message (or press Enter for auto-generated): "
+if "%commit_msg%"=="" set "commit_msg=Auto-update: %DATE% %TIME%"
+set commit_msg=%commit_msg:"=%
+
+REM ---- Stage ----------------------------------------------------------------
+echo.
+echo  Staging files...
 git add .
 if errorlevel 1 (
-    echo  ❌ Failed to stage files
+    echo  FAILED to stage files.
     pause
     exit /b 1
 )
-echo  ✅ Files staged
 
-REM Commit
-echo.
-echo  ⏳ Creating commit: "%commit_msg%"
-git commit -m "%commit_msg%"
+REM ---- Commit (only when something is actually staged) ----------------------
+git diff --cached --quiet
 if errorlevel 1 (
-    echo  ❌ Failed to commit (maybe nothing changed?)
-    pause
-    exit /b 1
+    echo  Creating commit: "%commit_msg%"
+    git commit -m "%commit_msg%"
+    if errorlevel 1 (
+        echo  FAILED to commit.
+        pause
+        exit /b 1
+    )
+    echo  Commit created.
+) else (
+    echo  Nothing new to commit - skipping the commit step.
 )
-echo  ✅ Commit created
 
-REM Push
+REM ---- Push (retry once after a rebase if the remote moved ahead) -----------
 echo.
-echo  ⏳ Pushing to GitHub (this may take a moment)...
-git push -u origin main
+echo  Pushing to origin/%BRANCH% ...
+git push -u origin %BRANCH%
 if errorlevel 1 (
     echo.
-    echo  ❌ Push failed! Check the error above
-    echo.
-    echo  Possible solutions:
-    echo  1. Verify remote is configured: git remote -v
-    echo  2. Check GitHub credentials
-    echo  3. Ensure repository exists on GitHub
-    echo  4. Check internet connection
-    echo.
-    pause
-    exit /b 1
+    echo  Push was rejected - origin/%BRANCH% has commits you do not have yet.
+    echo  Syncing with a rebase and retrying...
+    git pull --rebase origin %BRANCH%
+    if errorlevel 1 (
+        echo.
+        echo  Sync failed. Resolve the conflicts, then run this script again.
+        pause
+        exit /b 1
+    )
+    echo  Retrying push...
+    git push -u origin %BRANCH%
+    if errorlevel 1 (
+        echo.
+        echo  PUSH FAILED. Check the error above.
+        echo    1. Verify remote   : git remote -v
+        echo    2. Check GitHub credentials
+        echo    3. Check internet connection
+        echo.
+        pause
+        exit /b 1
+    )
 )
 
 echo.
+echo ============================================================
+echo   SUCCESS - code pushed to GitHub
+echo ============================================================
 echo.
-echo  ╔════════════════════════════════════════════════════════════╗
-echo  ║  ✅ SUCCESS! Code pushed to GitHub                        ║
-echo  ╚════════════════════════════════════════════════════════════╝
+echo  Render will rebuild automatically if Auto-Deploy is ON for
+echo  branch %BRANCH%. Watch it at https://dashboard.render.com
 echo.
-echo  📍 Next Steps:
-echo     1. Verify on GitHub: https://github.com/YOUR_USERNAME/YOUR_REPO
-echo     2. Deploy to Render: https://render.com
-echo     3. Monitor logs and performance
-echo.
-
-REM Show recent commits
-echo  📝 Recent Commits:
-echo.
+echo  Recent commits:
 git log --oneline -5
 echo.
-
-timeout /t 5 /nobreak
-
+pause
+endlocal
