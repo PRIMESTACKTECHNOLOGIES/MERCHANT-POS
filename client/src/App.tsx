@@ -8,6 +8,7 @@ import { TransactionsPage } from "./pages/TransactionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BatchesPage } from "./pages/BatchesPage";
 import { SettlementsPage } from "./pages/SettlementsPage";
+import { TreasuryPage } from "./pages/TreasuryPage";
 import { DeveloperPage } from "./pages/DeveloperPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { TerminalPairingPage } from "./pages/TerminalPairingPage";
@@ -173,6 +174,7 @@ function App() {
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/batches" element={<BatchesPage />} />
           <Route path="/settlements" element={<SettlementsPage />} />
+          <Route path="/treasury" element={<TreasuryPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/developer" element={<DeveloperPage />} />

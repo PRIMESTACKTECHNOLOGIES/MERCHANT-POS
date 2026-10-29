@@ -827,6 +827,8 @@ export async function chargePayment(
     entryMode?: string;
     authCode?: string;
     protocolVersion?: "NORMAL" | "101.1" | "101.6" | "201.3";
+    emv?: Record<string, string>;
+    tlvRaw?: string;
   }
 ) {
   const res = await fetchWithAuth(`${BASE_URL}/merchant/v1/payments/charge`, {
@@ -2308,6 +2310,12 @@ export interface MerchantProfile {
   displayName?: string;
   wallets: { balance: number; currency: string }[];
   createdAt?: string;
+  terminalCount: number;
+  deletable: boolean;
+  deleteBlockers: string[];
+  testMode: boolean;
+  supportEmail?: string | null;
+  phone?: string | null;
 }
 
 export async function fetchMerchantProfiles(): Promise<MerchantProfile[]> {
@@ -2323,6 +2331,12 @@ export async function fetchMerchantProfiles(): Promise<MerchantProfile[]> {
       ? m.wallets.map((w: any) => ({ balance: Number(w.balance || 0), currency: String(w.currency || "USD") }))
       : [{ balance: Number(m.balance || 0), currency: String(m.currency || "USD") }],
     createdAt: m.createdAt || m.created_at,
+    terminalCount: Number(m.terminalCount ?? m.terminal_count ?? 0),
+    deletable: m.deletable !== false,
+    deleteBlockers: Array.isArray(m.deleteBlockers) ? m.deleteBlockers.map((b: any) => String(b)) : [],
+    testMode: Boolean(m.testMode ?? m.test_mode),
+    supportEmail: m.supportEmail ?? m.support_email ?? null,
+    phone: m.phone ?? m.merchant_phone ?? null,
   }));
 }
 

@@ -50,6 +50,8 @@ import { pos201Router } from './domain/payments/pos201.router';
 import processorIdentityRouter from './routes/processorIdentity.router';
 import dwollaRouter from './domain/payouts/dwolla.router';
 import bankPartnerWebhookRouter from './domain/payouts/bank-partner-webhook.router';
+import treasuryRouter from './domain/treasury/treasury.router';
+import { customerPortalRouter } from './domain/customerportal/customer-portal.router';
 
 export const app = express();
 
@@ -586,6 +588,8 @@ app.use('/api/approval-code', approvalCodeRouter);
 app.use('/api/voice-auth', voiceAuth1011Router);
 app.use('/api/pos201', pos201Router);
 app.use('/api/processor', processorIdentityRouter);
+app.use('/api/treasury', treasuryRouter);
+app.use('/api/customer-portal', customerPortalRouter);
 
 
 // ── Vault Bank Acquirer Settlement Callbacks (port 9001 callbacks land here) ─

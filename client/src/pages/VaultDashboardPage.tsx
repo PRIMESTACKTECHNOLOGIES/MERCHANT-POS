@@ -986,12 +986,15 @@ export function VaultDashboardPage() {
   };
 
   useEffect(() => { void loadGatewayOptions(); }, []);
-  useEffect(() => { void loadGatewayCharges(selectedLoadingCard); }, [selectedLoadingCard]);
+  useEffect(() => { void loadGatewayCharges(selectedLoadingCard ?? ""); }, [selectedLoadingCard]);
 
   // A gateway can only collect the card's own currency (currency-match-only rule).
   const gwSelected = gwOptions.find(o => o.id === gwId) || null;
   const gwCardCurrency = (selectedLoadingCard || "").toUpperCase();
   const gwCurrencyOk = !!gwSelected && gwSelected.currencies.includes(gwCardCurrency);
+
+  const usdCard = generatedCards.USD;
+  const eurCard = generatedCards.EUR;
 
   const handleCreateGatewayCharge = async () => {
     if (!selectedLoadingCard) { setGwError("Select a target card first"); return; }
@@ -1017,7 +1020,7 @@ export function VaultDashboardPage() {
       setGwCharge(charge);
       setGwMsg(`Checkout link ready for ${fmtNum(charge.amount, charge.currency)} — send it to the loader.`);
       setGwAmount("");
-      void loadGatewayCharges(selectedLoadingCard);
+      void loadGatewayCharges(selectedLoadingCard ?? "");
     } catch (e) {
       setGwError(e instanceof Error ? e.message : "Could not create the checkout link");
     } finally {
@@ -1033,7 +1036,7 @@ export function VaultDashboardPage() {
         const bal = result.cardBalance != null ? ` — new balance ${fmtNum(Number(result.cardBalance), "")}` : "";
         setGwMsg(`✅ ${String(result.message || "Payment verified and credited")}${bal}`);
         if (gwCharge?.id === chargeId) setGwCharge(result.charge);
-        void loadGatewayCharges(selectedLoadingCard);
+        void loadGatewayCharges(selectedLoadingCard ?? "");
         void loadInboundBalance();
       } else {
         setGwError(String(result.message || result.error || "Payment not verified yet"));
@@ -1908,12 +1911,12 @@ export function VaultDashboardPage() {
                         currency="USD"
                         loaded={cardLoads.USD}
                         card={{
-                          number: generatedCards.USD?.card_number_formatted || generatedCards.USD?.card_number || "•••• •••• •••• ••••",
-                          cvv:    generatedCards.USD?.cvv || "•••",
-                          expiry: generatedCards.USD ? `${generatedCards.USD.expiry_month}/${generatedCards.USD.expiry_year}` : "••/••",
+                          number: usdCard?.card_number_formatted || usdCard?.card_number || "•••• •••• •••• ••••",
+                          cvv:    usdCard?.cvv || "•••",
+                          expiry: usdCard ? `${usdCard?.expiry_month}/${usdCard?.expiry_year}` : "••/••",
                         }}
                         bankName={usd.bankName}
-                        lastFour={generatedCards.USD?.card_number?.slice(-4) || usd.lastFour}
+                        lastFour={usdCard?.card_number?.slice(-4) || usd.lastFour}
                         simpleLayout
                       />
                       <button
@@ -1922,15 +1925,15 @@ export function VaultDashboardPage() {
                         disabled={genBusy.USD}
                         className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest transition"
                       >
-                        {genBusy.USD ? "⏳ Generating..." : generatedCards.USD ? "🔄 Regenerate USD Card" : "✨ Generate USD Card"}
+                        {genBusy.USD ? "⏳ Generating..." : usdCard ? "🔄 Regenerate USD Card" : "✨ Generate USD Card"}
                       </button>
-                      {generatedCards.USD && (
+                      {usdCard && (
                         <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs font-mono space-y-1">
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{generatedCards.USD.card_number_formatted || generatedCards.USD.card_number}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{generatedCards.USD.expiry_month}/{generatedCards.USD.expiry_year}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{generatedCards.USD.cvv}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{generatedCards.USD.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{generatedCards.USD.scheme || "VISA"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{usdCard?.card_number_formatted || usdCard?.card_number}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{usdCard?.expiry_month}/{usdCard?.expiry_year}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{usdCard?.cvv}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{usdCard?.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{usdCard?.scheme || "VISA"}</span></div>
                         </div>
                       )}
                     </div>
@@ -1940,12 +1943,12 @@ export function VaultDashboardPage() {
                         currency="EUR"
                         loaded={cardLoads.EUR}
                         card={{
-                          number: generatedCards.EUR?.card_number_formatted || generatedCards.EUR?.card_number || "•••• •••• •••• ••••",
-                          cvv:    generatedCards.EUR?.cvv || "•••",
-                          expiry: generatedCards.EUR ? `${generatedCards.EUR.expiry_month}/${generatedCards.EUR.expiry_year}` : "••/••",
+                          number: eurCard?.card_number_formatted || eurCard?.card_number || "•••• •••• •••• ••••",
+                          cvv:    eurCard?.cvv || "•••",
+                          expiry: eurCard ? `${eurCard?.expiry_month}/${eurCard?.expiry_year}` : "••/••",
                         }}
                         bankName={eur.bankName}
-                        lastFour={generatedCards.EUR?.card_number?.slice(-4) || eur.lastFour}
+                        lastFour={eurCard?.card_number?.slice(-4) || eur.lastFour}
                         simpleLayout
                       />
                       <button
@@ -1954,15 +1957,15 @@ export function VaultDashboardPage() {
                         disabled={genBusy.EUR}
                         className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest transition"
                       >
-                        {genBusy.EUR ? "⏳ Generating..." : generatedCards.EUR ? "🔄 Regenerate EUR Card" : "✨ Generate EUR Card"}
+                        {genBusy.EUR ? "⏳ Generating..." : eurCard ? "🔄 Regenerate EUR Card" : "✨ Generate EUR Card"}
                       </button>
-                      {generatedCards.EUR && (
+                      {eurCard && (
                         <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs font-mono space-y-1">
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{generatedCards.EUR.card_number_formatted || generatedCards.EUR.card_number}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{generatedCards.EUR.expiry_month}/{generatedCards.EUR.expiry_year}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{generatedCards.EUR.cvv}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{generatedCards.EUR.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{generatedCards.EUR.scheme || "VISA"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Number</span><span className="font-bold">{eurCard?.card_number_formatted || eurCard?.card_number}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Expiry</span><span className="font-bold">{eurCard?.expiry_month}/{eurCard?.expiry_year}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">CVV</span><span className="font-bold">{eurCard?.cvv}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Luhn</span><span className="font-bold text-emerald-600">{eurCard?.luhn_valid !== false ? "✅ Valid" : "❌ Invalid"}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500 uppercase tracking-wider">Scheme</span><span className="font-bold">{eurCard?.scheme || "VISA"}</span></div>
                         </div>
                       )}
                     </div>

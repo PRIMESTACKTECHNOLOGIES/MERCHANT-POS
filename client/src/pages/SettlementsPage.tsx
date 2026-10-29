@@ -341,7 +341,7 @@ export function SettlementsPage() {
     try {
       setMerchantBalanceLoading(true);
       console.log(`[SettlementsPage] Loading merchant balance for ${payoutMerchantId} (${requestedCurrency})...`);
-      const data = await getMerchantBalance(payoutMerchantId, requestedCurrency);
+      const data = await getMerchantBalance(payoutMerchantId);
       console.log('[SettlementsPage] Merchant balance loaded:', data);
       setMerchantBalance(data.balance || 0);
     } catch (err) {
@@ -458,7 +458,7 @@ export function SettlementsPage() {
       setPayoutAmount('');
       showToast(`✅ Payout initiated! Ref: ${result.provider_reference || result.payout_id}`, 'success');
       // Refresh balance
-      const updated = await getMerchantBalance(payoutMerchantId, payoutCurrency);
+      const updated = await getMerchantBalance(payoutMerchantId);
       setMerchantBalance(updated.balance || 0);
     } catch (err: any) {
       showToast(`✗ Payout failed: ${err?.message ?? String(err)}`, 'error');

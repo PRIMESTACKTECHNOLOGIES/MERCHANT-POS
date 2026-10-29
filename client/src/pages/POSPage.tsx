@@ -192,12 +192,12 @@ export const POSPage = () => {
         {
           pan,
           expiry: expiry || cardData.expiry,
-          customerId: selectedCustomer?.id,
+          customerId: selectedCustomer?.id ?? undefined,
           terminalId: settings?.terminal_id || 'T2013-0001',
           stan: generateStan(),
           entryMode: 'CONTACTLESS',
           emv,
-          tlvRaw,
+          tlvRaw: tlvRaw ?? undefined,
         }
       );
 
@@ -246,14 +246,14 @@ export const POSPage = () => {
     }
   };
 
-  const loadRecentTxns = async () => {
+  async function loadRecentTxns() {
     try {
       const data = await fetchTransactions();
       setRecentTxns(data.slice(0, 10));
     } catch (e) {
       console.error("Failed to load transactions", e);
     }
-  };
+  }
 
   const updatePendingCount = () => {
     const pending = JSON.parse(localStorage.getItem('offline_transactions') || '[]');
@@ -486,7 +486,7 @@ export const POSPage = () => {
           batchData.merchantId,
           { pan: txn.pan, expiry: txn.expiry,
             cvv: (posProtocol === '101.6' || posProtocol === '201.3') ? (cardData.cvv || undefined) : undefined,
-            customerId: selectedCustomer?.id,
+            customerId: selectedCustomer?.id ?? undefined,
             entryMode: posProtocol === '201.3' ? 'OFFLINE_201_3' : posProtocol === '101.1' ? 'VOICE_AUTH' : 'MANUAL',
             authCode: (posProtocol === '101.1' || posProtocol === '201.3') ? (voiceAuthCode.trim() || undefined) : undefined,
           }
