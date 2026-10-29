@@ -1,0 +1,872 @@
+// global style 
+@import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&display=swap');
+
+@import url('https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+
+
+
+
+*,*::before,*::after{
+    margin:0;
+    padding:0;
+    box-sizing: border-box;
+    text-decoration: none;
+    list-style: none;
+	
+	
+}
+
+:root{
+	
+	//whites
+	--color1:#FAFAFA;
+    --color2:#F5F5F5;
+	--color3:#EDEDED;
+	--color4:#D7D7D7;
+	--color5:#BFBFBF;
+	
+	//blacks	
+    
+    
+    --color8:#7f7f7f;
+	--color7:#4E4E4E;
+	--color6:#2F2F2F;
+	--color9:#202020;
+	--color10:#000000;
+
+	//blues
+    --color11:#6E8ABA;
+    --color12:#2255AA;
+	--color13:#3A3462;
+	--color14:#1165f2;
+	--color15:#004C8F;
+	--color16:#bac4d6;
+	
+	//reds
+	--color16:#ED232A;
+	
+	//yellow
+	--color21:#ED9638;
+	
+	
+	--card_padding_vertical:1.5em;
+	--card_padding_horizontal:1.8em;
+	
+	height:100%;
+	
+	
+}
+
+html{
+	height:100%;
+	scroll-behavior:smooth;
+	
+}
+
+body{
+	position:relative;
+	min-height:100%;
+	
+	font-family: 'Poppins', sans-serif;
+	background:var(--color3);
+	
+	// background:url("https://unsplash.it/2000?image=1083"),var(--color3);
+	// background-position: top center;
+	// background-size: 2000px;
+	
+	
+	display:flex;
+	flex-direction:column;
+	// justify-content:center;
+	align-items:center;
+	
+}
+
+.bg{
+	position:absolute;
+	min-height:100%;
+	width:100%;
+	overflow:hidden;
+	
+	.bg_image{
+		position:absolute;
+		height:100%;
+		width:100%;
+		background:var(--color3);
+		background-image: linear-gradient(135deg, var(--color3) 50%, var(--color4));
+		
+		
+		// background:url("https://unsplash.it/2000?image=1083"),var(--color3);
+		// background-position: top left;
+		// background-size: 1500px;
+		// filter: blur(3px);
+		// transform: scale(1.5);
+	}
+	
+	
+	
+	// background-color: #e5e5f7;
+	// opacity: 0.3;
+	// background-image:  radial-gradient(#004C8F 1.6px, transparent 1.6px), radial-gradient(#004C8F 1.6px, #e5e5f7 1.6px);
+	// background-size: 32px 32px;
+	// background-position: 0 0,16px 16px;
+}
+
+
+
+.card_container{
+	margin-top:3em;
+	position:relative;
+	z-index:3;
+	// border:1px solid magenta;
+	width:30rem;
+	aspect-ratio: 3.37 / 2.125;
+	
+	display:flex;
+	justify-content:center;
+	align-items:center;
+	// transform-style: preserve-3d;
+	// &:hover .card{
+	// 	transform:perspective(1000px) rotateY(180deg);
+	// }
+	
+	
+}
+
+.card_flipped{
+	transform:perspective(1000px) rotateY(180deg);
+}
+
+.card{
+	position:relative;
+	width:100%;
+	height:100%;
+	transition:1s cubic-bezier(1,-0.09,.01,1.09);
+	transform-style: preserve-3d;
+}
+
+
+.card_front,
+.card_back{
+	
+	position:absolute;
+	backface-visibility: hidden;
+	transform-style: preserve-3d;
+	
+	
+	width:30rem;
+	aspect-ratio: 3.37 / 2.125;
+	padding:var(--card_padding_vertical) var(--card_padding_horizontal);
+	color:var(--color6);
+	background:var(--color3);
+	background-image: linear-gradient(135deg, var(--color3) 50%, var(--color4));
+	border-radius:.8em;
+	overflow:hidden;
+	
+	// background:url("https://unsplash.it/1300?image=1083"),var(--color6);
+	// background:url("https://raw.githubusercontent.com/muhammederdem/credit-card-form/master/src/assets/images/23.jpeg");
+	//great backgrounds at 8 11 13 18 22 23 25
+	// background-position: center;
+	// background-size: cover;
+	
+	// filter: blur(8px);
+	
+// 	background:transparent;
+// 	backdrop-filter: blur(10px);
+	
+	
+	
+	
+	display:flex;
+	flex-direction:column;
+	// justify-content:center;
+	// align-items:center;
+	
+	// box-shadow: 
+	// 			inset 0.1em 0.1em 0.1em 0 rgba(#fff,.15),
+	// 			inset -0.15em -0.15em 0.1em 0 rgba(#000,.15),
+	// 			inset 0.25em 0.25em 3em 0 rgba(#fff,.05),
+	// 			0em 1em 0.15em -.6em rgba(#000,.13),
+	// 			0em 1em 5em 0em rgba(#000,.1);
+	
+	
+	box-shadow: inset 0.15em 0.15em 0em 0 rgba(#fff,.7),
+				inset -0.15em -0.15em 0em 0 rgba(#000,.1),
+				0em 1em 0.15em -.6em rgba(#000,.13),
+				0em 1em 5em 0em rgba(#000,.1);
+	
+	
+	
+	// &::before{
+	// 	content:"";
+	// 	position:absolute;
+	// 	top:0;
+	// 	bottom:0;
+	// 	left:0;
+	// 	right:0;
+	// 	// border:1px solid magenta;
+	// 	background:rgba(#000,.25);
+	// 	z-index:-2;
+	// }
+	
+	&::before{
+		content:"";
+		position:absolute;
+		top:0;
+		bottom:0;
+		left:0;
+		right:0;
+		// border:1px solid magenta;
+		z-index:-2;
+		background-color: #EDEDED;
+		opacity: 0.1;
+		background: radial-gradient(circle, transparent 20%, #EDEDED 20%, #EDEDED 80%, transparent 80%, transparent), 
+					radial-gradient(circle, transparent 20%, #EDEDED 20%, #EDEDED 80%, transparent 80%, transparent) 35px 35px, 
+					linear-gradient(#7f7f7f 2.8px, transparent 2.8px) 0 -1.4px, 
+					linear-gradient(90deg, #7f7f7f 2.8px, #EDEDED 2.8px) -1.4px 0;
+		background-size:70px 70px, 
+						70px 70px, 
+						35px 35px, 
+						35px 35px;
+		
+	}
+	
+	&::after{
+		content:"";
+		position:absolute;
+		top:0;
+		bottom:0;
+		left:0;
+		right:0;
+		// border:1px solid magenta;
+		z-index:-3;
+		
+		background-color: #EDEDED;
+		opacity: 0.1;
+		background-image:  	repeating-radial-gradient( circle at 0 0, transparent 0, #EDEDED 4px ), 
+							repeating-linear-gradient( #7f7f7f55, #7f7f7f );
+
+	}
+	
+}
+
+.card_front{
+	justify-content: space-between;
+}
+
+.card_front .card_bank_logo_smartchip_wifi_component{
+	display:flex;
+	justify-content:space-between;
+	align-items:start;
+}
+
+
+
+.card_front .card_bank_smartchip_component{
+	// position:absolute;
+	// left:3.7em;
+	// top:5em;
+	
+	.smartchip{
+		width:3.2em;
+		// border-radius:.5em;
+		overflow:hidden;
+		
+		svg{
+			
+		}
+		// height:2.5em;
+		// width:3.5em;
+		// background:var(--color6);
+		// border-radius:.5em;
+		
+// 		box-shadow:	inset 0.05em 0.05em 0em 0em rgba(#000, .8),
+// 					inset -0.05em -0.05em 0em 0em rgba(#fff, .2);
+	
+	
+		// svg{
+		// 	height:2.5em;
+		// 	// box-shadow:	inset 0.05em 0.05em 0em 0em rgba(#000, .8),
+		// 	// 		inset -0.05em -0.05em 0em 0em rgba(#fff, .2);
+		// 	background:var(--color9);
+		// 	border-radius:.5em;
+		// }
+	
+	}
+}
+
+
+
+
+.card_front .card_bank_wifi_component{
+	// border:1px solid magenta;
+	display:flex;
+	justify-content:flex-end;
+	
+	.wifi_logo{
+		// border:1px solid magenta;
+		height:4em;
+		aspect-ratio: 1 / 1;
+		// border:1px solid magenta;
+		border-radius:0em;
+		clip-path: polygon(50% 50%, 100% 80%, 100% 20%);
+		transform:translateY(-20%);	
+		
+		.wifi_logo_c1,
+		.wifi_logo_c2, 
+		.wifi_logo_c3,
+		.wifi_logo_c4{
+			position:relative;
+			height:100%;
+			aspect-ratio: 1 / 1;
+			border:.22em solid var(--color6);
+			border-radius:100%;
+			display:flex;
+			justify-content:center;
+			align-items:center;
+		}
+		.wifi_logo_c2{
+			height:88%;
+		}
+		.wifi_logo_c3{
+			height:88%;
+		}
+		.wifi_logo_c4{
+			height:85%;
+		}
+	}
+}
+
+
+.card_front .card_number_component{
+	// border:1px solid magenta;
+	display:flex;
+	justify-content:center;
+	align-items:center;
+	gap:.8em;
+	font-family: 'Rajdhani', sans-serif;
+	font-size:1.9rem;
+	letter-spacing:.12em;
+	font-weight:600;
+	text-shadow:0.04em 0.02em 0.05em rgba(#000,.4),
+				-0.04em -0.02em 0.05em rgba(#fff,.1),
+				0.06em 0.06em .4em rgba(#000,.2);
+	
+	
+}
+
+
+
+.card_front .card_expiry_holder_component{
+	// border:1px solid magenta;
+	display:flex;
+	justify-content:space-between;
+	align-items:flex-end;
+}
+
+.card_front .card_expiry_component{
+	
+	// border:1px solid magenta;
+	display:flex;
+	flex-direction:column;
+	align-items:flex-end;
+	order:2;
+	
+	.card_expiry_with_label_component{
+		display:flex;
+		flex-direction:column;
+		align-items:flex-end;
+	}
+	
+	
+	.label{
+		// border:1px solid magenta;
+		font-size:.85rem;
+		font-weight:600;
+		letter-spacing:.05em;
+		margin-bottom:.2em;
+		color:var(--color7);
+		width:max-content;
+	}
+	
+	.card_expiry_month_year_component{
+		display:flex;
+		
+		.delimiter{
+			margin-left:.3em;
+			margin-right:.3em;
+		}
+	}
+	
+	.card_expiry_month_component,
+	.card_expiry_year_component{
+		// border:1px solid blue;
+		display:flex;
+		justify-content:center;
+		align-items:center;
+		font-family: 'Rajdhani', sans-serif;
+		font-size:1.1rem;
+		letter-spacing:.2em;
+		font-weight:600;
+		text-shadow:0.04em 0.02em 0.05em rgba(#000,.4),
+					-0.04em -0.02em 0.05em rgba(#fff,.1),
+					0.06em 0.06em .5em rgba(#000,.02);
+	
+		
+		.card_expiry_month_value,
+		.card_expiry_year_value{
+			// border:1px solid red;
+			margin-right: -.2em;
+		}
+	}
+	
+}
+
+.card_front .card_holder_with_label_component{
+	.label{
+		font-size:.85rem;
+		font-weight:600;
+		letter-spacing:.05em;
+		color:var(--color7);
+		margin-bottom:.2em;
+	}
+}
+
+.card_front .card_holder_component{
+	
+	// border:1px solid magenta;
+	display:flex;
+	justify-content:center;
+	align-items:center;
+	
+	.card_holder_value{
+		// border:1px solid magenta;
+		font-family: 'Rajdhani', sans-serif;
+		font-size:1.1rem;
+		letter-spacing:.2em;
+		margin-right: -.2em;
+		text-transform:uppercase;
+		font-weight:600;
+		max-width:33ch;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		text-shadow:0.04em 0.02em 0.05em rgba(#000,.4),
+					-0.04em -0.02em 0.05em rgba(#fff,.1),
+					0.06em 0.06em .5em rgba(#000,.02);
+	
+	}
+}
+
+
+
+
+
+
+
+.card_back{
+	transform: rotateY(180deg);	
+	padding:0;
+}
+
+.card_back .card_magnetic_strip_component{
+	margin-top:1.5em;
+	width:100%;
+	height:4.2em;
+	background:var(--color6);
+	
+}
+
+.card_back .card_signature_strip_and_cvv_component{
+	margin-top:.9em;
+	margin-left:var(--card_padding_horizontal);
+	
+	display:flex;
+	align-items:center;
+	
+}
+
+.card_back .card_signature_strip_component{
+	width:17em;
+	height:2.5em;
+	background:var(--color1);
+}
+
+
+
+.card_back .card_cvv_component{
+	width:2.3em;
+	height:1.8em;
+	background:var(--color1);
+	font-family: 'Rajdhani', sans-serif;
+	font-weight:500;
+	display:flex;
+	justify-content:center;
+	align-items:center;
+	
+	.card_cvv_value{
+		letter-spacing:0.05em;
+		color:var(--color6);
+	}
+}
+
+
+
+.card_back .card_bank_visa_logo_component{
+	
+	// border:1px solid magenta;
+	display:flex;
+	justify-content:center;
+	align-items:center;
+	width:max-content;
+	margin-top:auto;
+	margin-bottom:var(--card_padding_vertical);
+	margin-left:auto;
+	margin-right:var(--card_padding_horizontal);
+	overflow:hidden;
+	
+	.visa_logo{
+		height:3.5em;
+		width:8em;
+		
+		display:flex;
+		justify-content:center;
+		align-items:center;
+		
+		.st0{
+			fill:var(--color6);
+		}
+	}
+	
+}
+
+
+
+
+
+
+
+
+.card_front .focusable_card_component{
+	position:relative;
+	transition:.3s;
+	
+	&::before{
+		content:"";
+		position:absolute;
+		top:-0.1em;
+		bottom:-0.1em;
+		left:-0.3em;
+		right:-0.3em;
+		background:var(--color6);
+		z-index:-1;
+		pointer-events: none;
+		transform:scale(0,1);
+		transform-origin:left;
+		// outline:1px solid var(--color1);
+		border-radius:.2em;
+		// color:var(--color9);
+		// background:transparent;
+		transition:.5s ease-in-out;
+		
+	}
+}
+
+.card_front .focused{
+	position:relative;
+	color:var(--color3);
+	
+	// text-shadow:	0.04em 0.02em 0em rgba(#000,.5),
+	// 				-0.04em -0.02em 0em rgba(#fff,.1),
+	// 				0.06em 0.06em .1em rgba(#000,.8);
+	
+	&::before{
+		transform:scale(1,1);
+		// box-shadow:0 0 0em 100em rgba(#000, .3);
+		// filter: blur(8px);
+		// backdrop-filter: blur(8px);
+		background:var(--color6);
+		
+	}
+	
+}
+
+
+
+
+.card_form{
+	position:relative;
+	z-index:2;
+	
+	margin-top:-7rem;
+	margin-bottom:5rem;
+	
+	font-size:1rem;
+	font-weight:600;
+	width:clamp(32em,90%,35em);
+	padding:3em 2em;
+	padding-top:10em;
+	background:var(--color2);
+	border-radius:.8em;
+	
+	display:flex;
+	flex-direction:column;
+	
+	
+	box-shadow: inset 0.1em 0.1em 0em 0 rgba(#fff,1),
+				inset -0.1em -0.1em 0em 0 rgba(#000,.1),
+				-1em -.5em 1em 0em rgba(#000,.02),
+				1.5em 1.5em 3em 0em rgba(#000,.04);
+}
+
+
+
+
+.card_form input{
+	font-family: 'Poppins', sans-serif;
+	font-size:1.1rem;
+	font-weight:600;
+	letter-spacing:.2em;
+	color:var(--color8);
+	background:var(--color1);
+	padding:.6em .8em;
+	width:100%;
+	border:none;
+	border-radius:.3em;
+	box-shadow: inset 0.1em 0.1em 0.1em 0 rgba(#fff,1),
+				inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),
+				-0.1em -0.1em 0.1em 0 rgba(#000,0.04);
+
+	transition:.2s;
+	
+	&:hover{
+		color:var(--color7);
+		outline:none;
+		box-shadow: inset 0.1em 0.1em 0.1em 0 rgba(#fff,1),
+					inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),
+					-0.1em -0.1em .2em 0 rgba(#000,.08),
+					0.2em 0.2em .7em 0 rgba(#000,.08);
+	}
+	&:focus{
+		color:var(--color10);
+		// outline:.15em solid var(--color12);
+		outline:none;
+		box-shadow: inset 0.1em 0.1em 0.1em 0 rgba(#fff,1),
+					inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),
+					-0.1em -0.1em .2em 0 rgba(#000,.12),
+					0.2em 0.2em .7em 0 rgba(#000,.12);
+	}
+	
+
+}
+
+.card_form .form_component{
+	display:flex;
+	flex-direction:column;
+	margin-bottom:1em; 
+	
+	label{
+		letter-spacing:.01em;
+		margin-bottom:.2em;
+		color:var(--color8);
+		width: max-content;
+	}
+	
+}
+
+.card_form .card_holder_component{
+	.card_holder{
+		text-transform:uppercase;
+		
+	}
+}
+
+.card_form .expiry_and_cvv_component{
+	display:flex;
+	flex-direction:row;
+	justify-content:space-between;
+	gap:1em;
+	
+}
+
+.card_form .card_expiry_component{
+	flex:2
+}
+
+.card_form .card_cvv_component{
+	flex:1;
+}
+
+.card_form .card_expiry_month_year_group{
+	display:flex;
+	gap:1em;
+}
+
+
+
+.card_form .card_expiry_component {
+  	position: relative;
+	select{
+		appearance:none;
+		font-family: 'Poppins', sans-serif;
+		font-size:1.1rem;
+		font-weight:600;
+		// letter-spacing:.2em;
+		letter-spacing:.01em;
+		color:var(--color8);
+		background:var(--color1);
+		padding:.6em .8em;
+		width:100%;
+		border:none;
+		border-radius:.3em;
+		box-shadow: inset 0.1em 0.1em 0.1em 0 rgba(#fff,1),
+				inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),
+				-0.1em -0.1em 0.1em 0 rgba(#000,0.04);
+		transition:.25s;
+
+		&:hover{
+			color:var(--color7);
+			outline:none;
+			box-shadow: inset 0.1em 0.1em 0.1em 0 rgba(#fff,1),
+					inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),
+					-0.1em -0.1em .2em 0 rgba(#000,.08),
+					0.2em 0.2em .7em 0 rgba(#000,.08);
+		}
+		&:focus{
+			// color:var(--color14);
+			// outline:.15em solid var(--color12);
+			outline:none;
+			box-shadow: inset 0.1em 0.1em 0.1em 0 rgba(#fff,1),
+					inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),
+					-0.1em -0.1em .2em 0 rgba(#000,.12),
+					0.2em 0.2em .7em 0 rgba(#000,.12);
+		}
+	}
+	
+}
+
+
+
+
+.card_form .submit_button{
+	letter-spacing:.01em;
+	text-transform:uppercase;
+	color:var(--color3);
+	background:var(--color6);
+	box-shadow: inset 0.05em 0.05em 0.1em 0 rgba(#fff,.3),
+				inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),   
+				-0.1em -0.1em 0.1em 0 rgba(#000,0.04);
+	
+	&:hover{
+		color:var(--color2);
+		background:var(--color9);
+		outline:none;
+		box-shadow: inset 0.05em 0.05em 0.1em 0 rgba(#fff,.3),
+					inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15), 
+					-0.1em -0.1em .2em 0 rgba(#000,.08),
+					0.2em 0.2em .7em 0 rgba(#000,.08);
+	}
+	&:focus{
+		color:var(--color1);
+		background:var(--color10);
+		// outline:.15em solid var(--color12);
+		outline:none;
+		box-shadow: inset 0.05em 0.05em 0.1em 0 rgba(#fff,.3),
+					inset -0.05em -0.05em 0.05em 0 rgba(#000,0.15),
+					-0.1em -0.1em .2em 0 rgba(#000,.12),
+					0.2em 0.2em .7em 0 rgba(#000,.12);
+	}
+
+}
+
+
+
+.credits{
+	// border:1px solid magenta;
+	position:relative;
+	z-index:1;
+	margin-top:auto;
+	padding: 2em 2em;
+	width: 100%;
+	font-weight:600;
+	letter-spacing:.1em;
+	line-height:2em;
+	color:var(--color7);
+	background:var(--color2);
+	box-shadow: 0.2em -0.2em .7em 0 rgba(#000,.12);
+	
+	a{
+		color:var(--color6);
+		font-weight:700;
+		cursor: pointer;
+		
+		&:hover{
+			color:var(--color10);
+			text-decoration:underline;
+		}
+	}
+		
+		
+		
+// 	//whites
+// 	--color1:#FAFAFA;
+//     --color2:#F5F5F5;
+// 	--color3:#EDEDED;
+// 	--color4:#D7D7D7;
+	
+// 	//blacks	
+    
+    
+//     --color8:#7f7f7f;
+// 	--color7:#4E4E4E;
+// 	--color6:#2F2F2F;
+// 	--color9:#202020;
+// 	--color10:#000000;
+
+// 	//blues
+//     --color11:#6E8ABA;
+//     --color12:#2255AA;
+// 	--color13:#3A3462;
+// 	--color14:#1165f2;
+// 	--color15:#004C8F;
+// 	--color16:#bac4d6;
+	
+// 	//reds
+// 	--color16:#ED232A;
+	
+// 	//yellow
+// 	--color21:#ED9638;
+}
+
+
+
+
+
+
+
+// @media screen and (min-width: 1200px){
+// 	body{
+		
+// 		flex-direction:row;
+// 		justify-content:space-around;
+// 		align-items:center;
+// 		gap:3em;
+// 		padding:2em;
+// 	}
+	
+// 	.card_container{
+// 		order:2;
+// 		flex-shrink:0;
+// 	}
+	
+// 	.card_form{
+// 		order:1;
+// 		margin-top:0rem;
+// 		padding:5em 3em;
+		
+// 	}
+// }
+

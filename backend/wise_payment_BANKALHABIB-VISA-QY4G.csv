@@ -1,0 +1,2 @@
+name,recipientEmail,paymentReference,receiverType,amountCurrency,amount,sourceCurrency,targetCurrency,accountHolderName,accountNumber,IBAN,bankName,swiftCode,nationality,dateOfBirth,addressCountry,addressCity,addressFirstLine,addressState,transferPurpose
+"PRIMESTACK TECHNOLOGIES LLC","","BANKALHABIB-VISA-BATCH-20260816-QY4G","BUSINESS","USD","50000.00","USD","USD","PRIMESTACK TECHNOLOGIES LLC","343612919064346","","Column Bank (via Wise US Inc)","TRWIUS35XXX","","","US","Wilmington","108 W 13th St","DE","SERVICES"

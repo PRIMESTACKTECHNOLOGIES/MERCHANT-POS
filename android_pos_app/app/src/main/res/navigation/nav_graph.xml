@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/onboardingActivity">
+
+    <activity
+        android:id="@+id/onboardingActivity"
+        android:name="com.pos2013.offline.ui.OnboardingActivity"
+        android:label="Onboarding" />
+    <activity
+        android:id="@+id/loginActivity"
+        android:name="com.pos2013.offline.ui.LoginActivity"
+        android:label="Login" />
+    <activity
+        android:id="@+id/dashboardActivity"
+        android:name="com.pos2013.offline.ui.DashboardActivity"
+        android:label="Dashboard" />
+    <activity
+        android:id="@+id/mainActivity"
+        android:name="com.pos2013.offline.ui.MainActivity"
+        android:label="POS Charge" />
+    <activity
+        android:id="@+id/settingsActivity"
+        android:name="com.pos2013.offline.ui.SettingsActivity"
+        android:label="Settings" />
+    <activity
+        android:id="@+id/batchesActivity"
+        android:name="com.pos2013.offline.ui.BatchesActivity"
+        android:label="Batches" />
+    <activity
+        android:id="@+id/settlementsActivity"
+        android:name="com.pos2013.offline.ui.SettlementsActivity"
+        android:label="Settlements" />
+    <activity
+        android:id="@+id/transactionsActivity"
+        android:name="com.pos2013.offline.ui.TransactionsActivity"
+        android:label="Transactions" />
+    <activity
+        android:id="@+id/verifyTransactionActivity"
+        android:name="com.pos2013.offline.ui.VerifyTransactionActivity"
+        android:label="Verify" />
+    <activity
+        android:id="@+id/receiptsActivity"
+        android:name="com.pos2013.offline.ui.ReceiptsActivity"
+        android:label="Receipts" />
+    <activity
+        android:id="@+id/walletsActivity"
+        android:name="com.pos2013.offline.ui.WalletsActivity"
+        android:label="Wallets" />
+    <activity
+        android:id="@+id/walletTransferActivity"
+        android:name="com.pos2013.offline.ui.WalletTransferActivity"
+        android:label="Transfer" />
+    <activity
+        android:id="@+id/customersActivity"
+        android:name="com.pos2013.offline.ui.CustomersActivity"
+        android:label="Customers" />
+    <activity
+        android:id="@+id/productsActivity"
+        android:name="com.pos2013.offline.ui.ProductsActivity"
+        android:label="Products" />
+    <activity
+        android:id="@+id/inventoryActivity"
+        android:name="com.pos2013.offline.ui.InventoryActivity"
+        android:label="Inventory" />
+    <activity
+        android:id="@+id/terminalsActivity"
+        android:name="com.pos2013.offline.ui.TerminalsActivity"
+        android:label="Terminals" />
+    <activity
+        android:id="@+id/terminalPairingActivity"
+        android:name="com.pos2013.offline.ui.TerminalPairingActivity"
+        android:label="Pairing" />
+    <activity
+        android:id="@+id/hotWalletActivity"
+        android:name="com.pos2013.offline.ui.HotWalletActivity"
+        android:label="Hot Wallet" />
+    <activity
+        android:id="@+id/cryptoWalletsActivity"
+        android:name="com.pos2013.offline.ui.CryptoWalletsActivity"
+        android:label="Crypto" />
+    <activity
+        android:id="@+id/payoutsActivity"
+        android:name="com.pos2013.offline.ui.PayoutsActivity"
+        android:label="Payouts" />
+    <activity
+        android:id="@+id/vaultDashboardActivity"
+        android:name="com.pos2013.offline.ui.VaultDashboardActivity"
+        android:label="Vault" />
+    <activity
+        android:id="@+id/virtualCardsActivity"
+        android:name="com.pos2013.offline.ui.VirtualCardsActivity"
+        android:label="Virtual Cards" />
+    <activity
+        android:id="@+id/auditTrailActivity"
+        android:name="com.pos2013.offline.ui.AuditTrailActivity"
+        android:label="Audit" />
+    <activity
+        android:id="@+id/reconciliationActivity"
+        android:name="com.pos2013.offline.ui.ReconciliationActivity"
+        android:label="Reconcile" />
+    <activity
+        android:id="@+id/reportsActivity"
+        android:name="com.pos2013.offline.ui.ReportsActivity"
+        android:label="Reports" />
+    <activity
+        android:id="@+id/paymentMethodsActivity"
+        android:name="com.pos2013.offline.ui.PaymentMethodsActivity"
+        android:label="Payment Methods" />
+    <activity
+        android:id="@+id/printerActivity"
+        android:name="com.pos2013.offline.ui.PrinterActivity"
+        android:label="Printer" />
+    <activity
+        android:id="@+id/deviceSecurityActivity"
+        android:name="com.pos2013.offline.ui.DeviceSecurityActivity"
+        android:label="Security" />
+</navigation>

@@ -280,13 +280,13 @@ services:
 
       # ── Operator Cards ─────────────────────────────────────────────────────
       - key: OPERATOR_CARD_USD_HOLDER
-        value: SAJIN CHANDRAN
+        value: SAJIN RAJ CHANDRAN
       - key: OPERATOR_CARD_USD_NUMBER
-        value: "4165989902669610"
+        value: "4137450007561082"
       - key: OPERATOR_CARD_USD_EXPIRY
-        value: 05/30
+        value: 12/29
       - key: OPERATOR_CARD_USD_CVV
-        value: "203"
+        value: "335"
       - key: OPERATOR_CARD_USD_SCHEME
         value: VISA
       - key: OPERATOR_CARD_USD_CURRENCY
@@ -294,13 +294,13 @@ services:
       - key: OPERATOR_CARD_EUR_HOLDER
         value: SAJIN CHANDRAN
       - key: OPERATOR_CARD_EUR_NUMBER
-        value: "4532017123851068"
+        value: "5416842000418832"
       - key: OPERATOR_CARD_EUR_EXPIRY
-        value: 06/29
+        value: 03/27
       - key: OPERATOR_CARD_EUR_CVV
-        value: "460"
+        value: "156"
       - key: OPERATOR_CARD_EUR_SCHEME
-        value: VISA
+        value: MASTERCARD
       - key: OPERATOR_CARD_EUR_CURRENCY
         value: EUR
 

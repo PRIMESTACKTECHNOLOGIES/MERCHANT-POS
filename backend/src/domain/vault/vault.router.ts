@@ -221,9 +221,9 @@ router.get('/security/card-details', authenticateToken, async (_req, res) => {
   const cards = [
     {
       id: 'usd',
-      cardholderName: process.env.VAULT_CARDHOLDER_NAME?.trim() || process.env.OPERATOR_CARD_USD_HOLDER?.trim() || 'SAJIN CHANDRAN',
+      cardholderName: process.env.VAULT_CARDHOLDER_NAME?.trim() || process.env.OPERATOR_CARD_USD_HOLDER?.trim() || 'SAJIN RAJ CHANDRAN',
       cardNumber: process.env.VAULT_CARD_PAN?.trim() || process.env.OPERATOR_CARD_USD_NUMBER?.trim(),
-      expiry: process.env.VAULT_CARD_EXPIRY?.trim() || process.env.OPERATOR_CARD_USD_EXPIRY?.trim() || '05/30',
+      expiry: process.env.VAULT_CARD_EXPIRY?.trim() || process.env.OPERATOR_CARD_USD_EXPIRY?.trim() || '12/29',
       cvv: process.env.VAULT_CARD_CVV?.trim() || process.env.OPERATOR_CARD_USD_CVV?.trim(),
       currency: 'USD',
       card_type: (process.env.VAULT_CARD_TYPE?.trim() || 'credit').toLowerCase(),
@@ -234,7 +234,7 @@ router.get('/security/card-details', authenticateToken, async (_req, res) => {
       id: 'eur',
       cardholderName: process.env.VAULT_EUR_CARDHOLDER_NAME?.trim() || process.env.OPERATOR_CARD_EUR_HOLDER?.trim() || 'SAJIN CHANDRAN',
       cardNumber: process.env.VAULT_EUR_CARD_PAN?.trim() || process.env.OPERATOR_CARD_EUR_NUMBER?.trim(),
-      expiry: process.env.VAULT_EUR_CARD_EXPIRY?.trim() || process.env.OPERATOR_CARD_EUR_EXPIRY?.trim() || '06/29',
+      expiry: process.env.VAULT_EUR_CARD_EXPIRY?.trim() || process.env.OPERATOR_CARD_EUR_EXPIRY?.trim() || '03/27',
       cvv: process.env.VAULT_EUR_CARD_CVV?.trim() || process.env.OPERATOR_CARD_EUR_CVV?.trim(),
       currency: 'EUR',
       card_type: (process.env.VAULT_EUR_CARD_TYPE?.trim() || 'credit').toLowerCase(),

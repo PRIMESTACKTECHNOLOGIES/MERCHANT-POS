@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Customer Payment &amp; Payout Flow — Primestack POS</title>
+<style>
+  :root {
+    --prim: #0f172a;
+    --accent: #2563eb;
+    --green: #059669;
+    --amber: #d97706;
+    --red: #dc2626;
+    --purple: #7c3aed;
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --muted: #64748b;
+    --border: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--prim);
+    padding: 32px 24px 64px;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1480px; margin: 0 auto; }
+
+  h1 {
+    font-size: 28px;
+    margin: 0 0 6px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .sub {
+    color: var(--muted);
+    margin: 0 0 32px;
+    font-size: 15px;
+  }
+
+  /* LEGEND */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    margin-bottom: 28px;
+    padding: 14px 18px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 13px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .dot { width: 14px; height: 14px; border-radius: 999px; display: inline-block; }
+  .dot.pay-in { background: linear-gradient(135deg,#2563eb,#60a5fa); }
+  .dot.pay-out { background: linear-gradient(135deg,#059669,#34d399); }
+  .dot.bank { background: linear-gradient(135deg,#7c3aed,#a78bfa); }
+  .dot.crypto { background: linear-gradient(135deg,#d97706,#fbbf24); }
+
+  /* MAIN GRID — 4 COLUMNS LAYOUT */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 620px)  { .grid { grid-template-columns: 1fr; } }
+
+  .col {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    min-height: 100%;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+  }
+  .col-head {
+    padding: 18px 20px;
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    letter-spacing: 0.2px;
+  }
+  .col.c1 .col-head { background: linear-gradient(135deg,#1e3a8a,#2563eb); }
+  .col.c2 .col-head { background: linear-gradient(135deg,#065f46,#059669); }
+  .col.c3 .col-head { background: linear-gradient(135deg,#5b21b6,#7c3aed); }
+  .col.c4 .col-head { background: linear-gradient(135deg,#92400e,#d97706); }
+
+  .icon {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.18);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+
+  .col-body { padding: 16px 18px 20px; }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin: 14px 0 8px;
+  }
+  .section-title:first-child { margin-top: 0; }
+
+  .step {
+    position: relative;
+    padding: 10px 12px 10px 34px;
+    margin: 6px 0;
+    border-radius: 10px;
+    background: #f1f5f9;
+    border: 1px solid var(--border);
+    font-size: 13.5px;
+  }
+  .step .n {
+    position: absolute; left: 10px; top: 10px;
+    width: 18px; height: 18px; line-height: 18px; text-align: center;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px; font-weight: 700;
+  }
+  .col.c2 .step .n { background: var(--green); }
+  .col.c3 .step .n { background: var(--purple); }
+  .col.c4 .step .n { background: var(--amber); }
+
+  .step b { color: var(--prim); }
+  .step .tag {
+    display: inline-block;
+    font-size: 10.5px; font-weight: 700;
+    padding: 2px 7px; border-radius: 6px;
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .tag.bank  { background: #ede9fe; color: #6d28d9; }
+  .tag.card  { background: #dbeafe; color: #1d4ed8; }
+  .tag.crypto{ background: #fef3c7; color: #b45309; }
+  .tag.usdt  { background: #d1fae5; color: #047857; }
+  .tag.visa  { background: #fee2e2; color: #b91c1c; }
+
+  .hr-arrow {
+    display: none;
+    margin: 14px 0 -6px;
+    font-size: 20px; text-align: center;
+    color: #cbd5e1;
+    letter-spacing: 6px;
+    font-weight: 700;
+  }
+  @media (max-width: 1100px) { .hr-arrow { display: block; } }
+
+  /* DESKTOP ARROW between top two columns */
+  .arrow-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 20px;
+    margin: 10px 0 -4px;
+  }
+  .arrow-row .ar {
+    font-size: 22px; color: #94a3b8;
+    text-align: center; letter-spacing: 8px; font-weight: 700;
+  }
+  @media (max-width: 1100px) { .arrow-row { display: none; } }
+
+  /* SIDE FLOW NOTE CARDS */
+  .notes {
+    margin-top: 30px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 800px) { .notes { grid-template-columns: 1fr; } }
+  .note {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--accent);
+    border-radius: 12px;
+    padding: 16px 18px;
+    font-size: 13.5px;
+  }
+  .note.payout { border-left-color: var(--green); }
+  .note h3 { margin: 0 0 8px; font-size: 15px; }
+  .note ul { margin: 6px 0 0 18px; padding: 0; }
+  .note li { margin: 4px 0; color: #334155; }
+
+  .footer {
+    margin-top: 32px; padding: 14px 18px;
+    background: #0f172a; color: #cbd5e1;
+    border-radius: 12px;
+    font-size: 12.5px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  .footer b { color: #fff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Customer Payment &amp; Payout Flow</h1>
+  <p class="sub">PRIMESTACK POS 201.3 Offline &middot; How to deposit (pay in) and withdraw (payout out) your funds</p>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <span><i class="dot pay-in"></i> ① PAY IN = Top-up / Fund Wallet</span>
+    <span><i class="dot pay-out"></i> ② PAY OUT = Withdraw from Wallet</span>
+    <span><i class="dot bank"></i> Bank / Card Rails (USD / AED / Local)</span>
+    <span><i class="dot crypto"></i> Crypto Rails (USDT TRC20 · BTC · ETH)</span>
+  </div>
+
+  <!-- ARROW ROW -->
+  <div class="arrow-row">
+    <div></div>
+    <div class="ar">↓ ↓ ↓</div>
+    <div class="ar">↓ ↓ ↓</div>
+    <div></div>
+  </div>
+
+  <!-- MAIN 4-COLUMN LAYOUT -->
+  <div class="grid">
+
+    <!-- ============================================================ -->
+    <!-- COLUMN 1 : PAY IN → BANK / CARD METHODS                      -->
+    <!-- ============================================================ -->
+    <div class="col c1">
+      <div class="col-head">
+        <div class="icon">💳</div>
+        <div>① PAY IN · Bank &amp; Card<br/><span style="font-weight:500;font-size:12px;opacity:0.9;">(Top-up your Wallet)</span></div>
+      </div>
+      <div class="col-body">
+
+        <div class="section-title">Option A · VISA / Mastercard Debit or Credit</div>
+        <div class="step"><span class="n">1</span> Go to <b>Wallet → Top-up</b></div>
+        <div class="step"><span class="n">2</span> Enter <b>amount</b> + choose <b>Currency</b> (USD / AED)</div>
+        <div class="step"><span class="n">3</span> Select <b>Card Payment</b> <span class="tag card">CARD</span></div>
+        <div class="step"><span class="n">4</span> Enter <b>Card Number</b>, <b>Expiry</b>, <b>CVV</b>, <b>Cardholder Name</b></div>
+        <div class="step"><span class="n">5</span> Complete <b>3D Secure OTP</b> from your bank</div>
+        <div class="step"><span class="n">6</span> ✅ Funds appear in <b>Wallet</b> instantly</div>
+
+        <div class="section-title">Option B · Local Bank Transfer</div>
+        <div class="step"><span class="n">1</span> Go to <b>Wallet → Top-up</b></div>
+        <div class="step"><span class="n">2</span> Choose <b>Bank Deposit</b> <span class="tag bank">BANK</span></div>
+        <div class="step"><span class="n">3</span> Copy our <b>bank details</b> (account number, routing)</div>
+        <div class="step"><span class="n">4</span> Send transfer via your <b>bank app / branch</b></div>
+        <div class="step"><span class="n">5</span> Upload <b>receipt / proof</b> of payment</div>
+        <div class="step"><span class="n">6</span> ✅ Wallet credited within <b>1–24 hours</b></div>
+
+        <div class="section-title">Option C · Apple Pay / Google Pay</div>
+        <div class="step"><span class="n">1</span> Tap <b>Apple Pay</b> or <b>Google Pay</b> button</div>
+        <div class="step"><span class="n">2</span> Authorize with <b>Face ID / Fingerprint</b></div>
+        <div class="step"><span class="n">3</span> ✅ Instant wallet credit</div>
+
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- COLUMN 2 : CUSTOMER WALLET (THE HUB)                         -->
+    <!-- ============================================================ -->
+    <div class="col c2">
+      <div class="col-head">
+        <div class="icon">👛</div>
+        <div>② Customer Wallet<br/><span style="font-weight:500;font-size:12px;opacity:0.9;">(Your Balance Hub — Fiat + Crypto)</span></div>
+      </div>
+      <div class="col-body">
+
+        <div class="section-title">What you can do here</div>
+        <div class="step"><span class="n">✓</span> View <b>USD balance</b> in real time</div>
+        <div class="step"><span class="n">✓</span> View <b>AED balance</b> in real time</div>
+        <div class="step"><span class="n">✓</span> View <b>Crypto balances</b> (USDT, BTC, ETH)</div>
+        <div class="step"><span class="n">✓</span> See full <b>transaction history</b> (all deposits, spends, payouts)</div>
+        <div class="step"><span class="n">✓</span> Pay merchants / bills from wallet balance</div>
+        <div class="step"><span class="n">✓</span> Convert <b>USD ↔ USDT ↔ AED</b> anytime</div>
+
+        <div class="section-title">Money comes here from…</div>
+        <div class="step"><span class="n">←</span> <b>Card top-ups</b> <span class="tag card">CARD</span></div>
+        <div class="step"><span class="n">←</span> <b>Bank transfers</b> <span class="tag bank">BANK</span></div>
+        <div class="step"><span class="n">←</span> <b>USDT / BTC deposits</b> <span class="tag crypto">CRYPTO</span></div>
+        <div class="step"><span class="n">←</span> <b>Refunds / Cashback</b></div>
+
+        <div class="section-title">Money goes out from here to…</div>
+        <div class="step"><span class="n">→</span> <b>Bank payout</b> (any bank) <span class="tag bank">BANK</span></div>
+        <div class="step"><span class="n">→</span> <b>Crypto payout</b> (USDT TRC20, etc.) <span class="tag crypto">CRYPTO</span></div>
+        <div class="step"><span class="n">→</span> <b>Merchant payments</b> (in-store / online)</div>
+
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- COLUMN 3 : PAY OUT → BANK                                     -->
+    <!-- ============================================================ -->
+    <div class="col c3">
+      <div class="col-head">
+        <div class="icon">🏦</div>
+        <div>③ PAY OUT · Bank Withdraw<br/><span style="font-weight:500;font-size:12px;opacity:0.9;">(Wallet → Your Bank Account)</span></div>
+      </div>
+      <div class="col-body">
+
+        <div class="section-title">Standard Bank Payout (T+0 to T+2)</div>
+        <div class="step"><span class="n">1</span> Go to <b>Wallet → Withdraw</b></div>
+        <div class="step"><span class="n">2</span> Select <b>Bank Transfer</b> <span class="tag bank">BANK</span></div>
+        <div class="step"><span class="n">3</span> Pick or add your <b>bank account</b> (one-time save)</div>
+        <div class="step"><span class="n">4</span> Enter the <b>amount</b> you want to withdraw</div>
+        <div class="step"><span class="n">5</span> Review <b>fees</b> and <b>net amount</b></div>
+        <div class="step"><span class="n">6</span> Confirm with your <b>PIN / Face ID / OTP</b></div>
+        <div class="step"><span class="n">7</span> ✅ Sent for processing. Arrives in <b>your bank</b>:
+          <div style="margin-top:6px;padding-left:4px;font-size:12px;color:var(--muted);">
+            &bull; <b>Wise ACH / Local</b> → same day (T+0)<br/>
+            &bull; <b>SWIFT international</b> → 1–2 business days<br/>
+            &bull; <b>MYR / AED local</b> → same-day
+          </div>
+        </div>
+
+        <div class="section-title">Card Payout to Debit (Instant)</div>
+        <div class="step"><span class="n">1</span> Go to <b>Wallet → Withdraw → Card</b> <span class="tag card">CARD</span></div>
+        <div class="step"><span class="n">2</span> Select your saved <b>Visa/Mastercard debit</b></div>
+        <div class="step"><span class="n">3</span> Enter amount → confirm</div>
+        <div class="step"><span class="n">4</span> ✅ Funds on your card in <b>~30 minutes</b></div>
+
+        <div class="section-title">Required info (add once)</div>
+        <div class="step"><span class="n">ℹ</span> Full <b>bank name</b>, <b>account number</b>, <b>account holder name</b></div>
+        <div class="step"><span class="n">ℹ</span> <b>SWIFT / Routing</b> or <b>IBAN</b> (international)</div>
+
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- COLUMN 4 : PAY OUT → CRYPTO                                   -->
+    <!-- ============================================================ -->
+    <div class="col c4">
+      <div class="col-head">
+        <div class="icon">₮</div>
+        <div>④ PAY OUT · Crypto Withdraw<br/><span style="font-weight:500;font-size:12px;opacity:0.9;">(Wallet → Any Crypto Wallet)</span></div>
+      </div>
+      <div class="col-body">
+
+        <div class="section-title">Convert Fiat → Crypto first (if needed)</div>
+        <div class="step"><span class="n">0</span> Go to <b>Wallet → Swap</b> <span class="tag crypto">SWAP</span></div>
+        <div class="step"><span class="n">0</span> Choose: <b>USD</b> → <b>USDT TRC20</b> <span class="tag usdt">USDT</span></div>
+        <div class="step"><span class="n">0</span> Or: <b>USD</b> → <b>BTC / ETH / SOL</b></div>
+        <div class="step"><span class="n">0</span> Confirm → ✅ Instant swap at live rate</div>
+
+        <div class="section-title">Send Crypto to External Wallet</div>
+        <div class="step"><span class="n">1</span> Go to <b>Crypto → Withdraw</b></div>
+        <div class="step"><span class="n">2</span> Choose <b>coin &amp; network</b>:
+          <div style="margin-top:6px;padding-left:4px;font-size:12px;color:var(--muted);">
+            &bull; <b>USDT TRC20</b> (recommended — $0.01 gas, 1 min)<br/>
+            &bull; <b>USDT BEP20 (BSC)</b><br/>
+            &bull; <b>BTC / ETH / SOL</b> native
+          </div>
+        </div>
+        <div class="step"><span class="n">3</span> Paste your <b>external wallet address</b> (double-check network!)</div>
+        <div class="step"><span class="n">4</span> Enter <b>amount</b></div>
+        <div class="step"><span class="n">5</span> Confirm <b>network fee</b> and <b>you receive</b></div>
+        <div class="step"><span class="n">6</span> Authorize with <b>2FA / PIN / OTP</b></div>
+        <div class="step"><span class="n">7</span> ✅ Sent! Track <b>TX hash</b> in History → arrives in ~1–30 min</div>
+
+        <div class="section-title">Deposit Crypto into Wallet (reverse)</div>
+        <div class="step"><span class="n">→</span> <b>Crypto → Deposit</b> → generate <b>address</b> → send coins there</div>
+        <div class="step"><span class="n">→</span> Auto-credited after <b>block confirmations</b></div>
+
+      </div>
+    </div>
+
+  </div><!-- /grid -->
+
+  <!-- NOTES SECTION -->
+  <div class="notes">
+    <div class="note">
+      <h3>💡 Quick Reference — Pay In (Funding)</h3>
+      <ul>
+        <li><b>Card / Apple Pay</b> → Instant. Works with any Visa/Mastercard in 180+ countries.</li>
+        <li><b>Local Bank</b> → MYR, AED, USD, PKR, CDF — free, 0% fee for same-bank customers.</li>
+        <li><b>USDT Deposit (TRC20)</b> → Fastest global option, arrives in ~1 minute, zero exchange hassle.</li>
+        <li><b>All methods credit the same wallet</b> — mix and match as you like.</li>
+      </ul>
+    </div>
+    <div class="note payout">
+      <h3>💡 Quick Reference — Payout Out (Withdrawal)</h3>
+      <ul>
+        <li><b>Bank via Wise</b> → Cheapest international option (0.41% typical). Supported 150+ countries.</li>
+        <li><b>Instant Card Payout</b> → Funds back on your own Visa debit card in under 30 minutes.</li>
+        <li><b>USDT TRC20</b> → Payout anywhere in the world in under 3 minutes. Minimal gas ($0.01 USD).</li>
+        <li><b>Security</b> → All withdrawals require 2-factor authentication + email/SMS OTP.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div><b>PRIMESTACK</b> · POS 201.3 Offline System</div>
+    <div>Need help? Contact your account manager or support desk.</div>
+    <div style="opacity:0.7;">v201.3 · Last updated Aug 2026</div>
+  </div>
+
+</div>
+</body>
+</html>

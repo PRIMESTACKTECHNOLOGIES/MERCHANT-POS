@@ -1,0 +1,204 @@
+<section class="bg">
+	<div class="bg_image"></div>
+</section>
+
+<section class="card_container">
+	<div class="card">
+		
+	
+		<div class="card_front">
+
+			<div class="card_component card_bank_logo_smartchip_wifi_component">
+				
+				<div class="card_component card_bank_logo_smartchip_component">
+<!-- 				
+					<div class="card_component card_bank_logo_component">
+						<div class="hdfc_logo">
+							<div class="red_square">
+								<div class="white_square">
+									<div class="blue_square"></div>
+								</div>
+							</div>
+							<div class="blue_rectangle">HDFC BANK</div>
+						</div>
+						<div class="moto">We understand your world</div>
+					</div>
+ -->
+
+
+					<div class="card_component card_bank_smartchip_component">
+				<div class="smartchip">
+					<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1012 739.98">
+						<defs>
+							<style>
+								.cls-1 {
+									fill: url(#radial-gradient);
+								}
+
+								.cls-2 {
+									fill: #2f2f2f;
+								}
+							</style>
+							<radialGradient id="radial-gradient" cx="-74.57" cy="-132.53" r="1774.29" gradientUnits="userSpaceOnUse">
+								<stop offset="0.18" stop-color="#c5c5c5"/>
+								<stop offset="0.32" stop-color="#c7c7c7"/>
+								<stop offset="0.38" stop-color="#cecece"/>
+								<stop offset="0.41" stop-color="#d7d7d7"/>
+								<stop offset="0.51" stop-color="#ccc"/>
+								<stop offset="0.63" stop-color="#c5c5c5"/>
+								<stop offset="0.93" stop-color="#c1c1c1"/>
+								<stop offset="1" stop-color="#bfbfbf"/>
+							</radialGradient>
+						</defs>
+						<title>smartchip</title>
+						<g>
+							<path class="cls-1" d="M291.8,573.65V740H115.73A115.73,115.73,0,0,1,0,624.27V573.65Z"/>
+							<path class="cls-1" d="M292.62,0V167.15H0V115.74A115.74,115.74,0,0,1,115.73,0Z"/>
+							<path class="cls-1" d="M385.92,357H0V191.49H312.9a73,73,0,0,1,73,73Z"/>
+							<path class="cls-1" d="M385.92,381.35v94.93a73,73,0,0,1-73,73H0V381.35Z"/>
+							<rect class="cls-1" x="410.26" y="288.05" width="191.48" height="166.33"/>
+							<path class="cls-1" d="M699.1,573.65h-2.42V740H316.14V573.65H312.9a97.36,97.36,0,0,0,97.36-97.37v2.44H601.74v-2.44A97.36,97.36,0,0,0,699.1,573.65Z"/>
+							<path class="cls-1" d="M699.14,167.15a97.36,97.36,0,0,0-97.36,97.36v-.8H410.26v.8a97.36,97.36,0,0,0-97.36-97.36H317V0H695.9V167.15Z"/>
+							<path class="cls-1" d="M1012,115.74v51.41H720.2V0H896.27A115.74,115.74,0,0,1,1012,115.74Z"/>
+							<path class="cls-1" d="M1012,191.49V357H626.08V264.5a73,73,0,0,1,73-73Z"/>
+							<path class="cls-1" d="M1012,381.35V549.3H699.1a73,73,0,0,1-73-73l0-94.95Z"/>
+							<path class="cls-1" d="M1012,573.65v50.62A115.73,115.73,0,0,1,896.27,740H721V573.65Z"/>
+						</g>
+						<path class="cls-2" d="M699.07,191.49H1012V167.15H720.2V0H695.9V167.15h3.24a97.36,97.36,0,0,0-97.36,97.36v-.8H410.26v.8a97.36,97.36,0,0,0-97.36-97.36H317V0H292.62V167.15H0v24.34H312.9a73,73,0,0,1,73,73l0,92.51H0v24.35H385.92v94.93a73,73,0,0,1-73,73H0v24.35H291.8V740h24.34V573.65H312.9a97.36,97.36,0,0,0,97.36-97.37v2.44H601.74v-2.44a97.36,97.36,0,0,0,97.36,97.37h-2.42V740H721V573.65h291V549.3H699.1a73,73,0,0,1-73-73l0-94.95H1012V357H626.08V264.5A73,73,0,0,1,699.07,191.49ZM601.74,454.38H410.26V288.05H601.74Z"/>
+					</svg>
+
+
+
+						</div>
+			</div>
+
+				</div>
+
+
+
+				<div class="card_component card_bank_wifi_component">
+				<div class="wifi_logo">
+					<div class="wifi_logo_c1">
+						<div class="wifi_logo_c2">
+							<div class="wifi_logo_c3">
+								<div class="wifi_logo_c4"></div>
+							</div>
+						</div>	
+					</div>
+				</div>
+			</div>
+			
+			</div>
+
+
+			<div class="card_component card_number_component focusable_card_component">
+				<span class="card_number_value_sec">XXXX</span>
+				<span class="card_number_value_sec">XXXX</span>
+				<span class="card_number_value_sec">XXXX</span>
+				<span class="card_number_value_sec">XXXX</span>
+			</div>
+
+
+				
+			<div class="card_component card_expiry_holder_component">
+					
+					<div class="card_component card_expiry_component ">
+						<div class="card_component card_expiry_with_label_component">
+							<div class="label">expires</div>
+							<div class="card_component card_expiry_month_year_component">
+								<div class="card_expiry_month_component focusable_card_component">
+									<div class="card_expiry_month_value">##</div>	
+								</div>
+								<div class="delimiter"> / </div>
+								<div class="card_expiry_year_component focusable_card_component">
+									<div class="card_expiry_year_value">##</div>	
+								</div>
+							</div>	
+						</div>		
+					</div>
+					<div class="card_component card_holder_with_label_component">
+						<div class="label">card holder</div>
+						<div class="card_component card_holder_component focusable_card_component">
+							<div class="card_holder_value">Full Name</div>
+						</div>
+					</div>
+				</div>
+
+		</div>
+
+
+
+
+
+
+		<div class="card card_back">
+
+			<div class="card_component card_magnetic_strip_component">
+			</div>
+
+			<div class="card_component card_signature_strip_and_cvv_component">
+
+				<div class="card_component card_signature_strip_component">
+				</div>
+
+				<div class="card_component card_cvv_component focusable_card_component">
+					<div class="card_cvv_value">***</div>
+				</div>
+			</div>
+			
+			<div class="card_component card_bank_visa_logo_component">
+					<div class="visa_logo">
+						<svg version="1.0" id="katman_1" xmlns="http://www.w3.org/2000/svg" 
+							 xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+							 viewBox="0 0 560 400" 
+							 xml:space="preserve">
+						<style type="text/css">
+							.st0{fill-rule:evenodd;clip-rule:evenodd;}
+						</style>
+						<path class="st0" d="M287.4,174.8c-0.2,19.4,17.3,30.3,30.5,36.7c13.6,6.6,18.2,10.9,18.1,16.8c-0.1,9.1-10.8,13-20.9,13.2
+							c-17.5,0.3-27.7-4.7-35.8-8.5l-6.3,29.6c8.1,3.7,23.2,7,38.8,7.2c36.7,0,60.6-18.1,60.8-46.2c0.1-35.6-49.3-37.6-48.9-53.5
+							c0.1-4.8,4.7-10,14.8-11.3c5-0.7,18.8-1.2,34.4,6l6.1-28.6c-8.4-3.1-19.2-6-32.7-6C311.9,130.2,287.6,148.6,287.4,174.8 M438,132.7
+							c-6.7,0-12.3,3.9-14.9,9.9l-52.4,125h36.6l7.3-20.1h44.8l4.2,20.1H496l-28.2-134.9H438z M443.1,169.2l10.6,50.7h-29L443.1,169.2z
+							 M243,132.7l-28.9,134.9H249l28.9-134.9H243z M191.4,132.7L155,224.6l-14.7-78.1c-1.7-8.7-8.5-13.8-16.1-13.8H64.8l-0.8,3.9
+							c12.2,2.6,26,6.9,34.4,11.5c5.1,2.8,6.6,5.2,8.3,11.9l27.8,107.7h36.9L228,132.7H191.4z"/>
+						</svg>
+
+					</div>
+				</div>
+
+		</div>
+	</div>
+</section>
+		
+		
+<form class="card_form">
+	<div class="form_component card_number_component">
+		<label for="card_number">card number</label>
+		<input id="card_number" class="card_number" type="text" minlength="16" maxlength="16"/>
+	</div>
+	<div class="form_component card_holder_component">
+		<label for="card_holder">card holder</label>
+		<input id="card_holder" class="card_holder" type="text" />
+	</div>
+	<div class="form_component expiry_and_cvv_component">
+		<div class="form_component card_expiry_component">
+			<label>expiry date</label>
+			<div class="card_expiry_month_year_group" id="card_expiry_month_year_group">
+				<select class="card_expiry_month" id="card_expiry_month" name="card_expiry_month"></select>
+
+				<select class="card_expiry_year" id="card_expiry_year" name="card_expiry_year"></select>
+			</div>
+		</div>
+		<div class="form_component card_cvv_component">
+			<label for="card_cvv">cvv</label>
+			<input id="card_cvv" class="card_cvv" type="text" minlength="3" maxlength="3"/>
+		</div>
+	</div>
+	<div class="form_component submit_button_component">
+		<input id="submit_button" class="submit_button" type="submit" value="submit">
+	</div>
+</form>
+
+<section class="credits">
+	inspired by <a href="https://codepen.io/JavaScriptJunkie" target="_blank">Muhammed Erdem</a>'s <a href="https://codepen.io/JavaScriptJunkie/pen/YzzNGeR" target="_blank">Credit Card Form - VueJs</a>'
+</section>

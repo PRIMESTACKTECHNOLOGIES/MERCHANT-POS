@@ -1,0 +1,295 @@
+// Restricts input for the given textbox to the given inputFilter.
+function setInputFilter(textbox, inputFilter) {
+  ["input", "keydown", "keyup", "mousedown", "mouseup", "select", "contextmenu", "drop"].forEach(function(event) {
+    textbox.addEventListener(event, function() {
+      if (inputFilter(this.value)) {
+        this.oldValue = this.value;
+        this.oldSelectionStart = this.selectionStart;
+        this.oldSelectionEnd = this.selectionEnd;
+      } else if (this.hasOwnProperty("oldValue")) {
+        this.value = this.oldValue;
+        this.setSelectionRange(this.oldSelectionStart, this.oldSelectionEnd);
+      } else {
+        this.value = "";
+      }
+    });
+  });
+}
+
+
+// Install input filters.
+setInputFilter(document.getElementById("card_number"), function(value) {
+  return /^\d*$/.test(value); });
+
+setInputFilter(document.getElementById("card_holder"), function(value) {
+  return /^[a-zA-Z ]*$/.test(value); });
+
+setInputFilter(document.getElementById("card_cvv"), function(value) {
+  return /^\d*$/.test(value); });
+
+
+
+//card object declared so card_flip class can be added or removed
+let card=document.getElementsByClassName("card")[0];
+
+
+
+
+
+//connect card number with card number input box
+let card_number_in_card=document.getElementsByClassName("card_number_component")[0];
+
+let card_number_in_form=document.getElementById("card_number");
+
+card_number_in_card.onclick=function(){
+	card_number_in_form.focus();
+	// card_number_in_card.classList.add("focused");
+}
+
+card_number_in_form.onfocus =function(){
+	card.classList.remove("card_flipped");
+	card_number_in_card.classList.add("focused");
+}
+
+card_number_in_form.onblur =function(){
+	card_number_in_card.classList.remove("focused");
+}
+
+
+let card_number_value_sec=document.getElementsByClassName("card_number_value_sec");
+
+card_number_in_form.addEventListener("input",function(event){
+
+	card_number_value=event.target.value;
+	
+	let no_of_X=16-card_number_value.length;
+	card_number_value=card_number_value.concat( "X".repeat(no_of_X) );
+	
+	// console.log(card_number_value);
+	
+	for(i=0;i<4;i=i+=1){
+		card_number_value_sec[i].innerHTML=card_number_value.substring(i*4,i*4+4);	
+	}
+	
+});
+
+
+
+
+
+//connect card holder with card holder input box
+let card_holder_component_in_card=document.getElementsByClassName("card_holder_component")[0];
+let card_holder_value_in_card=document.getElementsByClassName("card_holder_value")[0];
+
+let card_holder_value_in_form=document.getElementById("card_holder");
+
+card_holder_component_in_card.onclick=function(){
+	card_holder_value_in_form.focus();
+	// card_holder_value_in_card.classList.add("focused");
+	
+}
+
+card_holder_value_in_form.onfocus =function(){
+	card.classList.remove("card_flipped");
+	card_holder_component_in_card.classList.add("focused");
+}
+
+card_holder_value_in_form.onblur =function(){
+	card_holder_component_in_card.classList.remove("focused");
+}
+
+
+card_holder_value_in_form.addEventListener("input",function(event){
+
+	card_holder_value=event.target.value;
+	if(card_holder_value=="") card_holder_value="FULL NAME";
+	// console.log(card_holder_value);
+	card_holder_value_in_card.innerHTML=card_holder_value;
+	
+});
+
+
+
+
+
+//connect card expiry month with card expiry month dropdown
+let card_expiry_month_component_in_card=document.getElementsByClassName("card_expiry_month_component")[0];
+let card_expiry_month_value_in_card=document.getElementsByClassName("card_expiry_month_value")[0];
+
+let card_expiry_month_in_form=document.getElementById("card_expiry_month");
+
+card_expiry_month_component_in_card.onclick=function(){
+	card_expiry_month_in_form.focus();
+	// card_expiry_month_value_in_card.classList.add("focused");
+}
+
+card_expiry_month_in_form.onfocus =function(){
+	card.classList.remove("card_flipped");
+	card_expiry_month_component_in_card.classList.add("focused");
+}
+
+card_expiry_month_in_form.onblur =function(){
+	card_expiry_month_component_in_card.classList.remove("focused");
+}
+
+
+card_expiry_month_in_form.addEventListener("change",function(event){
+
+	card_expiry_month_value=event.target.value;
+	if(card_expiry_month_value=="") card_expiry_month_value="##";
+	// console.log(card_expiry_month_value);
+	card_expiry_month_value_in_card.innerHTML=card_expiry_month_value;
+	
+});
+
+
+
+
+
+
+
+
+//connect card expiry month with card expiry year dropdown
+let card_expiry_year_component_in_card=document.getElementsByClassName("card_expiry_year_component")[0];
+let card_expiry_year_value_in_card=document.getElementsByClassName("card_expiry_year_value")[0];
+
+let card_expiry_year_in_form=document.getElementById("card_expiry_year");
+
+card_expiry_year_component_in_card.onclick=function(){
+	card_expiry_year_in_form.focus();
+	// card_expiry_year_value_in_card.classList.add("focused");
+}
+
+card_expiry_year_in_form.onfocus =function(){
+	card.classList.remove("card_flipped");
+	card_expiry_year_component_in_card.classList.add("focused");
+}
+
+card_expiry_year_in_form.onblur =function(){
+	card_expiry_year_component_in_card.classList.remove("focused");
+}
+
+
+
+card_expiry_year_in_form.addEventListener("change",function(event){
+
+	card_expiry_year_value=event.target.value;
+	if(card_expiry_year_value=="") card_expiry_year_value="##";
+	console.log(card_expiry_year_value);
+	card_expiry_year_value_in_card.innerHTML=card_expiry_year_value;
+	
+});
+
+
+//connect card cvv with card cvv input box and also flip card along with it
+let card_cvv_in_form=document.getElementById("card_cvv");
+
+card_cvv_in_form.onclick=function(){
+	card.classList.add("card_flipped");
+}
+card_cvv_in_form.onfocus=function(){
+	card.classList.add("card_flipped");
+}
+
+
+card_number_in_form.onclick=function(){
+	card.classList.remove("card_flipped");
+}
+
+
+
+card_holder_value_in_form.onclick=function(){
+	card.classList.remove("card_flipped");
+}
+
+
+
+card_expiry_month_in_form.onclick=function(){
+	card.classList.remove("card_flipped");
+}
+
+
+
+card_expiry_year_in_form.onclick=function(){
+	card.classList.remove("card_flipped");
+}
+
+
+// card_cvv_in_form.onblur=function(){
+// 	card.classList.remove("card_flipped");
+// }
+
+
+let card_cvv_value_in_card=document.getElementsByClassName("card_cvv_value")[0];
+
+card_cvv_value_in_card.onclick=function(){
+	card_cvv_in_form.focus();
+}
+
+
+
+card_cvv_in_form.addEventListener("input",function(event){
+
+	card_cvv_value=event.target.value;
+	
+	let no_of_asterisk=3-card_cvv_value.length;
+	card_cvv_value=card_cvv_value.concat( "*".repeat(no_of_asterisk) );
+	// console.log(card_cvv_value);
+	card_cvv_value_in_card.innerHTML=card_cvv_value;
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//populate expiry dropdown
+var opt=document.createElement("option");
+let opt_value="Month"
+opt.value=opt_value;
+opt.innerHTML=opt_value;
+opt.setAttribute('selected','selected');
+opt.setAttribute('disabled','disabled');
+card_expiry_month_in_form.appendChild(opt);
+
+for(i=0;i<12;i++){
+	opt=document.createElement("option");
+	opt_value=i+1;
+	opt_value=opt_value.toString().padStart(2,0);
+	opt.value=opt_value;
+	opt.innerHTML=opt_value;
+	card_expiry_month_in_form.appendChild(opt);
+}
+
+
+
+
+opt=document.createElement("option");
+opt_value="Year"
+opt.value=opt_value;
+opt.innerHTML=opt_value;
+opt.setAttribute('selected','selected');
+opt.setAttribute('disabled','disabled');
+card_expiry_year_in_form.appendChild(opt);
+
+for(i=0;i<100;i++){
+	opt=document.createElement("option");
+	opt_value=i;
+	opt_value=opt_value.toString().padStart(2,0);
+	opt.value=opt_value;
+	opt.innerHTML=opt_value;
+	card_expiry_year_in_form.appendChild(opt);
+}

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark mode: brand preserved, surfaces darkened, text contrast boosted to WCAG AA -->
+    <color name="pos_primary">#6AA0E0</color>
+    <color name="pos_on_primary">#0B1220</color>
+    <color name="pos_on_primary_variant">#CFD8E6</color>
+    <color name="pos_primary_container">#1B2C4A</color>
+    <color name="pos_on_primary_container">#CFE1FF</color>
+
+    <!-- Surface / background — pure dark with deep elevation steps -->
+    <color name="pos_background">#0A0F1A</color>
+    <color name="pos_surface">#111827</color>
+    <color name="pos_bg_surface">#111827</color>
+    <color name="pos_surface_variant">#1E293B</color>
+    <color name="pos_on_surface">#F1F5F9</color>
+    <color name="pos_text_primary">#F1F5F9</color>
+    <color name="pos_on_surface_variant">#B4C2D6</color>
+    <color name="pos_text_muted">#9FB0C8</color>
+
+    <!-- Accents -->
+    <color name="pos_accent">#6AA0E0</color>
+    <color name="pos_accent_teal">#2DD4BF</color>
+    <color name="pos_violet_container">#2A2455</color>
+
+    <!-- Semantic surfaces (dark inverted; text = light contrast) -->
+    <color name="pos_success">#4ADE80</color>
+    <color name="pos_success_container">#064E3B</color>
+    <color name="pos_info">#60A5FA</color>
+    <color name="pos_info_container">#0C2448</color>
+    <color name="pos_error">#FCA5A5</color>
+    <color name="pos_error_container">#450A0A</color>
+    <color name="pos_warning">#FBBF24</color>
+    <color name="pos_warning_container">#4A2F00</color>
+    <color name="pos_gold_container">#4A2F00</color>
+
+    <!-- Divider / chip -->
+    <color name="pos_divider">#273142</color>
+    <color name="pos_chip_gold">#FACC15</color>
+
+    <!-- Card brand backgrounds (same in dark — cards are self-contained brand surfaces) -->
+    <color name="card_visa">#1A1F71</color>
+    <color name="card_mastercard">#EB001B</color>
+    <color name="card_amex">#006FCF</color>
+    <color name="card_default">#374151</color>
+    <color name="card_unionpay">#E60012</color>
+</resources>

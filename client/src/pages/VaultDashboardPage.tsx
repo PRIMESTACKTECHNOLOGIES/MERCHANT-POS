@@ -1823,15 +1823,18 @@ export function VaultDashboardPage() {
           detailsBusy={vaultCardDetailsBusy}
           detailsError={vaultCardDetailsError}
           onLoadDetails={() => void loadVaultCardDetails()}
+          holderName="SAJIN RAJ CHANDRAN"
+          maskedPan="4137 45•• •••• 1082"
+          expiry="12/29"
           currency="USD"
           metal="silver"
-          bankStyle="vault"
+          bankStyle="bisb"
           compact
         />
         <VaultBankCard
           holderName="SAJIN CHANDRAN"
-          maskedPan="4532 01•• •••• 1068"
-          expiry="06/29"
+          maskedPan="5416 84•• •••• 8832"
+          expiry="03/27"
           currency="EUR"
           metal="gold"
           bankStyle="commercial"
@@ -1997,19 +2000,19 @@ export function VaultDashboardPage() {
 
     const selectedCard = selectedLoadingCard === "usd"
       ? {
-          holderName: "SAJIN CHANDRAN",
-          maskedPan: "4165 98•• •••• 9610",
-          expiry: "05/30",
+          holderName: "SAJIN RAJ CHANDRAN",
+          maskedPan: "4137 45•• •••• 1082",
+          expiry: "12/29",
           currency: "USD" as const,
           metal: "silver" as const,
-          bankStyle: "vault" as const,
+          bankStyle: "bisb" as const,
           details: vaultCardDetails.usd,
         }
       : selectedLoadingCard === "eur"
         ? {
             holderName: "SAJIN CHANDRAN",
-            maskedPan: "4532 01•• •••• 1068",
-            expiry: "06/29",
+            maskedPan: "5416 84•• •••• 8832",
+            expiry: "03/27",
             currency: "EUR" as const,
             metal: "gold" as const,
             bankStyle: "commercial" as const,
@@ -2049,8 +2052,8 @@ export function VaultDashboardPage() {
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {([
-                  ["usd", "SAJIN CHANDRAN", "USD", "4165 98•• •••• 9610", "bg-slate-100"],
-                  ["eur", "SAJIN CHANDRAN", "EUR", "4532 01•• •••• 1068", "bg-amber-50"],
+                  ["usd", "SAJIN RAJ CHANDRAN", "USD", "4137 45•• •••• 1082", "bg-slate-100"],
+                  ["eur", "SAJIN CHANDRAN", "EUR", "5416 84•• •••• 8832", "bg-amber-50"],
                 ] as const).map(([id, name, currency, pan, tone]) => (
                   <button
                     key={id}
