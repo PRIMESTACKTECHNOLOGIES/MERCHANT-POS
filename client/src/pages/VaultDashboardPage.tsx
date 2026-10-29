@@ -1809,7 +1809,7 @@ export function VaultDashboardPage() {
 
       <EmvChipPanel auditRows={Array.isArray(data.audit?.events) ? data.audit.events : Array.isArray(data.audit) ? data.audit : []} />
 
-      <div className="grid items-start gap-3 lg:grid-cols-2 xl:grid-cols-4">
+      <div className="grid items-start gap-3 lg:grid-cols-2">
         <VaultBankCard
           revealedDetails={vaultCardDetails.usd ? {
             cardNumber: String(vaultCardDetails.usd.cardNumber || ""),
@@ -1843,48 +1843,6 @@ export function VaultDashboardPage() {
             card_type: String(vaultCardDetails.eur.card_type || "credit"),
             credit_limit: Number(vaultCardDetails.eur.credit_limit || 5000000),
             status: String(vaultCardDetails.eur.status || "ACTIVE"),
-          } : null}
-          detailsBusy={vaultCardDetailsBusy}
-          detailsError={vaultCardDetailsError}
-          onLoadDetails={() => void loadVaultCardDetails()}
-          compact
-        />
-        <VaultBankCard
-          holderName="SAJIN CHANDRAN"
-          maskedPan="4137 45•• •••• 1082"
-          expiry="12/29"
-          currency="AED"
-          metal="silver"
-          bankStyle="bisb"
-          revealedDetails={vaultCardDetails.aed1 ? {
-            cardNumber: String(vaultCardDetails.aed1.cardNumber || ""),
-            expiry: String(vaultCardDetails.aed1.expiry || ""),
-            cvv: String(vaultCardDetails.aed1.cvv || ""),
-            cardholderName: String(vaultCardDetails.aed1.cardholderName || ""),
-            card_type: String(vaultCardDetails.aed1.card_type || "credit"),
-            credit_limit: Number(vaultCardDetails.aed1.credit_limit || 5000000),
-            status: String(vaultCardDetails.aed1.status || "ACTIVE"),
-          } : null}
-          detailsBusy={vaultCardDetailsBusy}
-          detailsError={vaultCardDetailsError}
-          onLoadDetails={() => void loadVaultCardDetails()}
-          compact
-        />
-        <VaultBankCard
-          holderName="SAJIN CHANDRAN"
-          maskedPan="5416 84•• •••• 8832"
-          expiry="03/27"
-          currency="AED"
-          metal="gold"
-          bankStyle="commercial"
-          revealedDetails={vaultCardDetails.aed2 ? {
-            cardNumber: String(vaultCardDetails.aed2.cardNumber || ""),
-            expiry: String(vaultCardDetails.aed2.expiry || ""),
-            cvv: String(vaultCardDetails.aed2.cvv || ""),
-            cardholderName: String(vaultCardDetails.aed2.cardholderName || ""),
-            card_type: String(vaultCardDetails.aed2.card_type || "credit"),
-            credit_limit: Number(vaultCardDetails.aed2.credit_limit || 5000000),
-            status: String(vaultCardDetails.aed2.status || "ACTIVE"),
           } : null}
           detailsBusy={vaultCardDetailsBusy}
           detailsError={vaultCardDetailsError}

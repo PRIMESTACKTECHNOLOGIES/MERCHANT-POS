@@ -59,6 +59,8 @@ RUN rm -f /root/.npmrc
 COPY --from=backend-build /app/backend/dist ./backend/dist
 # Copy backend public assets (coin logos, etc.)
 COPY backend/public ./backend/public
+# One-time database snapshot — copied to the fresh persistent disk on first boot
+COPY backend/seed ./backend/seed
 
 # Copy built frontend (Vite output) — Express serves this via express.static
 COPY --from=frontend-build /app/client/dist ./client/dist

@@ -37,6 +37,22 @@ if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
 }
 
+// ── One-time seed bootstrap ──────────────────────────────────────────────────
+// A snapshot ships with the image (backend/seed/database.sqlite.seed) so a
+// brand-new persistent disk can be seeded once. This only runs when the target
+// database does not exist yet — it never overwrites a live database.
+if (!fs.existsSync(DB_PATH)) {
+  const seedPath = path.join(BACKEND_ROOT, 'seed', 'database.sqlite.seed');
+  if (fs.existsSync(seedPath)) {
+    try {
+      fs.copyFileSync(seedPath, DB_PATH);
+      console.log('[DB] Seeded new database from', seedPath);
+    } catch (e) {
+      console.error('[DB] Seed copy failed:', e);
+    }
+  }
+}
+
 console.log('[DB] Connected:', DB_PATH);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
