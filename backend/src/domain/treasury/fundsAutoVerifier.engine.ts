@@ -478,9 +478,6 @@ export class FundsAutoVerifierEngine {
         : null,
     };
   }
-}
-
-export const fundsAutoVerifierEngine = new FundsAutoVerifierEngine();
 
   async registerCandidate(input: {
     authorizationCode: string;
@@ -521,7 +518,7 @@ export const fundsAutoVerifierEngine = new FundsAutoVerifierEngine();
         id,
         input.authorizationCode,
         input.protocol || '201.3',
-        Math.round(input.amount * 100),  // store in minor units (cents)
+        Math.round(input.amount * 100),
         input.currency.toUpperCase(),
         input.beneficiaryName || null,
         input.beneficiaryAccount || null,
@@ -538,3 +535,6 @@ export const fundsAutoVerifierEngine = new FundsAutoVerifierEngine();
 
     return { id, duplicate: false };
   }
+}
+
+export const fundsAutoVerifierEngine = new FundsAutoVerifierEngine();
