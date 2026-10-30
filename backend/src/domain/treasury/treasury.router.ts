@@ -148,6 +148,47 @@ router.get('/funds-verifier/candidates', async (req: Request, res: Response) => 
   }
 });
 
+// Register a new inbound fund candidate for verification
+router.post('/funds-verifier/candidates', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const {
+      authorizationCode, protocol, amount, currency,
+      beneficiaryName, beneficiaryAccount, senderBic, receiverBic,
+      uetr, depositCode, merchantId, customerId,
+    } = req.body || {};
+
+    if (!authorizationCode || !amount || !currency) {
+      return res.status(400).json({ ok: false, error: 'VALIDATION_ERROR', message: 'authorizationCode, amount and currency are required' });
+    }
+    if (isNaN(Number(amount)) || Number(amount) <= 0) {
+      return res.status(400).json({ ok: false, error: 'VALIDATION_ERROR', message: 'amount must be a positive number' });
+    }
+
+    const result = await fundsAutoVerifierEngine.registerCandidate({
+      authorizationCode: String(authorizationCode).trim(),
+      protocol: protocol ? String(protocol) : undefined,
+      amount: Number(amount),
+      currency: String(currency).toUpperCase(),
+      beneficiaryName: beneficiaryName ? String(beneficiaryName) : undefined,
+      beneficiaryAccount: beneficiaryAccount ? String(beneficiaryAccount) : undefined,
+      senderBic: senderBic ? String(senderBic) : undefined,
+      receiverBic: receiverBic ? String(receiverBic) : undefined,
+      uetr: uetr ? String(uetr) : undefined,
+      depositCode: depositCode ? String(depositCode) : undefined,
+      merchantId: merchantId ? String(merchantId) : undefined,
+      customerId: customerId ? String(customerId) : undefined,
+    });
+
+    return res.status(result.duplicate ? 200 : 201).json({
+      ok: true,
+      data: result,
+      message: result.duplicate ? 'Candidate already registered' : 'Candidate registered — run the verifier to confirm with provider',
+    });
+  } catch (error: any) {
+    fail(res, error);
+  }
+});
+
 router.post('/funds-verifier/run', async (req: Request, res: Response) => {
   try {
     const body = (req.body || {}) as { limit?: number; authorizationCode?: string; initiatedBy?: string };

@@ -481,3 +481,60 @@ export class FundsAutoVerifierEngine {
 }
 
 export const fundsAutoVerifierEngine = new FundsAutoVerifierEngine();
+
+  async registerCandidate(input: {
+    authorizationCode: string;
+    protocol?: string;
+    amount: number;
+    currency: string;
+    beneficiaryName?: string;
+    beneficiaryAccount?: string;
+    senderBic?: string;
+    receiverBic?: string;
+    uetr?: string;
+    depositCode?: string;
+    merchantId?: string;
+    customerId?: string;
+  }) {
+    await ensureTreasuryTables();
+    const { v4: uuidv4 } = await import('uuid');
+    const id = uuidv4();
+    const now = new Date().toISOString();
+
+    // Check for duplicate
+    const existing = await db.query(
+      `SELECT id FROM inbound_transaction_registrations WHERE authorization_code = ? LIMIT 1`,
+      [input.authorizationCode],
+    );
+    if (existing.rows?.length) {
+      return { id: existing.rows[0].id as string, duplicate: true };
+    }
+
+    await db.query(
+      `INSERT INTO inbound_transaction_registrations
+         (id, authorization_code, protocol, amount_minor, currency,
+          beneficiary_name, beneficiary_account, sender_bic, receiver_bic,
+          uetr, deposit_code, merchant_id, customer_id,
+          fund_verification_status, settlement_status, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING','PENDING_VERIFICATION',?,?)`,
+      [
+        id,
+        input.authorizationCode,
+        input.protocol || '201.3',
+        Math.round(input.amount * 100),  // store in minor units (cents)
+        input.currency.toUpperCase(),
+        input.beneficiaryName || null,
+        input.beneficiaryAccount || null,
+        input.senderBic || null,
+        input.receiverBic || null,
+        input.uetr || null,
+        input.depositCode || null,
+        input.merchantId || null,
+        input.customerId || null,
+        now,
+        now,
+      ],
+    );
+
+    return { id, duplicate: false };
+  }

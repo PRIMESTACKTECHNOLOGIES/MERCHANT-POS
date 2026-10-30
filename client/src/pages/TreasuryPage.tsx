@@ -224,6 +224,45 @@ export function TreasuryPage() {
     }
   };
 
+  // ── Register inbound fund candidate ──────────────────────────────────────
+  const defaultReg = { authorizationCode: "", protocol: "201.3", amount: "", currency: "USD", beneficiaryName: "", beneficiaryAccount: "", senderBic: "", receiverBic: "", uetr: "", depositCode: "", merchantId: "MRC-1001", customerId: "" };
+  const [regForm, setRegForm] = useState<Record<string, string>>(defaultReg);
+  const [regBusy, setRegBusy] = useState(false);
+
+  const registerCandidate = async () => {
+    if (!regForm.authorizationCode || !regForm.amount || !regForm.currency) {
+      showToast("Authorization code, amount and currency are required", "error"); return;
+    }
+    setRegBusy(true);
+    try {
+      await call("/api/treasury/funds-verifier/candidates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authorizationCode: regForm.authorizationCode.trim(),
+          protocol: regForm.protocol || "201.3",
+          amount: Number(regForm.amount),
+          currency: regForm.currency.toUpperCase(),
+          beneficiaryName: regForm.beneficiaryName || undefined,
+          beneficiaryAccount: regForm.beneficiaryAccount || undefined,
+          senderBic: regForm.senderBic || undefined,
+          receiverBic: regForm.receiverBic || undefined,
+          uetr: regForm.uetr || undefined,
+          depositCode: regForm.depositCode || undefined,
+          merchantId: regForm.merchantId || "MRC-1001",
+          customerId: regForm.customerId || undefined,
+        }),
+      });
+      showToast("Candidate registered — ready to verify", "success");
+      setRegForm(defaultReg);
+      await loadVerifier();
+    } catch (err: any) {
+      showToast(String(err?.message ?? err), "error");
+    } finally {
+      setRegBusy(false);
+    }
+  };
+
   // ── Bank statements ────────────────────────────────────────────────────────
   const [statements, setStatements] = useState<any[]>([]);
   const [statementForm, setStatementForm] = useState({ accountId: "", currency: "USD", from: "", to: "", format: "AUTO" });
@@ -561,6 +600,61 @@ export function TreasuryPage() {
           </Panel>
 
           <Panel title={`Candidates (${candidates.length})`}>
+            {/* ── Register new inbound fund ── */}
+            <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+              <h3 className="mb-3 text-sm font-extrabold text-indigo-900">Register inbound fund</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                <Field label="Authorization / Txn ID *">
+                  <input className={inputCls} placeholder="txn_... or auth code" value={regForm.authorizationCode} onChange={e => setRegForm(f => ({...f, authorizationCode: e.target.value}))} />
+                </Field>
+                <Field label="Amount *">
+                  <input className={inputCls} type="number" placeholder="80000000" value={regForm.amount} onChange={e => setRegForm(f => ({...f, amount: e.target.value}))} />
+                </Field>
+                <Field label="Currency *">
+                  <select className={inputCls} value={regForm.currency} onChange={e => setRegForm(f => ({...f, currency: e.target.value}))}>
+                    <option>USD</option><option>EUR</option><option>AED</option><option>GBP</option>
+                  </select>
+                </Field>
+                <Field label="Protocol">
+                  <select className={inputCls} value={regForm.protocol} onChange={e => setRegForm(f => ({...f, protocol: e.target.value}))}>
+                    <option>201.3</option><option>101.1</option><option>SEPA</option><option>SWIFT</option><option>ACH</option>
+                  </select>
+                </Field>
+                <Field label="Beneficiary name">
+                  <input className={inputCls} placeholder="KECSKEMÉTI BÉLA ZOLTÁN" value={regForm.beneficiaryName} onChange={e => setRegForm(f => ({...f, beneficiaryName: e.target.value}))} />
+                </Field>
+                <Field label="Beneficiary account / IBAN">
+                  <input className={inputCls} placeholder="IBAN or account no." value={regForm.beneficiaryAccount} onChange={e => setRegForm(f => ({...f, beneficiaryAccount: e.target.value}))} />
+                </Field>
+                <Field label="Sender BIC / SWIFT">
+                  <input className={inputCls} placeholder="TRWIBEB1XXX" value={regForm.senderBic} onChange={e => setRegForm(f => ({...f, senderBic: e.target.value}))} />
+                </Field>
+                <Field label="Receiver BIC / SWIFT">
+                  <input className={inputCls} placeholder="TRWIBEB1XXX" value={regForm.receiverBic} onChange={e => setRegForm(f => ({...f, receiverBic: e.target.value}))} />
+                </Field>
+                <Field label="UETR (wire ref)">
+                  <input className={inputCls} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value={regForm.uetr} onChange={e => setRegForm(f => ({...f, uetr: e.target.value}))} />
+                </Field>
+                <Field label="Deposit / settlement code">
+                  <input className={inputCls} placeholder="5c17382b-..." value={regForm.depositCode} onChange={e => setRegForm(f => ({...f, depositCode: e.target.value}))} />
+                </Field>
+                <Field label="Merchant ID">
+                  <input className={inputCls} value={regForm.merchantId} onChange={e => setRegForm(f => ({...f, merchantId: e.target.value}))} />
+                </Field>
+                <Field label="Customer wallet ID">
+                  <input className={inputCls} placeholder="7bd466dc-..." value={regForm.customerId} onChange={e => setRegForm(f => ({...f, customerId: e.target.value}))} />
+                </Field>
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <button onClick={registerCandidate} disabled={regBusy} className="px-5 py-2 text-sm font-bold rounded-lg bg-indigo-700 text-white hover:bg-indigo-800 disabled:opacity-50">
+                  {regBusy ? "Registering…" : "Register fund"}
+                </button>
+                <button onClick={() => setRegForm(defaultReg)} className="px-4 py-2 text-sm font-semibold rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50">
+                  Clear
+                </button>
+                <p className="text-xs text-indigo-700">After registering, click <strong>Run Verifier</strong> above to confirm with the provider.</p>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50">
