@@ -1812,8 +1812,15 @@ export function VaultDashboardPage() {
 
       <EmvChipPanel auditRows={Array.isArray(data.audit?.events) ? data.audit.events : Array.isArray(data.audit) ? data.audit : []} />
 
-      <div className="grid items-start gap-3 lg:grid-cols-2">
+      <div className="grid items-start gap-3 lg:grid-cols-2 xl:grid-cols-4">
+        {/* USD — AJI ALOSIOUS — Visa 4165...9610 */}
         <VaultBankCard
+          holderName="AJI ALOSIOUS"
+          maskedPan="4165 98•• •••• 9610"
+          expiry="05/30"
+          currency="USD"
+          metal="silver"
+          bankStyle="vault"
           revealedDetails={vaultCardDetails.usd ? {
             cardNumber: String(vaultCardDetails.usd.cardNumber || ""),
             expiry: String(vaultCardDetails.usd.expiry || ""),
@@ -1826,21 +1833,16 @@ export function VaultDashboardPage() {
           detailsBusy={vaultCardDetailsBusy}
           detailsError={vaultCardDetailsError}
           onLoadDetails={() => void loadVaultCardDetails()}
-          holderName="SAJIN RAJ CHANDRAN"
-          maskedPan="4137 45•• •••• 1082"
-          expiry="12/29"
-          currency="USD"
-          metal="silver"
-          bankStyle="bisb"
           compact
         />
+        {/* EUR — DANIA ALOSIOUS — Visa 4532...1068 */}
         <VaultBankCard
-          holderName="SAJIN CHANDRAN"
-          maskedPan="5416 84•• •••• 8832"
-          expiry="03/27"
+          holderName="DANIA ALOSIOUS"
+          maskedPan="4532 01•• •••• 1068"
+          expiry="06/29"
           currency="EUR"
           metal="gold"
-          bankStyle="commercial"
+          bankStyle="vault"
           revealedDetails={vaultCardDetails.eur ? {
             cardNumber: String(vaultCardDetails.eur.cardNumber || ""),
             expiry: String(vaultCardDetails.eur.expiry || ""),
@@ -1849,6 +1851,50 @@ export function VaultDashboardPage() {
             card_type: String(vaultCardDetails.eur.card_type || "credit"),
             credit_limit: Number(vaultCardDetails.eur.credit_limit || 5000000),
             status: String(vaultCardDetails.eur.status || "ACTIVE"),
+          } : null}
+          detailsBusy={vaultCardDetailsBusy}
+          detailsError={vaultCardDetailsError}
+          onLoadDetails={() => void loadVaultCardDetails()}
+          compact
+        />
+        {/* AED 1 — AJI ALOSIOUS — Visa 4137...1082 */}
+        <VaultBankCard
+          holderName="AJI ALOSIOUS"
+          maskedPan="4137 45•• •••• 1082"
+          expiry="12/29"
+          currency="AED"
+          metal="silver"
+          bankStyle="vault"
+          revealedDetails={vaultCardDetails.aed1 ? {
+            cardNumber: String(vaultCardDetails.aed1.cardNumber || ""),
+            expiry: String(vaultCardDetails.aed1.expiry || ""),
+            cvv: String(vaultCardDetails.aed1.cvv || ""),
+            cardholderName: String(vaultCardDetails.aed1.cardholderName || ""),
+            card_type: String(vaultCardDetails.aed1.card_type || "credit"),
+            credit_limit: Number(vaultCardDetails.aed1.credit_limit || 5000000),
+            status: String(vaultCardDetails.aed1.status || "ACTIVE"),
+          } : null}
+          detailsBusy={vaultCardDetailsBusy}
+          detailsError={vaultCardDetailsError}
+          onLoadDetails={() => void loadVaultCardDetails()}
+          compact
+        />
+        {/* AED 2 — AJI ALOSIOUS — Mastercard 5416...8832 */}
+        <VaultBankCard
+          holderName="AJI ALOSIOUS"
+          maskedPan="5416 84•• •••• 8832"
+          expiry="03/27"
+          currency="AED"
+          metal="gold"
+          bankStyle="vault"
+          revealedDetails={vaultCardDetails.aed2 ? {
+            cardNumber: String(vaultCardDetails.aed2.cardNumber || ""),
+            expiry: String(vaultCardDetails.aed2.expiry || ""),
+            cvv: String(vaultCardDetails.aed2.cvv || ""),
+            cardholderName: String(vaultCardDetails.aed2.cardholderName || ""),
+            card_type: String(vaultCardDetails.aed2.card_type || "credit"),
+            credit_limit: Number(vaultCardDetails.aed2.credit_limit || 5000000),
+            status: String(vaultCardDetails.aed2.status || "ACTIVE"),
           } : null}
           detailsBusy={vaultCardDetailsBusy}
           detailsError={vaultCardDetailsError}
@@ -2003,22 +2049,22 @@ export function VaultDashboardPage() {
 
     const selectedCard = selectedLoadingCard === "usd"
       ? {
-          holderName: "SAJIN RAJ CHANDRAN",
-          maskedPan: "4137 45•• •••• 1082",
-          expiry: "12/29",
+          holderName: "AJI ALOSIOUS",
+          maskedPan: "4165 98•• •••• 9610",
+          expiry: "05/30",
           currency: "USD" as const,
           metal: "silver" as const,
-          bankStyle: "bisb" as const,
+          bankStyle: "vault" as const,
           details: vaultCardDetails.usd,
         }
       : selectedLoadingCard === "eur"
         ? {
-            holderName: "SAJIN CHANDRAN",
-            maskedPan: "5416 84•• •••• 8832",
-            expiry: "03/27",
+            holderName: "DANIA ALOSIOUS",
+            maskedPan: "4532 01•• •••• 1068",
+            expiry: "06/29",
             currency: "EUR" as const,
             metal: "gold" as const,
-            bankStyle: "commercial" as const,
+            bankStyle: "vault" as const,
             details: vaultCardDetails.eur,
           }
         : null;
@@ -2055,8 +2101,8 @@ export function VaultDashboardPage() {
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {([
-                  ["usd", "SAJIN RAJ CHANDRAN", "USD", "4137 45•• •••• 1082", "bg-slate-100"],
-                  ["eur", "SAJIN CHANDRAN", "EUR", "5416 84•• •••• 8832", "bg-amber-50"],
+                  ["usd", "AJI ALOSIOUS", "USD", "4165 98•• •••• 9610", "bg-slate-100"],
+                  ["eur", "DANIA ALOSIOUS", "EUR", "4532 01•• •••• 1068", "bg-amber-50"],
                 ] as const).map(([id, name, currency, pan, tone]) => (
                   <button
                     key={id}

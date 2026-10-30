@@ -28,7 +28,7 @@ const VISA_LOGO = "/visa-logo.png";
 const MC_LOGO = "/mastercard-logo.png";
 
 export default function VaultBankCard({
-  holderName = "SAJIN CHANDRAN",
+  holderName = "AJI ALOSIOUS",
   maskedPan = "4165 98•• •••• 9610",
   expiry = "05/30",
   cvv = "•••",
