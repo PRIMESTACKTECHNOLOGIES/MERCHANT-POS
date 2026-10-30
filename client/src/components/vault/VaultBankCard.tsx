@@ -122,6 +122,8 @@ export default function VaultBankCard({
             <span /><span /><span /><span /><span />
           </div>
           
+          {bankStyle === 'vault' && <div className="vault-bank-card-hologram" aria-label="Security hologram" />}
+          
           <div className="vault-bank-card-pan">{maskedPan}</div>
           
           <div className="vault-bank-card-bottom">
