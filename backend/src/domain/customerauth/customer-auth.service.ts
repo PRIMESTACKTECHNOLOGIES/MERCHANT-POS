@@ -20,9 +20,9 @@ export class CustomerAuthService {
     return this.pinColumnsEnsured;
   }
 
-  /** 6-digit numeric PIN. */
+  /** 4-digit numeric PIN. */
   private generatePin(): string {
-    return String(crypto.randomInt(100000, 1000000));
+    return String(crypto.randomInt(1000, 10000));
   }
 
   /**
