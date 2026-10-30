@@ -2227,6 +2227,42 @@ export const initTables = async () => {
     } catch (_) { /* ignore */ }
 
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── CARD SETTLEMENTS TABLE ────────────────────────────────────────────────
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS card_settlements (
+        id                  TEXT PRIMARY KEY,
+        merchant_id         TEXT NOT NULL,
+        auth_ref            TEXT NOT NULL,
+        capture_ref         TEXT NOT NULL,
+        amount              REAL NOT NULL,
+        currency            TEXT NOT NULL DEFAULT 'USD',
+        protocol            TEXT,
+        batch_id            TEXT,
+        response_code       TEXT,
+        status              TEXT NOT NULL DEFAULT 'CONFIRMED',
+        acquirer_raw        TEXT,
+        stan                TEXT,
+        pan_last4           TEXT,
+        pan_masked          TEXT,
+        customer_id         TEXT,
+        terminal_id         TEXT,
+        entry_mode          TEXT,
+        auth_mode           TEXT,
+        settlement_code     TEXT,
+        credit_target       TEXT NOT NULL DEFAULT 'merchant',
+        fund_provider_audit_id       TEXT,
+        fund_provider_endpoint       TEXT,
+        fund_provider_http_status    INTEGER,
+        fund_provider_response_code  TEXT,
+        fund_provider_reference      TEXT,
+        fund_provider_raw_trunc      TEXT,
+        provider_reconcile_warning   TEXT,
+        created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    try { await db.query(`CREATE INDEX IF NOT EXISTS card_settlements_merchant_auth_idx ON card_settlements (merchant_id, auth_ref)`); } catch(_) {}
+    try { await db.query(`CREATE INDEX IF NOT EXISTS card_settlements_status_idx ON card_settlements (status)`); } catch(_) {}
+
     // CORE PAYOUTS API TABLES (spec-aligned standalone tables)
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
