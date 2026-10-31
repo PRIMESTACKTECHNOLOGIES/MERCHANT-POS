@@ -1,4 +1,3 @@
-import { Router } from "express";
 import { Router, Request, Response } from "express";
 import { customerPortalController } from "./customer-portal.controller";
 import { authenticateCustomer } from "../../middleware/customerAuth.middleware";
