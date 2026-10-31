@@ -11,6 +11,13 @@ type ResolveApiBaseUrlOptions = {
 export function resolveApiBaseUrl(options: ResolveApiBaseUrlOptions = {}) {
   const envValue = (options.envValue ?? '').trim();
   const localFallback = (options.localFallback ?? 'http://localhost:7000').replace(/\/$/, '');
+
+  // Check window.APP_CONFIG.api_url (injected by backend or hardcoded in portal HTML)
+  const appConfigUrl = (
+    typeof window !== 'undefined' &&
+    (window as any).APP_CONFIG?.api_url
+  ) ? String((window as any).APP_CONFIG.api_url).trim() : '';
+
   const normalizeLocalUrl = (value: string) => {
     const normalized = value.replace(/\/$/, '');
     try {
@@ -31,6 +38,10 @@ export function resolveApiBaseUrl(options: ResolveApiBaseUrlOptions = {}) {
 
   if (envValue) {
     return normalizeLocalUrl(envValue);
+  }
+
+  if (appConfigUrl) {
+    return normalizeLocalUrl(appConfigUrl);
   }
 
   const windowLike = options.windowLike ?? (typeof window !== 'undefined' ? window : undefined);
